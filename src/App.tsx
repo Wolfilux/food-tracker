@@ -36,8 +36,9 @@ type OpenFoodFactsProduct = {
   code?: string;
   product_name?: string;
   generic_name?: string;
-  brands?: string;
+  brands?: string | string[];
   image_front_small_url?: string;
+  image_url?: string;
   nutriments?: {
     "energy-kcal_100g"?: number;
     proteins_100g?: number;
@@ -178,16 +179,14 @@ function App() {
     setResults([]);
 
     const params = new URLSearchParams({
-      search_terms: trimmedQuery,
-      page_size: "8",
-      fields: "code,product_name,generic_name,brands,image_front_small_url,nutriments",
+      q: trimmedQuery,
     });
 
     try {
-      const response = await fetch(`https://world.openfoodfacts.org/api/v2/search?${params.toString()}`, { signal });
+      const response = await fetch(`/food-search?${params.toString()}`, { signal });
       if (!response.ok) throw new Error("Open Food Facts request failed");
-      const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
-      const nextResults = (data.products ?? [])
+      const data = (await response.json()) as { hits?: OpenFoodFactsProduct[] };
+      const nextResults = (data.hits ?? [])
         .map((product) => toFoodResult(product, usageMap))
         .filter((result): result is FoodSearchResult => Boolean(result));
       setResults(sortByUsage(nextResults));
@@ -422,7 +421,9 @@ function toFoodResult(product: OpenFoodFactsProduct, usageMap: Map<string, numbe
 
   if (!name || calories <= 0) return null;
 
-  const brand = product.brands?.split(",")[0]?.trim() ?? "";
+  const brand = Array.isArray(product.brands)
+    ? product.brands[0]?.trim() ?? ""
+    : product.brands?.split(",")[0]?.trim() ?? "";
   const id = product.code || `${name}-${brand || "unknown"}`;
   const displayName = brand ? `${name} · ${brand}` : name;
 
@@ -434,7 +435,7 @@ function toFoodResult(product: OpenFoodFactsProduct, usageMap: Map<string, numbe
     proteinPer100g: roundMacro(nutriments.proteins_100g),
     carbsPer100g: roundMacro(nutriments.carbohydrates_100g),
     fatPer100g: roundMacro(nutriments.fat_100g),
-    imageUrl: product.image_front_small_url,
+    imageUrl: product.image_front_small_url || product.image_url,
     usageCount: Math.max(
       usageMap.get(normalizeFoodKey(id)) ?? 0,
       usageMap.get(normalizeFoodKey(displayName)) ?? 0,
