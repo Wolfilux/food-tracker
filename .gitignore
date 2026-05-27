@@ -1,0 +1,42 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa
+id_ed25519
+
+# Dependency directories
+node_modules/
+.venv/
+venv/
+vendor/
+
+# Build and cache output
+dist/
+build/
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+coverage/
+*.tsbuildinfo
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
