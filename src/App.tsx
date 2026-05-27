@@ -179,15 +179,12 @@ function App() {
 
     const params = new URLSearchParams({
       search_terms: trimmedQuery,
-      search_simple: "1",
-      action: "process",
-      json: "1",
       page_size: "8",
       fields: "code,product_name,generic_name,brands,image_front_small_url,nutriments",
     });
 
     try {
-      const response = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`, { signal });
+      const response = await fetch(`https://world.openfoodfacts.org/api/v2/search?${params.toString()}`, { signal });
       if (!response.ok) throw new Error("Open Food Facts request failed");
       const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
       const nextResults = (data.products ?? [])
