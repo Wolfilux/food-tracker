@@ -11,5 +11,15 @@ Public repository for the Food Tracker project.
 
 ## Status
 
-Project initialized. Stack and first milestone still need to be defined.
+Initial Vite/React scaffold is available.
 
+## Development
+
+~~~bash
+npm install
+npm run dev
+npm run build
+npm run lint
+~~~
+
+The first version stores entries in browser local storage only. No backend, credentials, or external food database are configured yet.
