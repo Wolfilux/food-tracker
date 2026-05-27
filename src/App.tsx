@@ -61,6 +61,21 @@ type FoodSearchResult = {
 
 const STORAGE_KEY = "food-tracker.entries.v2";
 const dailyGoal = 2200;
+const COMMON_FOOD_TERMS = [
+  "magerquark",
+  "speisequark",
+  "skyr",
+  "joghurt",
+  "haferflocken",
+  "banane",
+  "apfel",
+  "reis",
+  "nudeln",
+  "kartoffeln",
+  "hähnchenbrust",
+  "thunfisch",
+  "ei",
+];
 
 const nowLocal = () => new Date().toISOString().slice(0, 16);
 
@@ -178,15 +193,9 @@ function App() {
     setSearchState("loading");
     setResults([]);
 
-    const params = new URLSearchParams({
-      q: trimmedQuery,
-    });
-
     try {
-      const response = await fetch(`/food-search?${params.toString()}`, { signal });
-      if (!response.ok) throw new Error("Open Food Facts request failed");
-      const data = (await response.json()) as { hits?: OpenFoodFactsProduct[] };
-      const nextResults = (data.hits ?? [])
+      const hits = await fetchFoodHits(trimmedQuery, signal);
+      const nextResults = hits
         .map((product) => toFoodResult(product, usageMap))
         .filter((result): result is FoodSearchResult => Boolean(result));
       setResults(sortByUsage(nextResults));
@@ -412,6 +421,30 @@ function Metric({ icon, label, value, suffix }: { icon: ReactNode; label: string
       <strong>{typeof value === "number" ? value.toLocaleString() : value} {suffix && <small>{suffix}</small>}</strong>
     </article>
   );
+}
+
+async function fetchFoodHits(searchTerm: string, signal?: AbortSignal): Promise<OpenFoodFactsProduct[]> {
+  const hits = await fetchFoodHitsForTerm(searchTerm, signal);
+  if (hits.length > 0) return hits;
+
+  const fallbackTerm = findCommonFoodCompletion(searchTerm);
+  if (!fallbackTerm || fallbackTerm === normalizeFoodKey(searchTerm)) return hits;
+
+  return fetchFoodHitsForTerm(fallbackTerm, signal);
+}
+
+async function fetchFoodHitsForTerm(searchTerm: string, signal?: AbortSignal): Promise<OpenFoodFactsProduct[]> {
+  const params = new URLSearchParams({ q: searchTerm });
+  const response = await fetch(`/food-search?${params.toString()}`, { signal });
+  if (!response.ok) throw new Error("Open Food Facts request failed");
+  const data = (await response.json()) as { hits?: OpenFoodFactsProduct[] };
+  return data.hits ?? [];
+}
+
+function findCommonFoodCompletion(searchTerm: string) {
+  const normalized = normalizeFoodKey(searchTerm);
+  if (normalized.length < 4) return null;
+  return COMMON_FOOD_TERMS.find((term) => term.startsWith(normalized)) ?? null;
 }
 
 function toFoodResult(product: OpenFoodFactsProduct, usageMap: Map<string, number>): FoodSearchResult | null {
