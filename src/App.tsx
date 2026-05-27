@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Database,
   Flame,
@@ -165,6 +165,52 @@ function App() {
   const progress = Math.min(100, Math.round((totals.calories / dailyGoal) * 100));
   const draftCalories = caloriesFor(draft);
 
+  const searchFoods = useCallback(async (searchTerm = query.trim(), signal?: AbortSignal) => {
+    const trimmedQuery = searchTerm.trim();
+    if (!trimmedQuery) return;
+
+    setSearchState("loading");
+    setResults([]);
+
+    const params = new URLSearchParams({
+      search_terms: trimmedQuery,
+      search_simple: "1",
+      action: "process",
+      json: "1",
+      page_size: "8",
+      fields: "code,product_name,generic_name,brands,image_front_small_url,nutriments",
+    });
+
+    try {
+      const response = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`, { signal });
+      if (!response.ok) throw new Error("Open Food Facts request failed");
+      const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
+      const nextResults = (data.products ?? [])
+        .map(toFoodResult)
+        .filter((result): result is FoodSearchResult => Boolean(result));
+      setResults(nextResults);
+      setSearchState("done");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setSearchState("error");
+    }
+  }, [query]);
+
+  useEffect(() => {
+    const trimmedQuery = query.trim();
+    if (trimmedQuery.length < 2) return;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void searchFoods(trimmedQuery, controller.signal);
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [query, searchFoods]);
+
   function persist(nextEntries: FoodEntry[]) {
     setEntries(nextEntries);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextEntries));
@@ -187,36 +233,6 @@ function App() {
     setDraft({ ...draft, foodName: "", consumedAt: nowLocal() });
   }
 
-  async function searchFoods() {
-    const trimmedQuery = query.trim();
-    if (!trimmedQuery) return;
-
-    setSearchState("loading");
-    setResults([]);
-
-    const params = new URLSearchParams({
-      search_terms: trimmedQuery,
-      search_simple: "1",
-      action: "process",
-      json: "1",
-      page_size: "8",
-      fields: "code,product_name,generic_name,brands,image_front_small_url,nutriments",
-    });
-
-    try {
-      const response = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`);
-      if (!response.ok) throw new Error("Open Food Facts request failed");
-      const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
-      const nextResults = (data.products ?? [])
-        .map(toFoodResult)
-        .filter((result): result is FoodSearchResult => Boolean(result));
-      setResults(nextResults);
-      setSearchState("done");
-    } catch {
-      setSearchState("error");
-    }
-  }
-
   function selectFood(result: FoodSearchResult) {
     setDraft({
       ...draft,
@@ -231,6 +247,14 @@ function App() {
 
   function deleteEntry(id: string) {
     persist(entries.filter((entry) => entry.id !== id));
+  }
+
+  function updateQuery(value: string) {
+    setQuery(value);
+    if (value.trim().length < 2) {
+      setResults([]);
+      setSearchState("idle");
+    }
   }
 
   return (
@@ -280,14 +304,14 @@ function App() {
                 <div className="search-input">
                   <input
                     value={query}
-                    onChange={(event) => setQuery(event.target.value)}
+                    onChange={(event) => updateQuery(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault();
                         void searchFoods();
                       }
                     }}
-                    placeholder="e.g. Skyr, Banane, Reis"
+                    placeholder="Type to search, e.g. Skyr"
                   />
                   <button type="button" aria-label="Search food database" onClick={() => void searchFoods()}>
                     {searchState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
