@@ -258,6 +258,14 @@ button:focus-visible {
   font-weight: 850;
 }
 
+.search-panel__heading small {
+  margin-left: auto;
+  color: #627064;
+  font-size: 0.76rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
 .food-search label {
   margin-bottom: 10px;
 }

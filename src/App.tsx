@@ -17,6 +17,7 @@ type Unit = "g" | "kg";
 
 type FoodEntry = {
   id: string;
+  foodKey?: string;
   foodName: string;
   quantityValue: number;
   quantityUnit: Unit;
@@ -54,6 +55,7 @@ type FoodSearchResult = {
   carbsPer100g: number;
   fatPer100g: number;
   imageUrl?: string;
+  usageCount: number;
 };
 
 const STORAGE_KEY = "food-tracker.entries.v2";
@@ -64,6 +66,7 @@ const nowLocal = () => new Date().toISOString().slice(0, 16);
 const initialEntries: FoodEntry[] = [
   {
     id: "seed-1",
+    foodKey: "manual:skyr-natur",
     foodName: "Skyr natur",
     quantityValue: 250,
     quantityUnit: "g",
@@ -77,6 +80,7 @@ const initialEntries: FoodEntry[] = [
   },
   {
     id: "seed-2",
+    foodKey: "manual:banane",
     foodName: "Banane",
     quantityValue: 120,
     quantityUnit: "g",
@@ -164,6 +168,7 @@ function App() {
 
   const progress = Math.min(100, Math.round((totals.calories / dailyGoal) * 100));
   const draftCalories = caloriesFor(draft);
+  const usageMap = useMemo(() => buildUsageMap(entries), [entries]);
 
   const searchFoods = useCallback(async (searchTerm = query.trim(), signal?: AbortSignal) => {
     const trimmedQuery = searchTerm.trim();
@@ -186,15 +191,15 @@ function App() {
       if (!response.ok) throw new Error("Open Food Facts request failed");
       const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
       const nextResults = (data.products ?? [])
-        .map(toFoodResult)
+        .map((product) => toFoodResult(product, usageMap))
         .filter((result): result is FoodSearchResult => Boolean(result));
-      setResults(nextResults);
+      setResults(sortByUsage(nextResults));
       setSearchState("done");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setSearchState("error");
     }
-  }, [query]);
+  }, [query, usageMap]);
 
   useEffect(() => {
     const trimmedQuery = query.trim();
@@ -236,6 +241,7 @@ function App() {
   function selectFood(result: FoodSearchResult) {
     setDraft({
       ...draft,
+      foodKey: result.id,
       foodName: result.brand ? `${result.name} · ${result.brand}` : result.name,
       caloriesPer100g: result.caloriesPer100g,
       proteinPer100g: result.proteinPer100g,
@@ -297,6 +303,7 @@ function App() {
             <div className="search-panel__heading">
               <Database size={18} aria-hidden="true" />
               <span>Open Food Facts</span>
+              <small>frequent first</small>
             </div>
             <div className="food-search">
               <label>
@@ -327,7 +334,10 @@ function App() {
                   {result.imageUrl ? <img src={result.imageUrl} alt="" /> : <span className="result-placeholder"><Utensils size={18} aria-hidden="true" /></span>}
                   <span>
                     <strong>{result.name}</strong>
-                    <small>{result.brand || "Open Food Facts"} · {result.caloriesPer100g} kcal / 100g</small>
+                    <small>
+                      {result.brand || "Open Food Facts"} · {result.caloriesPer100g} kcal / 100g
+                      {result.usageCount > 0 ? ` · used ${result.usageCount}x` : ""}
+                    </small>
                   </span>
                 </button>
               ))}
@@ -335,7 +345,7 @@ function App() {
           </div>
           <label>
             Food
-            <input value={draft.foodName} onChange={(event) => setDraft({ ...draft, foodName: event.target.value })} placeholder="e.g. Skyr natur" />
+            <input value={draft.foodName} onChange={(event) => setDraft({ ...draft, foodName: event.target.value, foodKey: undefined, source: "manual" })} placeholder="e.g. Skyr natur" />
           </label>
           <label>
             Time
@@ -408,23 +418,55 @@ function Metric({ icon, label, value, suffix }: { icon: ReactNode; label: string
   );
 }
 
-function toFoodResult(product: OpenFoodFactsProduct): FoodSearchResult | null {
+function toFoodResult(product: OpenFoodFactsProduct, usageMap: Map<string, number>): FoodSearchResult | null {
   const nutriments = product.nutriments ?? {};
   const name = (product.product_name || product.generic_name || "").trim();
   const calories = Math.round(Number(nutriments["energy-kcal_100g"] ?? 0));
 
   if (!name || calories <= 0) return null;
 
+  const brand = product.brands?.split(",")[0]?.trim() ?? "";
+  const id = product.code || `${name}-${brand || "unknown"}`;
+  const displayName = brand ? `${name} · ${brand}` : name;
+
   return {
-    id: product.code || `${name}-${product.brands || "unknown"}`,
+    id,
     name,
-    brand: product.brands?.split(",")[0]?.trim() ?? "",
+    brand,
     caloriesPer100g: calories,
     proteinPer100g: roundMacro(nutriments.proteins_100g),
     carbsPer100g: roundMacro(nutriments.carbohydrates_100g),
     fatPer100g: roundMacro(nutriments.fat_100g),
     imageUrl: product.image_front_small_url,
+    usageCount: Math.max(
+      usageMap.get(normalizeFoodKey(id)) ?? 0,
+      usageMap.get(normalizeFoodKey(displayName)) ?? 0,
+      usageMap.get(normalizeFoodKey(name)) ?? 0,
+    ),
   };
+}
+
+function buildUsageMap(entries: FoodEntry[]) {
+  const usageMap = new Map<string, number>();
+  for (const entry of entries) {
+    const keys = [entry.foodKey, entry.foodName].filter(Boolean);
+    for (const key of keys) {
+      const normalized = normalizeFoodKey(key);
+      usageMap.set(normalized, (usageMap.get(normalized) ?? 0) + 1);
+    }
+  }
+  return usageMap;
+}
+
+function normalizeFoodKey(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sortByUsage(results: FoodSearchResult[]) {
+  return [...results].sort((left, right) => right.usageCount - left.usageCount);
 }
 
 function roundMacro(value: unknown) {
