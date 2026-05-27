@@ -1,5 +1,17 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
-import { Clock3, Flame, Plus, Scale, ShieldCheck, Target, Trash2, Utensils } from "lucide-react";
+import {
+  Database,
+  Flame,
+  Loader2,
+  Plus,
+  Scale,
+  Search,
+  ShieldCheck,
+  Target,
+  Trash2,
+  Utensils,
+  Wheat,
+} from "lucide-react";
 
 type Unit = "g" | "kg";
 
@@ -9,11 +21,40 @@ type FoodEntry = {
   quantityValue: number;
   quantityUnit: Unit;
   caloriesPer100g: number;
+  proteinPer100g: number;
+  carbsPer100g: number;
+  fatPer100g: number;
   consumedAt: string;
   createdAt: string;
+  source?: string;
 };
 
 type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
+
+type OpenFoodFactsProduct = {
+  code?: string;
+  product_name?: string;
+  generic_name?: string;
+  brands?: string;
+  image_front_small_url?: string;
+  nutriments?: {
+    "energy-kcal_100g"?: number;
+    proteins_100g?: number;
+    carbohydrates_100g?: number;
+    fat_100g?: number;
+  };
+};
+
+type FoodSearchResult = {
+  id: string;
+  name: string;
+  brand: string;
+  caloriesPer100g: number;
+  proteinPer100g: number;
+  carbsPer100g: number;
+  fatPer100g: number;
+  imageUrl?: string;
+};
 
 const STORAGE_KEY = "food-tracker.entries.v2";
 const dailyGoal = 2200;
@@ -27,8 +68,12 @@ const initialEntries: FoodEntry[] = [
     quantityValue: 250,
     quantityUnit: "g",
     caloriesPer100g: 62,
+    proteinPer100g: 11,
+    carbsPer100g: 4,
+    fatPer100g: 0.2,
     consumedAt: nowLocal(),
     createdAt: new Date().toISOString(),
+    source: "manual",
   },
   {
     id: "seed-2",
@@ -36,8 +81,12 @@ const initialEntries: FoodEntry[] = [
     quantityValue: 120,
     quantityUnit: "g",
     caloriesPer100g: 89,
+    proteinPer100g: 1.1,
+    carbsPer100g: 23,
+    fatPer100g: 0.3,
     consumedAt: nowLocal(),
     createdAt: new Date().toISOString(),
+    source: "manual",
   },
 ];
 
@@ -49,12 +98,28 @@ function caloriesFor(entry: Pick<FoodEntry, "quantityUnit" | "quantityValue" | "
   return Math.round((gramsFor(entry) / 100) * entry.caloriesPer100g);
 }
 
+function macroFor(
+  entry: Pick<FoodEntry, "quantityUnit" | "quantityValue">,
+  valuePer100g: number,
+) {
+  return (gramsFor(entry) / 100) * valuePer100g;
+}
+
+function normalizeEntry(entry: FoodEntry): FoodEntry {
+  return {
+    ...entry,
+    proteinPer100g: Number(entry.proteinPer100g ?? 0),
+    carbsPer100g: Number(entry.carbsPer100g ?? 0),
+    fatPer100g: Number(entry.fatPer100g ?? 0),
+  };
+}
+
 function loadEntries(): FoodEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialEntries;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : initialEntries;
+    return Array.isArray(parsed) ? parsed.map(normalizeEntry) : initialEntries;
   } catch {
     return initialEntries;
   }
@@ -67,8 +132,15 @@ function App() {
     quantityValue: 100,
     quantityUnit: "g",
     caloriesPer100g: 100,
+    proteinPer100g: 0,
+    carbsPer100g: 0,
+    fatPer100g: 0,
     consumedAt: nowLocal(),
+    source: "manual",
   });
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<FoodSearchResult[]>([]);
+  const [searchState, setSearchState] = useState<"idle" | "loading" | "done" | "error">("idle");
 
   const sortedEntries = useMemo(
     () => [...entries].sort((left, right) => right.consumedAt.localeCompare(left.consumedAt)),
@@ -81,8 +153,11 @@ function App() {
         (sum, entry) => ({
           calories: sum.calories + caloriesFor(entry),
           grams: sum.grams + gramsFor(entry),
+          protein: sum.protein + macroFor(entry, entry.proteinPer100g),
+          carbs: sum.carbs + macroFor(entry, entry.carbsPer100g),
+          fat: sum.fat + macroFor(entry, entry.fatPer100g),
         }),
-        { calories: 0, grams: 0 },
+        { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 },
       ),
     [entries],
   );
@@ -112,6 +187,48 @@ function App() {
     setDraft({ ...draft, foodName: "", consumedAt: nowLocal() });
   }
 
+  async function searchFoods() {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return;
+
+    setSearchState("loading");
+    setResults([]);
+
+    const params = new URLSearchParams({
+      search_terms: trimmedQuery,
+      search_simple: "1",
+      action: "process",
+      json: "1",
+      page_size: "8",
+      fields: "code,product_name,generic_name,brands,image_front_small_url,nutriments",
+    });
+
+    try {
+      const response = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`);
+      if (!response.ok) throw new Error("Open Food Facts request failed");
+      const data = (await response.json()) as { products?: OpenFoodFactsProduct[] };
+      const nextResults = (data.products ?? [])
+        .map(toFoodResult)
+        .filter((result): result is FoodSearchResult => Boolean(result));
+      setResults(nextResults);
+      setSearchState("done");
+    } catch {
+      setSearchState("error");
+    }
+  }
+
+  function selectFood(result: FoodSearchResult) {
+    setDraft({
+      ...draft,
+      foodName: result.brand ? `${result.name} · ${result.brand}` : result.name,
+      caloriesPer100g: result.caloriesPer100g,
+      proteinPer100g: result.proteinPer100g,
+      carbsPer100g: result.carbsPer100g,
+      fatPer100g: result.fatPer100g,
+      source: "Open Food Facts",
+    });
+  }
+
   function deleteEntry(id: string) {
     persist(entries.filter((entry) => entry.id !== id));
   }
@@ -126,7 +243,7 @@ function App() {
           </p>
           <h1>Food Tracker</h1>
           <p className="intro">
-            Time-based calorie tracking with local browser storage and simple per-100g math.
+            Time-based calorie tracking with Open Food Facts lookup, local browser storage, and manual fallback.
           </p>
         </div>
         <div className="goal-card" aria-label="Daily calorie progress">
@@ -145,13 +262,53 @@ function App() {
       <section className="metric-grid" aria-label="Daily totals">
         <Metric icon={<Flame />} label="Calories" value={totals.calories} suffix="kcal" />
         <Metric icon={<Scale />} label="Food weight" value={Math.round(totals.grams)} suffix="g" />
-        <Metric icon={<Utensils />} label="Entries" value={entries.length} suffix="today" />
-        <Metric icon={<Clock3 />} label="Latest" value={latestHour(sortedEntries)} suffix="" />
+        <Metric icon={<Wheat />} label="Protein" value={Math.round(totals.protein)} suffix="g" />
+        <Metric icon={<Utensils />} label="Carbs / fat" value={`${Math.round(totals.carbs)} / ${Math.round(totals.fat)}`} suffix="g" />
       </section>
 
       <section className="workspace-grid">
         <form className="entry-form" onSubmit={addEntry}>
           <h2>Add entry</h2>
+          <div className="search-panel">
+            <div className="search-panel__heading">
+              <Database size={18} aria-hidden="true" />
+              <span>Open Food Facts</span>
+            </div>
+            <div className="food-search">
+              <label>
+                Search food database
+                <div className="search-input">
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void searchFoods();
+                      }
+                    }}
+                    placeholder="e.g. Skyr, Banane, Reis"
+                  />
+                  <button type="button" aria-label="Search food database" onClick={() => void searchFoods()}>
+                    {searchState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div className="result-list" aria-live="polite">
+              {searchState === "error" && <p className="search-note">Database currently unavailable. Manual entry still works.</p>}
+              {searchState === "done" && results.length === 0 && <p className="search-note">No usable nutrition values found.</p>}
+              {results.map((result) => (
+                <button className="result-item" type="button" key={result.id} onClick={() => selectFood(result)}>
+                  {result.imageUrl ? <img src={result.imageUrl} alt="" /> : <span className="result-placeholder"><Utensils size={18} aria-hidden="true" /></span>}
+                  <span>
+                    <strong>{result.name}</strong>
+                    <small>{result.brand || "Open Food Facts"} · {result.caloriesPer100g} kcal / 100g</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
           <label>
             Food
             <input value={draft.foodName} onChange={(event) => setDraft({ ...draft, foodName: event.target.value })} placeholder="e.g. Skyr natur" />
@@ -171,8 +328,13 @@ function App() {
             </label>
           </div>
           <NumberInput label="Calories per 100g" min={0} step={1} value={draft.caloriesPer100g} onChange={(caloriesPer100g) => setDraft({ ...draft, caloriesPer100g })} />
+          <div className="macro-grid">
+            <NumberInput label="Protein / 100g" min={0} step={0.1} value={draft.proteinPer100g} onChange={(proteinPer100g) => setDraft({ ...draft, proteinPer100g })} />
+            <NumberInput label="Carbs / 100g" min={0} step={0.1} value={draft.carbsPer100g} onChange={(carbsPer100g) => setDraft({ ...draft, carbsPer100g })} />
+            <NumberInput label="Fat / 100g" min={0} step={0.1} value={draft.fatPer100g} onChange={(fatPer100g) => setDraft({ ...draft, fatPer100g })} />
+          </div>
           <div className="calculation-strip">
-            <span>Calculated entry</span>
+            <span>{draft.source === "Open Food Facts" ? "Database values" : "Calculated entry"}</span>
             <strong>{draftCalories.toLocaleString()} kcal</strong>
           </div>
           <button className="primary-button" type="submit">
@@ -193,6 +355,9 @@ function App() {
                 <h3>{entry.foodName}</h3>
                 <p>
                   {formatQuantity(entry)} / {entry.caloriesPer100g.toLocaleString()} kcal per 100g
+                </p>
+                <p className="macro-line">
+                  P {formatMacro(macroFor(entry, entry.proteinPer100g))}g · C {formatMacro(macroFor(entry, entry.carbsPer100g))}g · F {formatMacro(macroFor(entry, entry.fatPer100g))}g
                 </p>
               </div>
               <div className="food-actions">
@@ -219,6 +384,30 @@ function Metric({ icon, label, value, suffix }: { icon: ReactNode; label: string
   );
 }
 
+function toFoodResult(product: OpenFoodFactsProduct): FoodSearchResult | null {
+  const nutriments = product.nutriments ?? {};
+  const name = (product.product_name || product.generic_name || "").trim();
+  const calories = Math.round(Number(nutriments["energy-kcal_100g"] ?? 0));
+
+  if (!name || calories <= 0) return null;
+
+  return {
+    id: product.code || `${name}-${product.brands || "unknown"}`,
+    name,
+    brand: product.brands?.split(",")[0]?.trim() ?? "",
+    caloriesPer100g: calories,
+    proteinPer100g: roundMacro(nutriments.proteins_100g),
+    carbsPer100g: roundMacro(nutriments.carbohydrates_100g),
+    fatPer100g: roundMacro(nutriments.fat_100g),
+    imageUrl: product.image_front_small_url,
+  };
+}
+
+function roundMacro(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.round(parsed * 10) / 10 : 0;
+}
+
 function NumberInput({ label, min, step, value, onChange }: { label: string; min: number; step: number; value: number; onChange: (value: number) => void }) {
   return (
     <label>
@@ -241,9 +430,8 @@ function formatQuantity(entry: FoodEntry) {
   return `${entry.quantityValue.toLocaleString("de-DE")} ${entry.quantityUnit}`;
 }
 
-function latestHour(entries: FoodEntry[]) {
-  if (!entries.length) return "--:--";
-  return new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date(entries[0].consumedAt));
+function formatMacro(value: number) {
+  return (Math.round(value * 10) / 10).toLocaleString("de-DE");
 }
 
 export default App;
