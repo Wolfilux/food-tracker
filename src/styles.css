@@ -1,7 +1,7 @@
 :root {
   color: #17211b;
-  background: #f6f2e8;
-  font-family: Avenir Next, Avenir, Segoe UI, sans-serif;
+  background: #f4f1ea;
+  font-family: Inter, Avenir Next, Avenir, Segoe UI, sans-serif;
   font-synthesis: none;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
@@ -16,9 +16,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(135deg, rgba(23, 33, 27, 0.08) 0 1px, transparent 1px 34px),
-    radial-gradient(circle at 15% 20%, rgba(83, 123, 77, 0.18), transparent 28%),
-    #f6f2e8;
+    linear-gradient(135deg, rgba(23, 33, 27, 0.08) 0 1px, transparent 1px 32px),
+    linear-gradient(180deg, #f6f4ee 0%, #e8edf0 100%);
 }
 
 button,
@@ -46,7 +45,7 @@ button {
   padding: 32px;
   color: #fff8eb;
   background:
-    linear-gradient(120deg, rgba(16, 24, 20, 0.84), rgba(16, 24, 20, 0.45)),
+    linear-gradient(120deg, rgba(16, 24, 20, 0.84), rgba(16, 24, 20, 0.48)),
     url("https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=1600&q=80");
   background-position: center;
   background-size: cover;
@@ -72,6 +71,7 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: 999px;
   font-size: 0.82rem;
+  font-weight: 800;
   text-transform: uppercase;
 }
 
@@ -85,16 +85,15 @@ p {
 h1 {
   max-width: 760px;
   margin-bottom: 12px;
-  font-family: Georgia, Cambria, serif;
-  font-size: clamp(3.2rem, 8vw, 7.2rem);
-  line-height: 0.92;
+  font-size: clamp(3.1rem, 8vw, 7rem);
+  line-height: 0.94;
 }
 
 .intro {
   max-width: 620px;
   margin-bottom: 0;
   color: #f9edd3;
-  font-size: 1.1rem;
+  font-size: 1.08rem;
 }
 
 .goal-card,
@@ -109,13 +108,13 @@ h1 {
   align-self: end;
   padding: 22px;
   color: #17211b;
-  background: rgba(255, 248, 235, 0.92);
+  background: rgba(255, 248, 235, 0.94);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
 }
 
 .goal-card__top,
 .section-heading,
-.meal-actions {
+.food-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -178,12 +177,13 @@ h1 {
 }
 
 .metric-card strong {
-  font-size: 1.9rem;
+  font-size: 1.75rem;
 }
 
 .metric-card small {
+  margin-left: 4px;
   color: #627064;
-  font-size: 0.86rem;
+  font-size: 0.82rem;
 }
 
 .workspace-grid {
@@ -235,10 +235,27 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.number-grid {
+.quantity-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 110px;
   gap: 10px;
+}
+
+.calculation-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 16px;
+  padding: 12px 14px;
+  color: #fff8eb;
+  background: #24403a;
+  border-radius: 7px;
+}
+
+.calculation-strip span {
+  color: #d7eee2;
+  font-size: 0.9rem;
 }
 
 .primary-button {
@@ -268,7 +285,7 @@ button:focus-visible {
   color: #627064;
 }
 
-.meal-row {
+.food-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
@@ -276,17 +293,17 @@ button:focus-visible {
   border-top: 1px solid rgba(23, 33, 27, 0.12);
 }
 
-.meal-row h3 {
+.food-row h3 {
   margin-bottom: 4px;
   overflow-wrap: anywhere;
 }
 
-.meal-row p {
+.food-row p {
   margin-bottom: 0;
   color: #627064;
 }
 
-.meal-tag {
+.time-tag {
   display: inline-block;
   margin-bottom: 8px;
   color: #d5512a;
@@ -295,13 +312,13 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
-.meal-actions {
+.food-actions {
   flex-direction: column;
   gap: 12px;
   text-align: right;
 }
 
-.meal-actions button {
+.food-actions button {
   display: grid;
   width: 36px;
   height: 36px;
@@ -312,7 +329,7 @@ button:focus-visible {
   border-radius: 50%;
 }
 
-.meal-actions button:hover {
+.food-actions button:hover {
   color: #fff8eb;
   background: #d5512a;
   border-color: #d5512a;
@@ -341,17 +358,16 @@ button:focus-visible {
   }
 
   .metric-grid,
-  .number-grid {
+  .quantity-grid {
     grid-template-columns: 1fr;
   }
 
-  .meal-row {
+  .food-row {
     grid-template-columns: 1fr;
   }
 
-  .meal-actions {
+  .food-actions {
     align-items: flex-start;
     text-align: left;
   }
 }
-
