@@ -20,6 +20,9 @@ npm install
 npm run dev
 npm run build
 npm run lint
+npm run security:scan
 ~~~
 
 The first version stores entries in browser local storage only. No backend, credentials, or external food database are configured yet.
+
+Before pushing, run `npm run security:scan`. The local checkout also installs a Git pre-push hook for this scan.
