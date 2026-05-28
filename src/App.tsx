@@ -34,6 +34,7 @@ type FoodEntry = {
   consumedAt: string;
   createdAt: string;
   source?: string;
+  aiUsage?: AiUsageSnapshot;
 };
 
 type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
@@ -82,6 +83,17 @@ type AiConfigDraft = {
   apiKey: string;
 };
 
+type AiUsageSnapshot = {
+  provider: string;
+  model: string;
+  responseId?: string;
+  capturedAt: string;
+  completionUsage?: unknown;
+  generationStats?: unknown;
+  costRaw?: unknown;
+  currency?: string;
+};
+
 type FoodImageAnalysis = {
   description: string;
   estimatedGrams: number;
@@ -96,6 +108,7 @@ type FoodImageAnalysis = {
   confidence: "low" | "medium" | "high";
   provider: string;
   model: string;
+  aiUsage?: AiUsageSnapshot;
 };
 
 type MacroPreset = {
@@ -668,6 +681,7 @@ function App() {
       carbsPer100g: analysis.carbsPer100g,
       fatPer100g: analysis.fatPer100g,
       source: `AI ${analysis.provider}/${analysis.model}`,
+      aiUsage: analysis.aiUsage,
     });
   }
 
@@ -685,6 +699,7 @@ function App() {
         fatPer100g: photoAnalysis.fatPer100g,
         consumedAt: draft.consumedAt,
         source: `AI ${photoAnalysis.provider}/${photoAnalysis.model}`,
+        aiUsage: photoAnalysis.aiUsage,
       });
       setEntries((currentEntries) => [entry, ...currentEntries]);
       setSelectedDate(entry.consumedAt.slice(0, 10));
@@ -757,17 +772,14 @@ function App() {
         <div className="hero-copy">
           <p className="eyebrow">
             <ShieldCheck size={16} aria-hidden="true" />
-            local-first calorie log
+            Tagesprotokoll
           </p>
           <h1>Food Tracker</h1>
-          <p className="intro">
-            Time-based calorie tracking with SQLite food lookup, backend storage, and manual fallback.
-          </p>
         </div>
         <div className="goal-card" aria-label="Daily calorie progress">
           <div className="goal-card__top">
             <Target size={22} aria-hidden="true" />
-            <span>Daily target</span>
+            <span>Tagesziel</span>
           </div>
           <strong>{totals.calories.toLocaleString()} kcal</strong>
           <div className="progress-track">
@@ -780,7 +792,7 @@ function App() {
       <nav className="view-tabs" aria-label="App views">
         <button className={activeView === "tracker" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("tracker")}>
           <Utensils size={17} aria-hidden="true" />
-          Tracking
+          Protokoll
         </button>
         <button className={activeView === "settings" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("settings")}>
           <Settings size={17} aria-hidden="true" />
@@ -794,9 +806,9 @@ function App() {
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
-                macro setup
+                Ziele
               </p>
-              <h2>Nutrition target</h2>
+              <h2>Nährwerte</h2>
               <p>{selectedPreset.note}</p>
             </div>
             <div className="config-controls">
@@ -829,10 +841,9 @@ function App() {
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <KeyRound size={16} aria-hidden="true" />
-                photo AI
+                Foto
               </p>
               <h2>Fotoanalyse</h2>
-              <p>Provider, Modell und Key bleiben auf dem lokalen Server. Im Browser wird nur der gespeicherte Key-Status angezeigt.</p>
             </div>
             <div className="config-controls">
               <label>
@@ -945,6 +956,7 @@ function App() {
                 <strong>{photoAnalysis.description}</strong>
                 <span>{photoAnalysis.estimatedGrams} g · {photoAnalysis.calories} kcal · Sicherheit {confidenceLabel(photoAnalysis.confidence)}</span>
                 <small>P {formatMacro(photoAnalysis.protein)}g · C {formatMacro(photoAnalysis.carbs)}g · F {formatMacro(photoAnalysis.fat)}g</small>
+                {photoAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
               </div>
             )}
           </section>
@@ -952,7 +964,7 @@ function App() {
             <div className="search-panel__heading">
               <Database size={18} aria-hidden="true" />
               <span>1. Lebensmittel suchen</span>
-              <small>lokal + OpenFoodFacts</small>
+              <small>Datenbank</small>
             </div>
             <div className="food-search autocomplete-shell">
               <label>
@@ -1049,8 +1061,8 @@ function App() {
       </section>
 
       <section className="metric-grid" aria-label="Daily totals">
-        <Metric icon={<Flame />} label="Calories" value={totals.calories} suffix="kcal" />
-        <Metric icon={<Scale />} label="Food weight" value={Math.round(totals.grams)} suffix="g" />
+        <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
+        <Metric icon={<Scale />} label="Menge" value={Math.round(totals.grams)} suffix="g" />
         <MacroMetric label="Protein" target={macroTargets.protein.grams} actual={totals.protein} />
         <MacroMetric label="Kohlenhydrate" target={macroTargets.carbs.grams} actual={totals.carbs} />
         <MacroMetric label="Fett" target={macroTargets.fat.grams} actual={totals.fat} />
@@ -1063,7 +1075,7 @@ function App() {
             Tag
             <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value || todayLocal())} />
           </label>
-          <span>{dayEntries.length} entries</span>
+          <span>{dayEntries.length} Einträge</span>
         </div>
         {sortedEntries.length === 0 && <p className="empty-state">Noch keine Einträge fuer diesen Tag.</p>}
         {sortedEntries.map((entry) => (

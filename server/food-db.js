@@ -379,7 +379,7 @@ export function listEntries() {
     .prepare([
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
-      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json",
       "FROM entries",
       "ORDER BY consumed_at DESC, created_at DESC",
     ].join("\n"))
@@ -394,9 +394,9 @@ export function createEntry(input) {
     .prepare([
       "INSERT INTO entries (",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
-      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json",
       ")",
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ].join("\n"))
     .run(
       entry.id,
@@ -411,6 +411,7 @@ export function createEntry(input) {
       entry.consumedAt,
       entry.createdAt,
       entry.source ?? "manual",
+      JSON.stringify(entry.aiUsage ?? null),
     );
 
   return entry;
@@ -472,12 +473,14 @@ function initializeDatabase(database) {
     "  fat_per_100g REAL NOT NULL DEFAULT 0,",
     "  consumed_at TEXT NOT NULL,",
     "  created_at TEXT NOT NULL,",
-    "  source TEXT NOT NULL DEFAULT 'manual'",
+    "  source TEXT NOT NULL DEFAULT 'manual',",
+    "  ai_usage_json TEXT NOT NULL DEFAULT ''",
     ");",
     "CREATE INDEX IF NOT EXISTS idx_entries_consumed_at ON entries(consumed_at DESC);",
   ].join("\n"));
 
   addColumnIfMissing(database, "foods", "image_url", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
   seedFoodRecords(database);
 }
 
@@ -504,6 +507,7 @@ async function analyzeFoodImage(input) {
       model: config.model,
       temperature: 0.1,
       response_format: { type: "json_object" },
+      ...(config.provider === "openrouter" ? { usage: { include: true } } : {}),
       messages: [
         {
           role: "system",
@@ -533,6 +537,7 @@ async function analyzeFoodImage(input) {
 
   const rawContent = payload?.choices?.[0]?.message?.content;
   const parsed = parseJsonObject(rawContent);
+  const aiUsage = await buildAiUsageSnapshot(config, payload);
   const estimatedGrams = clampNumber(parsed.estimatedGrams, 1, 5000);
   const calories = clampNumber(parsed.calories, 0, 10000);
   const protein = clampNumber(parsed.protein, 0, 1000);
@@ -555,7 +560,56 @@ async function analyzeFoodImage(input) {
     confidence: ["low", "medium", "high"].includes(parsed.confidence) ? parsed.confidence : "medium",
     provider: config.provider,
     model: config.model,
+    aiUsage,
   };
+}
+
+async function buildAiUsageSnapshot(config, payload) {
+  const responseId = typeof payload?.id === "string" ? payload.id : "";
+  const completionUsage = sanitizeJsonValue(payload?.usage);
+  const generationStats = config.provider === "openrouter" && responseId
+    ? await fetchOpenRouterGenerationStats(config, responseId)
+    : null;
+
+  return {
+    provider: config.provider,
+    model: config.model,
+    responseId,
+    capturedAt: new Date().toISOString(),
+    completionUsage,
+    generationStats,
+    costRaw: extractRawCost(config.provider, generationStats),
+    currency: config.provider === "openrouter" ? "openrouter-credits" : "",
+  };
+}
+
+async function fetchOpenRouterGenerationStats(config, responseId) {
+  try {
+    const url = new URL("https://openrouter.ai/api/v1/generation");
+    url.searchParams.set("id", responseId);
+    const response = await fetch(url, {
+      headers: {
+        authorization: "Bearer " + config.apiKey,
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return sanitizeJsonValue(payload?.data ?? payload);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeJsonValue(value) {
+  if (value === null || value === undefined) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function extractRawCost(provider, generationStats) {
+  if (provider !== "openrouter" || !generationStats) return null;
+  const totalCost = generationStats.total_cost ?? generationStats.totalCost;
+  return totalCost === undefined ? null : totalCost;
 }
 
 async function fetchProviderModels(providerId) {
@@ -907,6 +961,7 @@ function validateEntry(input) {
     consumedAt,
     createdAt: String(input?.createdAt ?? new Date().toISOString()),
     source: input?.source ? String(input.source) : "manual",
+    aiUsage: normalizeAiUsage(input?.aiUsage),
   };
 }
 
@@ -924,7 +979,22 @@ function entryFromRow(row) {
     consumedAt: row.consumed_at,
     createdAt: row.created_at,
     source: row.source,
+    aiUsage: parseStoredJson(row.ai_usage_json),
   };
+}
+
+function normalizeAiUsage(value) {
+  if (!value || typeof value !== "object") return undefined;
+  return sanitizeJsonValue(value);
+}
+
+function parseStoredJson(value) {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function readJsonBody(request, maxBytes = 1_000_000) {

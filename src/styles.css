@@ -15,9 +15,12 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     linear-gradient(135deg, rgba(23, 33, 27, 0.08) 0 1px, transparent 1px 32px),
     linear-gradient(180deg, #f6f4ee 0%, #e8edf0 100%);
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -38,7 +41,7 @@ button:disabled {
 .app-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 48px;
+  padding: max(32px, env(safe-area-inset-top)) 0 max(48px, env(safe-area-inset-bottom));
 }
 
 .hero-panel {
@@ -398,6 +401,7 @@ select {
   background: #fffdf7;
   border: 1px solid rgba(23, 33, 27, 0.18);
   border-radius: 7px;
+  font-size: 1rem;
 }
 
 input:focus,
@@ -850,7 +854,7 @@ button:focus-visible {
 @media (max-width: 560px) {
   .app-shell {
     width: min(100% - 20px, 1180px);
-    padding-top: 10px;
+    padding-top: max(10px, env(safe-area-inset-top));
   }
 
   .hero-panel {
