@@ -30,6 +30,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .app-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -75,6 +80,13 @@ button {
   text-transform: uppercase;
 }
 
+.eyebrow--dark {
+  margin-bottom: 12px;
+  color: #24403a;
+  background: rgba(36, 64, 58, 0.08);
+  border-color: rgba(36, 64, 58, 0.16);
+}
+
 h1,
 h2,
 h3,
@@ -98,6 +110,7 @@ h1 {
 
 .goal-card,
 .metric-card,
+.config-panel,
 .entry-form,
 .entry-list {
   border: 1px solid rgba(23, 33, 27, 0.12);
@@ -141,11 +154,130 @@ h1 {
   border-radius: inherit;
 }
 
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0;
+  padding: 6px;
+  width: fit-content;
+  background: rgba(255, 250, 240, 0.92);
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+}
+
+.view-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 13px;
+  color: #425045;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-weight: 850;
+}
+
+.view-tab--active {
+  color: #fff8eb;
+  background: #17211b;
+}
+
+.settings-page {
+  min-height: 360px;
+}
+
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
+  margin: 14px 0 18px;
+}
+
+.config-panel {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(240px, 0.7fr) minmax(320px, 1.2fr);
+  gap: 18px;
+  align-items: stretch;
   margin: 18px 0;
+  padding: 22px;
+  background:
+    linear-gradient(135deg, rgba(213, 81, 42, 0.08), transparent 42%),
+    #fffaf0;
+}
+
+.config-panel--page {
+  min-height: 260px;
+  margin-top: 0;
+}
+
+.ai-config-panel {
+  margin-top: 18px;
+}
+
+.config-copy {
+  min-width: 0;
+}
+
+.config-copy h2 {
+  margin-bottom: 8px;
+  font-size: 1.55rem;
+}
+
+.config-copy p {
+  margin-bottom: 0;
+  color: #627064;
+}
+
+.config-controls {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+
+.macro-target-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.macro-target {
+  display: grid;
+  min-height: 126px;
+  align-content: space-between;
+  padding: 14px;
+  background: #eef5f0;
+  border: 1px solid rgba(36, 64, 58, 0.14);
+  border-radius: 8px;
+}
+
+.macro-target span {
+  color: #425045;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.macro-target strong {
+  color: #17211b;
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.macro-target small {
+  color: #627064;
+  font-size: 0.82rem;
+}
+
+.config-status {
+  margin: 0;
+  color: #627064;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.config-status--error {
+  color: #a43d20;
 }
 
 .metric-card {
@@ -186,10 +318,50 @@ h1 {
   font-size: 0.82rem;
 }
 
+.macro-metric {
+  display: grid;
+  align-content: space-between;
+  gap: 12px;
+}
+
+.macro-metric p {
+  margin-bottom: 0;
+}
+
+.macro-metric__values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.macro-metric__values span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.macro-metric__values small {
+  margin-left: 0;
+  color: #627064;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.macro-metric__values strong {
+  font-size: 1.28rem;
+  line-height: 1.05;
+}
+
+.progress-track--small {
+  height: 7px;
+}
+
 .workspace-grid {
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 460px);
   gap: 18px;
+  margin: 0 0 18px;
 }
 
 .entry-form,
@@ -241,12 +413,157 @@ button:focus-visible {
   gap: 10px;
 }
 
+.selection-card {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  color: #425045;
+  background: rgba(238, 245, 240, 0.72);
+  border: 1px solid rgba(36, 64, 58, 0.14);
+  border-radius: 8px;
+}
+
+.selection-card--active {
+  color: #17211b;
+  background: #fffdf7;
+  border-color: rgba(213, 81, 42, 0.38);
+  box-shadow: inset 3px 0 0 #d5512a;
+}
+
+.selection-card span {
+  color: #24403a;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.selection-card strong {
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+.selection-card small {
+  color: #627064;
+}
+
 .search-panel {
-  margin-bottom: 18px;
+  margin: 0 0 14px;
   padding: 14px;
   background: #eef5f0;
   border: 1px solid rgba(23, 33, 27, 0.12);
   border-radius: 8px;
+}
+
+.photo-panel {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px;
+  background: #fff3df;
+  border: 1px solid rgba(213, 81, 42, 0.2);
+  border-radius: 8px;
+}
+
+.photo-input {
+  min-height: 42px;
+  background: #fffdf7;
+}
+
+.photo-input--hidden {
+  display: none;
+}
+
+.photo-drop {
+  display: grid;
+  min-height: 142px;
+  place-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: #7a694f;
+  text-align: center;
+  background:
+    linear-gradient(135deg, rgba(213, 81, 42, 0.1) 0 1px, transparent 1px 18px),
+    #fffaf0;
+  border: 1px dashed rgba(213, 81, 42, 0.45);
+  border-radius: 8px;
+}
+
+.photo-drop--active {
+  padding: 0;
+  overflow: hidden;
+  border-style: solid;
+}
+
+.photo-drop img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+}
+
+.photo-drop--active span {
+  width: 100%;
+  padding: 9px 12px;
+  color: #24403a;
+  background: rgba(255, 250, 240, 0.94);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.photo-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  gap: 8px;
+  color: #17211b;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.18);
+  border-radius: 7px;
+  font-weight: 850;
+}
+
+.secondary-button--dark {
+  color: #fff8eb;
+  background: #24403a;
+  border-color: #24403a;
+}
+
+.analysis-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  color: #17211b;
+  background: #fffdf7;
+  border: 1px solid rgba(213, 81, 42, 0.34);
+  border-radius: 8px;
+  box-shadow: inset 3px 0 0 #d5512a;
+}
+
+.analysis-card span,
+.analysis-card small,
+.photo-note {
+  color: #627064;
+  font-size: 0.84rem;
+}
+
+.photo-note {
+  margin: 0;
+}
+
+.photo-note--error {
+  color: #a43d20;
+  font-weight: 800;
+}
+
+.search-panel--embedded {
+  margin-bottom: 16px;
 }
 
 .search-panel__heading {
@@ -293,6 +610,10 @@ button:focus-visible {
   overflow: auto;
 }
 
+.result-list:not(.result-list--open) {
+  display: none;
+}
+
 .result-item {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -309,6 +630,11 @@ button:focus-visible {
 
 .result-item:hover {
   border-color: #d5512a;
+}
+
+.result-item--active {
+  border-color: #d5512a;
+  box-shadow: inset 3px 0 0 #d5512a;
 }
 
 .result-item img,
@@ -348,6 +674,32 @@ button:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.manual-nutrition {
+  margin: 2px 0 14px;
+  padding: 0;
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+  background: rgba(238, 245, 240, 0.56);
+}
+
+.manual-nutrition summary {
+  min-height: 42px;
+  padding: 11px 13px;
+  color: #24403a;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.manual-nutrition[open] {
+  padding: 0 13px 13px;
+}
+
+.manual-nutrition[open] summary {
+  margin: 0 -13px 13px;
+  border-bottom: 1px solid rgba(23, 33, 27, 0.1);
 }
 
 .calculation-strip {
@@ -392,6 +744,28 @@ button:focus-visible {
 
 .section-heading span {
   color: #627064;
+}
+
+.date-filter {
+  width: min(170px, 100%);
+  margin: 0 0 0 auto;
+}
+
+.date-filter input {
+  min-height: 38px;
+}
+
+.form-error,
+.empty-state {
+  margin: 12px 0 0;
+  color: #a43d20;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.empty-state {
+  color: #627064;
+  font-weight: 750;
 }
 
 .food-row {
@@ -463,6 +837,7 @@ button:focus-visible {
 
 @media (max-width: 840px) {
   .hero-panel,
+  .config-panel,
   .workspace-grid {
     grid-template-columns: 1fr;
   }
@@ -483,14 +858,34 @@ button:focus-visible {
     padding: 22px;
   }
 
+  .view-tabs {
+    width: 100%;
+  }
+
+  .view-tab {
+    flex: 1;
+  }
+
   .metric-grid,
+  .macro-target-grid,
   .macro-grid,
-  .quantity-grid {
+  .quantity-grid,
+  .photo-actions {
     grid-template-columns: 1fr;
   }
 
   .food-row {
     grid-template-columns: 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .date-filter {
+    width: 100%;
+    margin-left: 0;
   }
 
   .food-actions {
