@@ -3,6 +3,7 @@ import {
   Activity,
   Camera,
   Database,
+  Download,
   Flame,
   ImagePlus,
   KeyRound,
@@ -16,6 +17,7 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Upload,
   Utensils,
 } from "lucide-react";
 
@@ -82,6 +84,13 @@ type AiConfigDraft = {
   provider: string;
   model: string;
   apiKey: string;
+};
+
+type ImportResult = {
+  entriesImported: number;
+  nutritionConfigImported: boolean;
+  aiConfigImported: boolean;
+  warnings: string[];
 };
 
 type AiUsageSnapshot = {
@@ -436,11 +445,14 @@ function App() {
   const [aiConfigError, setAiConfigError] = useState("");
   const [aiConfigState, setAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [aiModelsState, setAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [importExportMessage, setImportExportMessage] = useState("");
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.consumedAt.slice(0, 10) === selectedDate),
@@ -785,6 +797,65 @@ function App() {
     setEntries(entries.filter((entry) => entry.id !== id));
   }
 
+  async function exportData() {
+    setImportExportState("working");
+    setImportExportMessage("");
+    try {
+      const payload = await fetchExportData();
+      const date = new Date().toISOString().slice(0, 10);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `food-tracker-export-${date}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setImportExportState("done");
+      setImportExportMessage("Export erstellt. API-Key ist nicht enthalten.");
+    } catch (error) {
+      setImportExportState("error");
+      setImportExportMessage(error instanceof Error ? error.message : "Export fehlgeschlagen.");
+    }
+  }
+
+  async function importData(file: File | null) {
+    if (!file) return;
+    if (!window.confirm("Import ersetzt alle aktuellen Eintraege. Fortfahren?")) {
+      if (importInputRef.current) importInputRef.current.value = "";
+      return;
+    }
+
+    setImportExportState("working");
+    setImportExportMessage("");
+    try {
+      const result = await importBackupFile(file);
+      const [entriesResponse, configResponse, aiConfigResponse] = await Promise.all([
+        fetchEntries(),
+        fetchNutritionConfig(),
+        fetchAiConfig(),
+      ]);
+      setEntries(entriesResponse);
+      setNutritionConfig(configResponse);
+      setAiConfig(aiConfigResponse);
+      setAiDraft({ provider: aiConfigResponse.provider, model: aiConfigResponse.model, apiKey: "" });
+      setSelectedDate(todayLocal());
+      setImportExportState("done");
+      setImportExportMessage([
+        `${result.entriesImported.toLocaleString("de-DE")} Eintraege importiert.`,
+        result.nutritionConfigImported ? "Ziele uebernommen." : "",
+        result.aiConfigImported ? "AI-Modell uebernommen." : "",
+        ...(result.warnings ?? []),
+      ].filter(Boolean).join(" "));
+    } catch (error) {
+      setImportExportState("error");
+      setImportExportMessage(error instanceof Error ? error.message : "Import fehlgeschlagen.");
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
   function updateFoodName(value: string) {
     setDraft({ ...draft, foodName: value, foodKey: undefined, source: "manual" });
     setAutocompleteOpen(true);
@@ -952,6 +1023,40 @@ function App() {
               </p>
             </div>
           </form>
+          <section className="config-panel config-panel--page backup-panel" aria-label="Backup import export">
+            <div className="config-copy">
+              <p className="eyebrow eyebrow--dark">
+                <Database size={16} aria-hidden="true" />
+                Backup
+              </p>
+              <h2>Export & Import</h2>
+              <p>JSON-Backup fuer Tagesprotokoll, Ziele und AI-Modell. API-Keys bleiben lokal.</p>
+            </div>
+            <div className="config-controls backup-actions">
+              <button className="secondary-button" type="button" disabled={importExportState === "working"} onClick={() => void exportData()}>
+                {importExportState === "working" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Download size={18} aria-hidden="true" />}
+                Daten exportieren
+              </button>
+              <button className="secondary-button" type="button" disabled={importExportState === "working"} onClick={() => importInputRef.current?.click()}>
+                <Upload size={18} aria-hidden="true" />
+                Backup importieren
+              </button>
+              <input
+                ref={importInputRef}
+                className="backup-file-input"
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => void importData(event.target.files?.[0] ?? null)}
+              />
+            </div>
+            <div className="backup-note">
+              <strong>Import ersetzt alle aktuellen Eintraege.</strong>
+              <span>Vorher am besten kurz exportieren.</span>
+              <p className={importExportState === "error" ? "config-status config-status--error" : "config-status"}>
+                {importExportMessage || "Bereit."}
+              </p>
+            </div>
+          </section>
         </section>
       )}
 
@@ -1306,6 +1411,33 @@ async function fetchAiModels(provider: string): Promise<string[]> {
   const data = (await response.json()) as { models?: string[]; error?: string };
   if (!response.ok || !Array.isArray(data.models)) throw new Error(data.error ?? "Modelle konnten nicht geladen werden.");
   return data.models;
+}
+
+async function fetchExportData(): Promise<unknown> {
+  const response = await fetch("/api/export");
+  if (!response.ok) throw new Error("Export konnte nicht erstellt werden.");
+  return response.json();
+}
+
+async function importBackupFile(file: File): Promise<ImportResult> {
+  if (!file.name.toLowerCase().endsWith(".json")) {
+    throw new Error("Bitte eine JSON-Datei auswaehlen.");
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await file.text()) as unknown;
+  } catch {
+    throw new Error("Die Datei ist kein gueltiges JSON-Backup.");
+  }
+  const response = await fetch("/api/import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json()) as { result?: ImportResult; error?: string };
+  if (!response.ok || !data.result) throw new Error(data.error ?? "Import fehlgeschlagen.");
+  return data.result;
 }
 
 async function analyzeFoodPhoto(imageDataUrl: string): Promise<FoodImageAnalysis> {

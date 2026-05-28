@@ -220,6 +220,10 @@ h1 {
   margin-top: 18px;
 }
 
+.backup-panel {
+  margin-top: 18px;
+}
+
 .config-copy {
   min-width: 0;
 }
@@ -282,6 +286,36 @@ h1 {
 
 .config-status--error {
   color: #a43d20;
+}
+
+.backup-actions {
+  gap: 10px;
+}
+
+.backup-file-input {
+  display: none;
+}
+
+.backup-note {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  color: #24403a;
+  background: #eef5f0;
+  border: 1px solid rgba(36, 64, 58, 0.14);
+  border-radius: 8px;
+}
+
+.backup-note strong {
+  color: #17211b;
+  font-size: 0.94rem;
+}
+
+.backup-note span {
+  color: #627064;
+  font-size: 0.86rem;
+  font-weight: 750;
 }
 
 .metric-card {

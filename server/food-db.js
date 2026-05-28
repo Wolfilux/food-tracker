@@ -254,6 +254,20 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/export" && request.method === "GET") {
+      sendJson(response, buildExportPayload());
+      return;
+    }
+
+    if (url.pathname === "/api/import" && request.method === "POST") {
+      try {
+        sendJson(response, { result: importFoodTrackerData(await readJsonBody(request, 8_000_000)) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/entries") {
       if (request.method === "GET") {
         sendJson(response, { entries: listEntries() });
@@ -433,6 +447,86 @@ export function createEntry(input) {
 
 export function deleteEntry(id) {
   getFoodDatabase().prepare("DELETE FROM entries WHERE id = ?").run(id);
+}
+
+export function buildExportPayload() {
+  const aiConfig = getPublicAiConfig();
+  return {
+    app: "food-tracker",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    nutritionConfig: getNutritionConfig(),
+    aiConfig: {
+      provider: aiConfig.provider,
+      model: aiConfig.model,
+    },
+    entries: listEntries(),
+  };
+}
+
+export function importFoodTrackerData(input) {
+  if (!input || typeof input !== "object") throw new Error("Invalid import file");
+  if (input.app !== "food-tracker") throw new Error("Import file is not a Food Tracker export");
+  if (Number(input.version ?? 0) !== 1) throw new Error("Unsupported import version");
+
+  const entries = Array.isArray(input.entries) ? input.entries : null;
+  if (!entries) throw new Error("Import file has no entries");
+  if (entries.length > 10000) throw new Error("Import file contains too many entries");
+
+  const database = getFoodDatabase();
+  const warnings = [];
+  let nutritionConfigImported = false;
+  let aiConfigImported = false;
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (input.nutritionConfig) {
+      saveNutritionConfig(input.nutritionConfig);
+      nutritionConfigImported = true;
+    }
+
+    database.prepare("DELETE FROM entries").run();
+    for (const entry of entries) {
+      createEntry(entry);
+    }
+
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+
+  if (input.aiConfig) {
+    aiConfigImported = importPublicAiConfig(input.aiConfig, warnings);
+  }
+
+  return {
+    entriesImported: entries.length,
+    nutritionConfigImported,
+    aiConfigImported,
+    warnings,
+  };
+}
+
+function importPublicAiConfig(input, warnings) {
+  const provider = String(input?.provider ?? "");
+  const model = String(input?.model ?? "");
+  const providerDefinition = aiProviders.get(provider);
+  if (!providerDefinition || !isSafeModelId(model)) {
+    warnings.push("AI-Konfiguration im Import war ungueltig und wurde uebersprungen.");
+    return false;
+  }
+
+  const current = getAiConfigRecord();
+  try {
+    validateProviderKeyPair(provider, current.apiKey);
+  } catch {
+    warnings.push("AI-Provider/Modell wurde nicht importiert, weil der gespeicherte API-Key dazu nicht passt.");
+    return false;
+  }
+
+  saveAiConfig({ provider, model });
+  return true;
 }
 
 function initializeDatabase(database) {
