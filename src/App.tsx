@@ -7,6 +7,7 @@ import {
   ImagePlus,
   KeyRound,
   Loader2,
+  MessageSquareText,
   Plus,
   Scale,
   Search,
@@ -424,6 +425,10 @@ function App() {
   const [photoAnalysis, setPhotoAnalysis] = useState<FoodImageAnalysis | null>(null);
   const [photoState, setPhotoState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [photoError, setPhotoError] = useState("");
+  const [aiFoodText, setAiFoodText] = useState("");
+  const [textAnalysis, setTextAnalysis] = useState<FoodImageAnalysis | null>(null);
+  const [textAnalysisState, setTextAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [textAnalysisError, setTextAnalysisError] = useState("");
   const [entryError, setEntryError] = useState("");
   const [aiConfigError, setAiConfigError] = useState("");
   const [aiConfigState, setAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -683,6 +688,50 @@ function App() {
       source: `AI ${analysis.provider}/${analysis.model}`,
       aiUsage: analysis.aiUsage,
     });
+  }
+
+  async function analyzeFoodText() {
+    const description = aiFoodText.trim();
+    if (!description) return;
+    setTextAnalysisState("loading");
+    setTextAnalysisError("");
+    setTextAnalysis(null);
+
+    try {
+      const analysis = await analyzeFoodDescription(description);
+      setTextAnalysis(analysis);
+      applyPhotoAnalysis(analysis);
+      setTextAnalysisState("done");
+    } catch (error) {
+      setTextAnalysisError(error instanceof Error ? error.message : "Textanalyse fehlgeschlagen.");
+      setTextAnalysisState("error");
+    }
+  }
+
+  async function saveTextAnalysis() {
+    if (!textAnalysis) return;
+    setEntryError("");
+    try {
+      const entry = await createEntry({
+        foodName: textAnalysis.description,
+        quantityValue: textAnalysis.estimatedGrams,
+        quantityUnit: "g",
+        caloriesPer100g: textAnalysis.caloriesPer100g,
+        proteinPer100g: textAnalysis.proteinPer100g,
+        carbsPer100g: textAnalysis.carbsPer100g,
+        fatPer100g: textAnalysis.fatPer100g,
+        consumedAt: draft.consumedAt,
+        source: `AI ${textAnalysis.provider}/${textAnalysis.model}`,
+        aiUsage: textAnalysis.aiUsage,
+      });
+      setEntries((currentEntries) => [entry, ...currentEntries]);
+      setSelectedDate(entry.consumedAt.slice(0, 10));
+      setTextAnalysis(null);
+      setAiFoodText("");
+      setTextAnalysisState("idle");
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "AI-Text-Eintrag konnte nicht gespeichert werden.");
+    }
   }
 
   async function savePhotoAnalysis() {
@@ -960,6 +1009,48 @@ function App() {
               </div>
             )}
           </section>
+          <section className="ai-text-panel" aria-label="AI text analysis">
+            <div className="search-panel__heading">
+              <MessageSquareText size={18} aria-hidden="true" />
+              <span>AI-Text</span>
+              <small>{aiConfig.hasApiKey ? aiConfig.model : "Key fehlt"}</small>
+            </div>
+            <label>
+              Beschreibung
+              <textarea
+                value={aiFoodText}
+                onChange={(event) => {
+                  setAiFoodText(event.target.value);
+                  setTextAnalysisState("idle");
+                  setTextAnalysis(null);
+                }}
+                placeholder="Omelette mit Schinken, Zwiebeln und Champignons"
+                rows={3}
+              />
+            </label>
+            <div className="photo-actions">
+              <button className="secondary-button" type="button" disabled={!aiFoodText.trim() || textAnalysisState === "loading" || !aiConfig.hasApiKey} onClick={() => void analyzeFoodText()}>
+                {textAnalysisState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+                Schätzen
+              </button>
+              {textAnalysis && (
+                <button className="secondary-button secondary-button--dark" type="button" onClick={() => void saveTextAnalysis()}>
+                  <Plus size={18} aria-hidden="true" />
+                  Ins Tagesprotokoll
+                </button>
+              )}
+            </div>
+            {textAnalysisError && <p className="photo-note photo-note--error">{textAnalysisError}</p>}
+            {!aiConfig.hasApiKey && <p className="photo-note">API-Key zuerst in der Konfiguration speichern.</p>}
+            {textAnalysis && (
+              <div className="analysis-card" aria-live="polite">
+                <strong>{textAnalysis.description}</strong>
+                <span>{textAnalysis.estimatedGrams} g · {textAnalysis.calories} kcal · Sicherheit {confidenceLabel(textAnalysis.confidence)}</span>
+                <small>P {formatMacro(textAnalysis.protein)}g · C {formatMacro(textAnalysis.carbs)}g · F {formatMacro(textAnalysis.fat)}g</small>
+                {textAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
+              </div>
+            )}
+          </section>
           <section className="search-panel search-panel--embedded" aria-label="Food search">
             <div className="search-panel__heading">
               <Database size={18} aria-hidden="true" />
@@ -1222,6 +1313,17 @@ async function analyzeFoodPhoto(imageDataUrl: string): Promise<FoodImageAnalysis
   });
   const data = (await response.json()) as { analysis?: FoodImageAnalysis; error?: string };
   if (!response.ok || !data.analysis) throw new Error(data.error ?? "Fotoanalyse fehlgeschlagen.");
+  return data.analysis;
+}
+
+async function analyzeFoodDescription(description: string): Promise<FoodImageAnalysis> {
+  const response = await fetch("/api/ai/analyze-text", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ description }),
+  });
+  const data = (await response.json()) as { analysis?: FoodImageAnalysis; error?: string };
+  if (!response.ok || !data.analysis) throw new Error(data.error ?? "Textanalyse fehlgeschlagen.");
   return data.analysis;
 }
 

@@ -25,7 +25,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -393,7 +394,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 44px;
   padding: 10px 12px;
@@ -402,6 +404,11 @@ select {
   border: 1px solid rgba(23, 33, 27, 0.18);
   border-radius: 7px;
   font-size: 1rem;
+}
+
+textarea {
+  min-height: 88px;
+  resize: vertical;
 }
 
 input:focus,
@@ -466,6 +473,16 @@ button:focus-visible {
   padding: 14px;
   background: #fff3df;
   border: 1px solid rgba(213, 81, 42, 0.2);
+  border-radius: 8px;
+}
+
+.ai-text-panel {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px;
+  background: #eef5f0;
+  border: 1px solid rgba(36, 64, 58, 0.16);
   border-radius: 8px;
 }
 

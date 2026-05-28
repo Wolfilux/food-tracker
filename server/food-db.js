@@ -231,6 +231,16 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/ai/analyze-text" && request.method === "POST") {
+      try {
+        const analysis = await analyzeFoodText(await readJsonBody(request));
+        sendJson(response, { analysis });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/ai/models" && request.method === "GET") {
       try {
         const provider = url.searchParams.get("provider") ?? getAiConfigRecord().provider;
@@ -338,6 +348,7 @@ export function saveAiConfig(input) {
 
   const current = getAiConfigRecord();
   const apiKeyInput = typeof input?.apiKey === "string" ? input.apiKey.trim() : "";
+  validateProviderKeyPair(provider, apiKeyInput || current.apiKey);
   const shouldClearKey = input?.clearApiKey === true;
   const encrypted = apiKeyInput ? encryptSecret(apiKeyInput) : null;
   const hasNewKey = Boolean(encrypted);
@@ -489,6 +500,7 @@ async function analyzeFoodImage(input) {
   const provider = aiProviders.get(config.provider);
   if (!provider) throw new Error("AI provider is not configured");
   if (!config.apiKey) throw new Error("API key fehlt in der Konfiguration");
+  validateProviderKeyPair(config.provider, config.apiKey);
 
   const imageDataUrl = String(input?.imageDataUrl ?? "");
   if (!imageDataUrl.startsWith("data:image/")) throw new Error("Bitte ein Bild hochladen");
@@ -548,6 +560,86 @@ async function analyzeFoodImage(input) {
 
   return {
     description: String(parsed.description ?? "Foto-Eintrag").trim().slice(0, 160) || "Foto-Eintrag",
+    estimatedGrams: Math.round(estimatedGrams),
+    calories: Math.round(calories),
+    protein: roundNutrition(protein),
+    carbs: roundNutrition(carbs),
+    fat: roundNutrition(fat),
+    caloriesPer100g: roundNutrition((calories / estimatedGrams) * 100),
+    proteinPer100g: roundNutrition((protein / estimatedGrams) * 100),
+    carbsPer100g: roundNutrition((carbs / estimatedGrams) * 100),
+    fatPer100g: roundNutrition((fat / estimatedGrams) * 100),
+    confidence: ["low", "medium", "high"].includes(parsed.confidence) ? parsed.confidence : "medium",
+    provider: config.provider,
+    model: config.model,
+    aiUsage,
+  };
+}
+
+async function analyzeFoodText(input) {
+  const description = String(input?.description ?? "").trim();
+  if (description.length < 3) throw new Error("Bitte Essen beschreiben");
+  if (description.length > 800) throw new Error("Beschreibung ist zu lang");
+
+  const config = getAiConfigRecord();
+  const provider = aiProviders.get(config.provider);
+  if (!provider) throw new Error("AI provider is not configured");
+  if (!config.apiKey) throw new Error("API key fehlt in der Konfiguration");
+  validateProviderKeyPair(config.provider, config.apiKey);
+
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? {
+        "HTTP-Referer": "http://localhost:5173",
+        "X-Title": "Food Tracker",
+      } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      ...(config.provider === "openrouter" ? { usage: { include: true } } : {}),
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Du bist ein vorsichtiger Nutrition-Estimator.",
+            "Antworte ausschliesslich als JSON ohne Markdown.",
+            "Schaetze ein beschriebenes Essen als eine verzehrte Portion.",
+            "Wenn Mengen fehlen, nutze realistische Alltagsportionen und bleibe konservativ.",
+            "Schema: {description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high'}",
+            "calories/protein/carbs/fat sind Gesamtwerte fuer die geschaetzte Portion, nicht pro 100g.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: "Schaetze dieses Essen fuer ein Tagesprotokoll: " + description,
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(String(payload?.error?.message ?? "AI analysis failed"));
+  }
+
+  const rawContent = payload?.choices?.[0]?.message?.content;
+  const parsed = parseJsonObject(rawContent);
+  const estimatedGrams = clampNumber(parsed.estimatedGrams, 1, 5000);
+  const calories = clampNumber(parsed.calories, 0, 10000);
+  const protein = clampNumber(parsed.protein, 0, 1000);
+  const carbs = clampNumber(parsed.carbs, 0, 1000);
+  const fat = clampNumber(parsed.fat, 0, 1000);
+  const aiUsage = await buildAiUsageSnapshot(config, payload);
+
+  if (!estimatedGrams || !Number.isFinite(calories)) throw new Error("AI response could not be understood");
+
+  return {
+    description: String(parsed.description ?? "AI-Eintrag").trim().slice(0, 160) || "AI-Eintrag",
     estimatedGrams: Math.round(estimatedGrams),
     calories: Math.round(calories),
     protein: roundNutrition(protein),
@@ -727,6 +819,16 @@ function decryptSecret(ciphertext, iv, tag) {
 
 function makeKeyHint(value) {
   return value.length <= 8 ? "gespeichert" : `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+function validateProviderKeyPair(provider, apiKey) {
+  if (!apiKey) return;
+  if (provider === "openai" && apiKey.startsWith("sk-or-")) {
+    throw new Error("OpenRouter-Key erkannt. Bitte Provider OpenRouter speichern.");
+  }
+  if (provider === "openrouter" && !apiKey.startsWith("sk-or-")) {
+    throw new Error("OpenRouter erwartet einen OpenRouter-Key.");
+  }
 }
 
 function parseJsonObject(value) {
