@@ -1,0 +1,30 @@
+services:
+  food-tracker:
+    build:
+      context: .
+    image: food-tracker:latest
+    container_name: food-tracker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4173
+    ports:
+      - "4173:4173"
+    volumes:
+      - food-tracker-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4173/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  food-tracker-data:

@@ -42,6 +42,20 @@ npm run security:scan
 
 Before pushing, run `npm run security:scan`. The local checkout also installs a Git pre-push hook for this scan.
 
+## Docker / Portainer
+
+The repository includes a production `Dockerfile` and `docker-compose.yml`. The container serves the built PWA and the SQLite API from one Node process.
+
+~~~bash
+docker compose up --build -d
+~~~
+
+Default URL: `http://localhost:4173`
+
+Persistent files live in the named Docker volume `food-tracker-data`, mounted at `/app/data`. This stores the SQLite database and the local encryption key used for saved AI provider credentials. Do not delete or recreate this volume unless you intentionally want to reset the app data and saved API keys.
+
+For Portainer, use the repository as a Git stack or paste the compose file. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
+
 ## iPhone PWA
 
 1. Dev- oder Produktiv-URL in Safari oeffnen.
