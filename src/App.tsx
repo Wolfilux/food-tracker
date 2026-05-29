@@ -29,6 +29,8 @@ type AppView = "tracker" | "settings";
 type FoodEntry = {
   id: string;
   foodKey?: string;
+  mealId?: string;
+  mealName?: string;
   foodName: string;
   quantityValue: number;
   quantityUnit: Unit;
@@ -43,6 +45,15 @@ type FoodEntry = {
 };
 
 type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
+
+type MealTemplateItem = Omit<FoodDraft, "consumedAt" | "mealId" | "mealName" | "aiUsage">;
+
+type MealTemplate = {
+  id: string;
+  name: string;
+  createdAt: string;
+  items: MealTemplateItem[];
+};
 
 type FoodSearchResult = {
   id: string;
@@ -121,6 +132,11 @@ type FoodImageAnalysis = {
   provider: string;
   model: string;
   aiUsage?: AiUsageSnapshot;
+  matchedFood?: FoodSearchResult;
+  items?: FoodImageAnalysisItem[];
+};
+
+type FoodImageAnalysisItem = Omit<FoodImageAnalysis, "provider" | "model" | "aiUsage" | "items"> & {
   matchedFood?: FoodSearchResult;
 };
 
@@ -426,6 +442,7 @@ function macroFor(
 function App() {
   const [activeView, setActiveView] = useState<AppView>("tracker");
   const [entries, setEntries] = useState<FoodEntry[]>([]);
+  const [mealTemplates, setMealTemplates] = useState<MealTemplate[]>([]);
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [nutritionConfig, setNutritionConfig] = useState<NutritionConfig>(defaultNutritionConfig);
   const [aiConfig, setAiConfig] = useState<AiConfig>(defaultAiConfig);
@@ -448,6 +465,10 @@ function App() {
   const [textAnalysisState, setTextAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [textAnalysisError, setTextAnalysisError] = useState("");
   const [entryError, setEntryError] = useState("");
+  const [mealNameDraft, setMealNameDraft] = useState("");
+  const [mealBuilderItems, setMealBuilderItems] = useState<MealTemplateItem[]>([]);
+  const [mealState, setMealState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [mealError, setMealError] = useState("");
   const [aiConfigError, setAiConfigError] = useState("");
   const [aiConfigState, setAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [aiModelsState, setAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -470,6 +491,8 @@ function App() {
     () => [...dayEntries].sort((left, right) => right.consumedAt.localeCompare(left.consumedAt)),
     [dayEntries],
   );
+
+  const groupedEntries = useMemo(() => buildEntryGroups(sortedEntries), [sortedEntries]);
 
   const totals = useMemo(
     () =>
@@ -500,13 +523,15 @@ function App() {
 
     async function loadBackendState() {
       try {
-        const [entriesResponse, configResponse, aiConfigResponse] = await Promise.all([
+        const [entriesResponse, configResponse, aiConfigResponse, mealsResponse] = await Promise.all([
           fetchEntries(),
           fetchNutritionConfig(),
           fetchAiConfig(),
+          fetchMealTemplates(),
         ]);
         if (!isMounted) return;
         setEntries(entriesResponse);
+        setMealTemplates(mealsResponse);
         setNutritionConfig(configResponse);
         setAiConfig(aiConfigResponse);
         setAiDraft({
@@ -730,12 +755,13 @@ function App() {
     if (!textAnalysis) return;
     setEntryError("");
     try {
-      const entry = await createEntry({
-        ...draftFromAnalysis(textAnalysis),
-        consumedAt: draft.consumedAt,
-      });
-      setEntries((currentEntries) => [entry, ...currentEntries]);
-      setSelectedDate(entry.consumedAt.slice(0, 10));
+      const entriesToSave = draftsFromAnalysis(textAnalysis, draft.consumedAt);
+      const savedEntries = entriesToSave.length > 1
+        ? await createEntryGroup(textAnalysis.description, entriesToSave)
+        : [await createEntry(entriesToSave[0])];
+      if (entriesToSave.length > 1) await saveAnalysisTemplate(textAnalysis, entriesToSave);
+      setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
+      setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
       setTextAnalysis(null);
       setAiFoodText("");
       setTextAnalysisState("idle");
@@ -748,12 +774,13 @@ function App() {
     if (!photoAnalysis) return;
     setEntryError("");
     try {
-      const entry = await createEntry({
-        ...draftFromAnalysis(photoAnalysis),
-        consumedAt: draft.consumedAt,
-      });
-      setEntries((currentEntries) => [entry, ...currentEntries]);
-      setSelectedDate(entry.consumedAt.slice(0, 10));
+      const entriesToSave = draftsFromAnalysis(photoAnalysis, draft.consumedAt);
+      const savedEntries = entriesToSave.length > 1
+        ? await createEntryGroup(photoAnalysis.description, entriesToSave)
+        : [await createEntry(entriesToSave[0])];
+      if (entriesToSave.length > 1) await saveAnalysisTemplate(photoAnalysis, entriesToSave);
+      setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
+      setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
       setPhotoPreview("");
       setPhotoAnalysis(null);
       setPhotoState("idle");
@@ -761,6 +788,71 @@ function App() {
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Foto-Eintrag konnte nicht gespeichert werden.");
     }
+  }
+
+  async function saveAnalysisTemplate(analysis: FoodImageAnalysis, entriesToSave: FoodDraft[]) {
+    const meal = await createMealTemplate({
+      name: analysis.description,
+      items: entriesToSave.map(templateItemFromDraft),
+    });
+    setMealTemplates((currentTemplates) => upsertMealTemplate(currentTemplates, meal));
+  }
+
+  function addDraftToMeal() {
+    const foodName = draft.foodName.trim();
+    if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0) return;
+    setMealBuilderItems((items) => [...items, templateItemFromDraft({ ...draft, foodName })]);
+    setMealNameDraft((name) => name || foodName);
+    setMealState("idle");
+    setMealError("");
+  }
+
+  function removeMealBuilderItem(indexToRemove: number) {
+    setMealBuilderItems((items) => items.filter((_, index) => index !== indexToRemove));
+  }
+
+  async function saveMealBuilder(addToDay: boolean) {
+    const name = mealNameDraft.trim();
+    if (!name || mealBuilderItems.length === 0) return;
+    setMealState("saving");
+    setMealError("");
+    try {
+      const meal = await createMealTemplate({ name, items: mealBuilderItems });
+      setMealTemplates((currentTemplates) => upsertMealTemplate(currentTemplates, meal));
+      if (addToDay) {
+        const savedEntries = await addMealTemplateToDay(meal);
+        setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
+        setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
+      }
+      setMealNameDraft("");
+      setMealBuilderItems([]);
+      setMealState("saved");
+    } catch (error) {
+      setMealError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
+      setMealState("error");
+    }
+  }
+
+  async function addMealTemplateToDay(meal: MealTemplate) {
+    const consumedAt = draft.consumedAt || nowLocal();
+    const entriesToSave = meal.items.map((item) => ({ ...item, consumedAt }));
+    return createEntryGroup(meal.name, entriesToSave);
+  }
+
+  async function applyMealTemplate(meal: MealTemplate) {
+    setEntryError("");
+    try {
+      const savedEntries = await addMealTemplateToDay(meal);
+      setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
+      setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
+    }
+  }
+
+  async function removeMealTemplate(id: string) {
+    await deleteMealTemplate(id);
+    setMealTemplates((templates) => templates.filter((template) => template.id !== id));
   }
 
   function selectFood(result: FoodSearchResult) {
@@ -1137,6 +1229,7 @@ function App() {
                 <span>{photoAnalysis.estimatedGrams} g · {photoAnalysis.calories} kcal · Sicherheit {confidenceLabel(photoAnalysis.confidence)}</span>
                 <small>P {formatMacro(photoAnalysis.protein)}g · C {formatMacro(photoAnalysis.carbs)}g · F {formatMacro(photoAnalysis.fat)}g</small>
                 {photoAnalysis.matchedFood && <small>Datenbank-Match: {photoAnalysis.matchedFood.name} · {photoAnalysis.matchedFood.source}</small>}
+                {photoAnalysis.items && <AnalysisItems items={photoAnalysis.items} />}
                 {photoAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
               </div>
             )}
@@ -1180,7 +1273,67 @@ function App() {
                 <span>{textAnalysis.estimatedGrams} g · {textAnalysis.calories} kcal · Sicherheit {confidenceLabel(textAnalysis.confidence)}</span>
                 <small>P {formatMacro(textAnalysis.protein)}g · C {formatMacro(textAnalysis.carbs)}g · F {formatMacro(textAnalysis.fat)}g</small>
                 {textAnalysis.matchedFood && <small>Datenbank-Match: {textAnalysis.matchedFood.name} · {textAnalysis.matchedFood.source}</small>}
+                {textAnalysis.items && <AnalysisItems items={textAnalysis.items} />}
                 {textAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
+              </div>
+            )}
+          </section>
+          <section className="meal-panel" aria-label="Meal templates">
+            <div className="search-panel__heading">
+              <Utensils size={18} aria-hidden="true" />
+              <span>Mahlzeiten</span>
+              <small>{mealTemplates.length} Vorlagen</small>
+            </div>
+            <label>
+              Name
+              <input value={mealNameDraft} onChange={(event) => setMealNameDraft(event.target.value)} placeholder="z.B. Standard-Fruehstueck" />
+            </label>
+            <div className="photo-actions">
+              <button className="secondary-button" type="button" disabled={!draft.foodName.trim()} onClick={addDraftToMeal}>
+                <Plus size={18} aria-hidden="true" />
+                Auswahl dazu
+              </button>
+              <button className="secondary-button" type="button" disabled={!mealNameDraft.trim() || mealBuilderItems.length === 0 || mealState === "saving"} onClick={() => void saveMealBuilder(false)}>
+                {mealState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Database size={18} aria-hidden="true" />}
+                Vorlage
+              </button>
+              <button className="secondary-button secondary-button--dark" type="button" disabled={!mealNameDraft.trim() || mealBuilderItems.length === 0 || mealState === "saving"} onClick={() => void saveMealBuilder(true)}>
+                <Plus size={18} aria-hidden="true" />
+                Vorlage + Tag
+              </button>
+            </div>
+            {mealBuilderItems.length > 0 && (
+              <div className="meal-builder-list">
+                {mealBuilderItems.map((item, index) => (
+                  <span key={`${item.foodName}-${index}`}>
+                    {item.foodName} · {formatQuantity(item)}
+                    <button type="button" aria-label={`${item.foodName} entfernen`} onClick={() => removeMealBuilderItem(index)}>
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {mealError && <p className="photo-note photo-note--error">{mealError}</p>}
+            {mealState === "saved" && <p className="photo-note">Mahlzeit gespeichert.</p>}
+            {mealTemplates.length > 0 && (
+              <div className="meal-template-list">
+                {mealTemplates.slice(0, 6).map((meal) => (
+                  <article className="meal-template-card" key={meal.id}>
+                    <div>
+                      <strong>{meal.name}</strong>
+                      <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal</small>
+                    </div>
+                    <div className="food-actions">
+                      <button type="button" aria-label={`${meal.name} eintragen`} onClick={() => void applyMealTemplate(meal)}>
+                        <Plus size={16} aria-hidden="true" />
+                      </button>
+                      <button type="button" aria-label={`${meal.name} loeschen`} onClick={() => void removeMealTemplate(meal.id)}>
+                        <Trash2 size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
           </section>
@@ -1302,26 +1455,22 @@ function App() {
           <span>{dayEntries.length} Einträge</span>
         </div>
         {sortedEntries.length === 0 && <p className="empty-state">Noch keine Einträge fuer diesen Tag.</p>}
-        {sortedEntries.map((entry) => (
-          <article className="food-row" key={entry.id}>
-            <div>
-              <span className="time-tag">{formatDateTime(entry.consumedAt)}</span>
-              <h3>{entry.foodName}</h3>
-              <p>
-                {formatQuantity(entry)} / {entry.caloriesPer100g.toLocaleString()} kcal per 100g
-              </p>
-              <p className="macro-line">
-                P {formatMacro(macroFor(entry, entry.proteinPer100g))}g · C {formatMacro(macroFor(entry, entry.carbsPer100g))}g · F {formatMacro(macroFor(entry, entry.fatPer100g))}g
-              </p>
+        {groupedEntries.map((group) => group.kind === "single" ? (
+          <FoodEntryRow entry={group.entry} key={group.entry.id} onEdit={editEntry} onDelete={(id) => void deleteEntry(id)} />
+        ) : (
+          <article className="meal-row" key={group.id}>
+            <div className="meal-row__heading">
+              <div>
+                <span className="time-tag">{formatDateTime(group.consumedAt)}</span>
+                <h3>{group.name}</h3>
+                <p>{group.entries.length} Lebensmittel · {group.calories.toLocaleString("de-DE")} kcal</p>
+              </div>
+              <strong>{group.calories.toLocaleString("de-DE")} kcal</strong>
             </div>
-            <div className="food-actions">
-              <strong>{caloriesFor(entry).toLocaleString()} kcal</strong>
-              <button type="button" aria-label={entry.foodName + " bearbeiten"} onClick={() => editEntry(entry)}>
-                <Pencil size={17} aria-hidden="true" />
-              </button>
-              <button type="button" aria-label={`Delete ${entry.foodName}`} onClick={() => deleteEntry(entry.id)}>
-                <Trash2 size={17} aria-hidden="true" />
-              </button>
+            <div className="meal-row__items">
+              {group.entries.map((entry) => (
+                <FoodEntryRow entry={entry} key={entry.id} onEdit={editEntry} onDelete={(id) => void deleteEntry(id)} compact />
+              ))}
             </div>
           </article>
         ))}
@@ -1376,6 +1525,95 @@ function MacroTarget({ label, grams, calories, percent }: { label: string; grams
   );
 }
 
+function AnalysisItems({ items }: { items: FoodImageAnalysisItem[] }) {
+  if (items.length < 2) return null;
+  return (
+    <div className="analysis-items">
+      {items.map((item, index) => (
+        <span key={`${item.description}-${index}`}>
+          {item.description} · {item.estimatedGrams} g · {item.calories} kcal
+          {item.matchedFood ? ` · DB: ${item.matchedFood.name}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function FoodEntryRow({
+  entry,
+  onEdit,
+  onDelete,
+  compact = false,
+}: {
+  entry: FoodEntry;
+  onEdit: (entry: FoodEntry) => void;
+  onDelete: (id: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <article className={compact ? "food-row food-row--compact" : "food-row"}>
+      <div>
+        {!compact && <span className="time-tag">{formatDateTime(entry.consumedAt)}</span>}
+        <h3>{entry.foodName}</h3>
+        <p>
+          {formatQuantity(entry)} / {entry.caloriesPer100g.toLocaleString()} kcal per 100g
+        </p>
+        <p className="macro-line">
+          P {formatMacro(macroFor(entry, entry.proteinPer100g))}g · C {formatMacro(macroFor(entry, entry.carbsPer100g))}g · F {formatMacro(macroFor(entry, entry.fatPer100g))}g
+        </p>
+      </div>
+      <div className="food-actions">
+        <strong>{caloriesFor(entry).toLocaleString()} kcal</strong>
+        <button type="button" aria-label={entry.foodName + " bearbeiten"} onClick={() => onEdit(entry)}>
+          <Pencil size={17} aria-hidden="true" />
+        </button>
+        <button type="button" aria-label={`Delete ${entry.foodName}`} onClick={() => onDelete(entry.id)}>
+          <Trash2 size={17} aria-hidden="true" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function buildEntryGroups(entries: FoodEntry[]) {
+  const groups: Array<
+    | { kind: "single"; entry: FoodEntry }
+    | { kind: "meal"; id: string; name: string; consumedAt: string; calories: number; entries: FoodEntry[] }
+  > = [];
+  const mealMap = new Map<string, FoodEntry[]>();
+
+  for (const entry of entries) {
+    if (!entry.mealId) {
+      groups.push({ kind: "single", entry });
+      continue;
+    }
+    const mealEntries = mealMap.get(entry.mealId) ?? [];
+    mealEntries.push(entry);
+    mealMap.set(entry.mealId, mealEntries);
+    if (mealEntries.length === 1) {
+      groups.push({
+        kind: "meal",
+        id: entry.mealId,
+        name: entry.mealName || "Mahlzeit",
+        consumedAt: entry.consumedAt,
+        calories: 0,
+        entries: mealEntries,
+      });
+    }
+  }
+
+  return groups.map((group) => {
+    if (group.kind === "single") return group;
+    const entriesForMeal = mealMap.get(group.id) ?? group.entries;
+    return {
+      ...group,
+      consumedAt: entriesForMeal[0]?.consumedAt ?? group.consumedAt,
+      calories: entriesForMeal.reduce((sum, entry) => sum + caloriesFor(entry), 0),
+      entries: entriesForMeal,
+    };
+  });
+}
+
 async function fetchEntries(): Promise<FoodEntry[]> {
   const response = await fetch("/api/entries");
   if (!response.ok) throw new Error("Entries request failed");
@@ -1392,6 +1630,40 @@ async function createEntry(draft: FoodDraft): Promise<FoodEntry> {
   if (!response.ok) throw new Error("Entry could not be saved");
   const data = (await response.json()) as { entry: FoodEntry };
   return normalizeBackendEntry(data.entry);
+}
+
+async function createEntryGroup(mealName: string, entries: FoodDraft[]): Promise<FoodEntry[]> {
+  const response = await fetch("/api/entries", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mealName, entries }),
+  });
+  const data = (await response.json()) as { entries?: FoodEntry[]; error?: string };
+  if (!response.ok || !data.entries) throw new Error(data.error ?? "Mahlzeit konnte nicht gespeichert werden.");
+  return data.entries.map(normalizeBackendEntry);
+}
+
+async function fetchMealTemplates(): Promise<MealTemplate[]> {
+  const response = await fetch("/api/meals");
+  if (!response.ok) throw new Error("Meals request failed");
+  const data = (await response.json()) as { meals?: MealTemplate[] };
+  return (data.meals ?? []).map(normalizeMealTemplate);
+}
+
+async function createMealTemplate(input: { name: string; items: MealTemplateItem[] }): Promise<MealTemplate> {
+  const response = await fetch("/api/meals", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = (await response.json()) as { meal?: MealTemplate; error?: string };
+  if (!response.ok || !data.meal) throw new Error(data.error ?? "Mahlzeit konnte nicht gespeichert werden.");
+  return normalizeMealTemplate(data.meal);
+}
+
+async function deleteMealTemplate(id: string) {
+  const response = await fetch(`/api/meals/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) throw new Error("Mahlzeit konnte nicht geloescht werden.");
 }
 
 async function updateBackendEntry(id: string, draft: FoodDraft): Promise<FoodEntry> {
@@ -1541,6 +1813,40 @@ function draftFromAnalysis(analysis: FoodImageAnalysis): FoodDraft {
   };
 }
 
+function draftsFromAnalysis(analysis: FoodImageAnalysis, consumedAt: string): FoodDraft[] {
+  const itemDrafts = (analysis.items ?? []).map((item) => draftFromAnalysis({
+    ...item,
+    provider: analysis.provider,
+    model: analysis.model,
+    aiUsage: analysis.aiUsage,
+  }));
+  const drafts = itemDrafts.length > 1 ? itemDrafts : [draftFromAnalysis(analysis)];
+  return drafts.map((entry) => ({ ...entry, consumedAt }));
+}
+
+function templateItemFromDraft(draft: FoodDraft): MealTemplateItem {
+  return {
+    foodKey: draft.foodKey,
+    foodName: draft.foodName,
+    quantityValue: draft.quantityValue,
+    quantityUnit: draft.quantityUnit,
+    caloriesPer100g: draft.caloriesPer100g,
+    proteinPer100g: draft.proteinPer100g,
+    carbsPer100g: draft.carbsPer100g,
+    fatPer100g: draft.fatPer100g,
+    source: draft.source ?? "manual",
+  };
+}
+
+function upsertMealTemplate(templates: MealTemplate[], meal: MealTemplate) {
+  const nextTemplates = templates.filter((template) => template.id !== meal.id);
+  return [...nextTemplates, meal].sort((left, right) => left.name.localeCompare(right.name, "de"));
+}
+
+function mealCalories(items: Array<Pick<FoodEntry, "quantityUnit" | "quantityValue" | "caloriesPer100g">>) {
+  return items.reduce((sum, item) => sum + caloriesFor(item), 0);
+}
+
 function findCommonFoodCompletion(searchTerm: string) {
   const normalized = normalizeFoodKey(searchTerm);
   if (normalized.length < 2) return null;
@@ -1681,12 +1987,37 @@ function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
   };
 }
 
+function normalizeMealTemplate(meal: MealTemplate): MealTemplate {
+  return {
+    id: String(meal.id),
+    name: String(meal.name ?? "Mahlzeit"),
+    createdAt: String(meal.createdAt ?? new Date().toISOString()),
+    items: Array.isArray(meal.items) ? meal.items.map(normalizeMealTemplateItem).filter(Boolean) : [],
+  };
+}
+
+function normalizeMealTemplateItem(item: MealTemplateItem): MealTemplateItem {
+  return {
+    foodKey: item.foodKey ? String(item.foodKey) : undefined,
+    foodName: String(item.foodName ?? "Lebensmittel"),
+    quantityValue: Number(item.quantityValue ?? 100),
+    quantityUnit: item.quantityUnit === "kg" ? "kg" : "g",
+    caloriesPer100g: Number(item.caloriesPer100g ?? 0),
+    proteinPer100g: Number(item.proteinPer100g ?? 0),
+    carbsPer100g: Number(item.carbsPer100g ?? 0),
+    fatPer100g: Number(item.fatPer100g ?? 0),
+    source: item.source ? String(item.source) : "manual",
+  };
+}
+
 function normalizeBackendEntry(entry: FoodEntry): FoodEntry {
   return {
     ...entry,
     proteinPer100g: Number(entry.proteinPer100g ?? 0),
     carbsPer100g: Number(entry.carbsPer100g ?? 0),
     fatPer100g: Number(entry.fatPer100g ?? 0),
+    mealId: entry.mealId || undefined,
+    mealName: entry.mealName || undefined,
   };
 }
 
@@ -1732,7 +2063,7 @@ function formatDateLabel(value: string) {
   }).format(new Date(`${value}T12:00:00`));
 }
 
-function formatQuantity(entry: FoodEntry) {
+function formatQuantity(entry: Pick<FoodEntry, "quantityValue" | "quantityUnit">) {
   return `${entry.quantityValue.toLocaleString("de-DE")} ${entry.quantityUnit}`;
 }
 

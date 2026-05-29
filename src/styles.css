@@ -536,6 +536,16 @@ button:focus-visible {
   border-radius: 8px;
 }
 
+.meal-panel {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px;
+  background: #f8f6e9;
+  border: 1px solid rgba(121, 98, 49, 0.22);
+  border-radius: 8px;
+}
+
 .photo-input {
   min-height: 42px;
   background: #fffdf7;
@@ -628,6 +638,65 @@ button:focus-visible {
 .photo-note {
   color: #627064;
   font-size: 0.84rem;
+}
+
+.analysis-items,
+.meal-builder-list,
+.meal-template-list {
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-items {
+  padding-top: 6px;
+}
+
+.analysis-items span,
+.meal-builder-list span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  color: #24403a;
+  background: rgba(238, 245, 240, 0.8);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: 7px;
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.meal-builder-list button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  color: #17211b;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.16);
+  border-radius: 6px;
+}
+
+.meal-template-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+}
+
+.meal-template-card strong,
+.meal-template-card small {
+  display: block;
+}
+
+.meal-template-card small {
+  color: #627064;
+  font-size: 0.82rem;
 }
 
 .photo-note {
@@ -851,6 +920,43 @@ button:focus-visible {
   gap: 16px;
   padding: 16px 0;
   border-top: 1px solid rgba(23, 33, 27, 0.12);
+}
+
+.food-row--compact {
+  padding: 10px 0;
+}
+
+.food-row--compact h3 {
+  font-size: 0.96rem;
+}
+
+.meal-row {
+  padding: 16px 0;
+  border-top: 1px solid rgba(23, 33, 27, 0.12);
+}
+
+.meal-row__heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
+  background: #f8f6e9;
+  border: 1px solid rgba(121, 98, 49, 0.16);
+  border-radius: 8px;
+}
+
+.meal-row__heading h3 {
+  margin-bottom: 4px;
+}
+
+.meal-row__heading p {
+  margin-bottom: 0;
+  color: #627064;
+}
+
+.meal-row__items {
+  padding-left: 14px;
 }
 
 .food-row h3 {

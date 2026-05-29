@@ -268,6 +268,30 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/meals") {
+      if (request.method === "GET") {
+        sendJson(response, { meals: listMealTemplates() });
+        return;
+      }
+
+      if (request.method === "POST") {
+        try {
+          const meal = createMealTemplate(await readJsonBody(request));
+          sendJson(response, { meal }, 201);
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
+    }
+
+    if (url.pathname.startsWith("/api/meals/") && request.method === "DELETE") {
+      const id = decodeURIComponent(url.pathname.replace("/api/meals/", ""));
+      deleteMealTemplate(id);
+      sendJson(response, { ok: true });
+      return;
+    }
+
     if (url.pathname === "/api/entries") {
       if (request.method === "GET") {
         sendJson(response, { entries: listEntries() });
@@ -276,8 +300,14 @@ export function createFoodApiMiddleware() {
 
       if (request.method === "POST") {
         try {
-          const entry = createEntry(await readJsonBody(request));
-          sendJson(response, { entry }, 201);
+          const input = await readJsonBody(request);
+          if (Array.isArray(input?.entries)) {
+            const entries = createEntries(input);
+            sendJson(response, { entries }, 201);
+          } else {
+            const entry = createEntry(input);
+            sendJson(response, { entry }, 201);
+          }
         } catch (error) {
           sendJson(response, { error: error.message }, 400);
         }
@@ -418,7 +448,8 @@ export function listEntries() {
     .prepare([
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
-      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
+      "  meal_id, meal_name",
       "FROM entries",
       "ORDER BY consumed_at DESC, created_at DESC",
     ].join("\n"))
@@ -433,9 +464,10 @@ export function createEntry(input) {
     .prepare([
       "INSERT INTO entries (",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
-      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
+      "  meal_id, meal_name",
       ")",
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ].join("\n"))
     .run(
       entry.id,
@@ -451,14 +483,46 @@ export function createEntry(input) {
       entry.createdAt,
       entry.source ?? "manual",
       JSON.stringify(entry.aiUsage ?? null),
+      entry.mealId ?? null,
+      entry.mealName ?? null,
     );
 
   return entry;
 }
 
+export function createEntries(input) {
+  const entriesInput = Array.isArray(input?.entries) ? input.entries : [];
+  if (entriesInput.length < 1) throw new Error("No entries supplied");
+  if (entriesInput.length > 50) throw new Error("Too many entries");
+
+  const mealName = String(input?.mealName ?? "").trim().slice(0, 120) || undefined;
+  const mealId = entriesInput.length > 1 || mealName
+    ? String(input?.mealId ?? randomUUID())
+    : input?.mealId ? String(input.mealId) : undefined;
+  const entries = entriesInput.map((entryInput) => validateEntry({
+    ...entryInput,
+    mealId,
+    mealName,
+  }));
+
+  const database = getFoodDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const entry of entries) {
+      createEntry(entry);
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+
+  return entries;
+}
+
 export function updateEntry(id, input) {
   const existing = getFoodDatabase()
-    .prepare("SELECT created_at FROM entries WHERE id = ?")
+    .prepare("SELECT created_at, meal_id, meal_name FROM entries WHERE id = ?")
     .get(id);
   if (!existing) throw new Error("Entry not found");
 
@@ -466,6 +530,8 @@ export function updateEntry(id, input) {
     ...input,
     id,
     createdAt: existing.created_at,
+    mealId: input?.mealId ?? existing.meal_id,
+    mealName: input?.mealName ?? existing.meal_name,
   });
 
   getFoodDatabase()
@@ -481,7 +547,9 @@ export function updateEntry(id, input) {
       "  fat_per_100g = ?,",
       "  consumed_at = ?,",
       "  source = ?,",
-      "  ai_usage_json = ?",
+      "  ai_usage_json = ?,",
+      "  meal_id = ?,",
+      "  meal_name = ?",
       "WHERE id = ?",
     ].join("\n"))
     .run(
@@ -496,6 +564,8 @@ export function updateEntry(id, input) {
       entry.consumedAt,
       entry.source ?? "manual",
       JSON.stringify(entry.aiUsage ?? null),
+      entry.mealId ?? null,
+      entry.mealName ?? null,
       id,
     );
 
@@ -517,6 +587,7 @@ export function buildExportPayload() {
       provider: aiConfig.provider,
       model: aiConfig.model,
     },
+    mealTemplates: listMealTemplates(),
     entries: listEntries(),
   };
 }
@@ -545,6 +616,14 @@ export function importFoodTrackerData(input) {
     database.prepare("DELETE FROM entries").run();
     for (const entry of entries) {
       createEntry(entry);
+    }
+
+    if (Array.isArray(input.mealTemplates)) {
+      database.prepare("DELETE FROM meal_template_items").run();
+      database.prepare("DELETE FROM meal_templates").run();
+      for (const meal of input.mealTemplates.slice(0, 500)) {
+        saveMealTemplateRows(database, validateMealTemplate(meal));
+      }
     }
 
     database.exec("COMMIT");
@@ -584,6 +663,87 @@ function importPublicAiConfig(input, warnings) {
 
   saveAiConfig({ provider, model });
   return true;
+}
+
+export function listMealTemplates() {
+  const database = getFoodDatabase();
+  const meals = database.prepare([
+    "SELECT id, name, created_at",
+    "FROM meal_templates",
+    "ORDER BY name ASC",
+  ].join("\n")).all();
+
+  const items = database.prepare([
+    "SELECT",
+    "  meal_id, position, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, source",
+    "FROM meal_template_items",
+    "ORDER BY meal_id ASC, position ASC",
+  ].join("\n")).all();
+
+  const itemsByMeal = new Map();
+  for (const row of items) {
+    const list = itemsByMeal.get(row.meal_id) ?? [];
+    list.push(mealTemplateItemFromRow(row));
+    itemsByMeal.set(row.meal_id, list);
+  }
+
+  return meals.map((meal) => ({
+    id: meal.id,
+    name: meal.name,
+    createdAt: meal.created_at,
+    items: itemsByMeal.get(meal.id) ?? [],
+  }));
+}
+
+export function createMealTemplate(input) {
+  const meal = validateMealTemplate(input);
+  const database = getFoodDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    saveMealTemplateRows(database, meal);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+
+  return meal;
+}
+
+function saveMealTemplateRows(database, meal) {
+  database.prepare([
+    "INSERT INTO meal_templates (id, name, created_at)",
+    "VALUES (?, ?, ?)",
+    "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+  ].join("\n")).run(meal.id, meal.name, meal.createdAt);
+  database.prepare("DELETE FROM meal_template_items WHERE meal_id = ?").run(meal.id);
+  const statement = database.prepare([
+    "INSERT INTO meal_template_items (",
+    "  meal_id, position, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, source",
+    ")",
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ].join("\n"));
+  meal.items.forEach((item, index) => {
+    statement.run(
+      meal.id,
+      index,
+      item.foodKey ?? null,
+      item.foodName,
+      item.quantityValue,
+      item.quantityUnit,
+      item.caloriesPer100g,
+      item.proteinPer100g,
+      item.carbsPer100g,
+      item.fatPer100g,
+      item.source ?? "manual",
+    );
+  });
+}
+
+export function deleteMealTemplate(id) {
+  getFoodDatabase().prepare("DELETE FROM meal_templates WHERE id = ?").run(id);
 }
 
 function initializeDatabase(database) {
@@ -639,13 +799,37 @@ function initializeDatabase(database) {
     "  consumed_at TEXT NOT NULL,",
     "  created_at TEXT NOT NULL,",
     "  source TEXT NOT NULL DEFAULT 'manual',",
-    "  ai_usage_json TEXT NOT NULL DEFAULT ''",
+    "  ai_usage_json TEXT NOT NULL DEFAULT '',",
+    "  meal_id TEXT,",
+    "  meal_name TEXT",
     ");",
     "CREATE INDEX IF NOT EXISTS idx_entries_consumed_at ON entries(consumed_at DESC);",
+    "CREATE TABLE IF NOT EXISTS meal_templates (",
+    "  id TEXT PRIMARY KEY,",
+    "  name TEXT NOT NULL,",
+    "  created_at TEXT NOT NULL",
+    ");",
+    "CREATE TABLE IF NOT EXISTS meal_template_items (",
+    "  meal_id TEXT NOT NULL REFERENCES meal_templates(id) ON DELETE CASCADE,",
+    "  position INTEGER NOT NULL,",
+    "  food_key TEXT,",
+    "  food_name TEXT NOT NULL,",
+    "  quantity_value REAL NOT NULL,",
+    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg')),",
+    "  calories_per_100g REAL NOT NULL,",
+    "  protein_per_100g REAL NOT NULL DEFAULT 0,",
+    "  carbs_per_100g REAL NOT NULL DEFAULT 0,",
+    "  fat_per_100g REAL NOT NULL DEFAULT 0,",
+    "  source TEXT NOT NULL DEFAULT 'manual',",
+    "  PRIMARY KEY (meal_id, position)",
+    ");",
   ].join("\n"));
 
   addColumnIfMissing(database, "foods", "image_url", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "entries", "meal_id", "TEXT");
+  addColumnIfMissing(database, "entries", "meal_name", "TEXT");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   seedFoodRecords(database);
 }
 
@@ -680,8 +864,9 @@ async function analyzeFoodImage(input) {
           content: [
             "Du bist ein vorsichtiger Nutrition-Estimator.",
             "Antworte ausschliesslich als JSON ohne Markdown.",
-            "Schaetze sichtbares Essen auf dem Foto. Wenn unsicher, nutze konservative Naehrwerte.",
-            "Schema: {description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high'}",
+            "Schaetze sichtbares Essen auf dem Foto. Teile es wenn moeglich in einzelne Lebensmittel auf.",
+            "Wenn unsicher, nutze konservative Naehrwerte.",
+            "Schema: {description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high', items:[{description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high'}]}",
             "calories/protein/carbs/fat sind Gesamtwerte fuer die geschaetzte Portion, nicht pro 100g.",
           ].join(" "),
         },
@@ -727,6 +912,7 @@ async function analyzeFoodImage(input) {
     provider: config.provider,
     model: config.model,
     aiUsage,
+    items: normalizeAnalysisItems(parsed.items),
   });
 }
 
@@ -762,9 +948,9 @@ async function analyzeFoodText(input) {
           content: [
             "Du bist ein vorsichtiger Nutrition-Estimator.",
             "Antworte ausschliesslich als JSON ohne Markdown.",
-            "Schaetze ein beschriebenes Essen als eine verzehrte Portion.",
+            "Schaetze ein beschriebenes Essen als eine verzehrte Portion. Teile es wenn moeglich in einzelne Lebensmittel auf.",
             "Wenn Mengen fehlen, nutze realistische Alltagsportionen und bleibe konservativ.",
-            "Schema: {description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high'}",
+            "Schema: {description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high', items:[{description:string, estimatedGrams:number, calories:number, protein:number, carbs:number, fat:number, confidence:'low'|'medium'|'high'}]}",
             "calories/protein/carbs/fat sind Gesamtwerte fuer die geschaetzte Portion, nicht pro 100g.",
           ].join(" "),
         },
@@ -807,12 +993,25 @@ async function analyzeFoodText(input) {
     provider: config.provider,
     model: config.model,
     aiUsage,
+    items: normalizeAnalysisItems(parsed.items),
   });
 }
 
 async function withFoodDatabaseMatch(analysis) {
   const matchedFood = await findBestFoodDatabaseMatch(analysis.description);
-  return matchedFood ? { ...analysis, matchedFood } : analysis;
+  const items = [];
+  for (const rawItem of Array.isArray(analysis.items) ? analysis.items.slice(0, 12) : []) {
+    const item = normalizeAnalysisItem(rawItem);
+    if (!item) continue;
+    const itemMatch = await findBestFoodDatabaseMatch(item.description);
+    items.push(itemMatch ? { ...item, matchedFood: itemMatch } : item);
+  }
+
+  return {
+    ...analysis,
+    ...(matchedFood ? { matchedFood } : {}),
+    ...(items.length > 1 ? { items } : {}),
+  };
 }
 
 async function findBestFoodDatabaseMatch(description) {
@@ -1246,6 +1445,8 @@ function validateEntry(input) {
   const carbsPer100g = Number(input?.carbsPer100g ?? 0);
   const fatPer100g = Number(input?.fatPer100g ?? 0);
   const consumedAt = String(input?.consumedAt ?? "");
+  const mealId = input?.mealId ? String(input.mealId).trim().slice(0, 80) : undefined;
+  const mealName = input?.mealName ? String(input.mealName).trim().slice(0, 120) : undefined;
 
   if (!foodName) throw new Error("Food name is required");
   if (!Number.isFinite(quantityValue) || quantityValue <= 0) throw new Error("Invalid quantity");
@@ -1269,6 +1470,8 @@ function validateEntry(input) {
     createdAt: String(input?.createdAt ?? new Date().toISOString()),
     source: input?.source ? String(input.source) : "manual",
     aiUsage: normalizeAiUsage(input?.aiUsage),
+    mealId,
+    mealName,
   };
 }
 
@@ -1287,6 +1490,81 @@ function entryFromRow(row) {
     createdAt: row.created_at,
     source: row.source,
     aiUsage: parseStoredJson(row.ai_usage_json),
+    mealId: row.meal_id ?? undefined,
+    mealName: row.meal_name ?? undefined,
+  };
+}
+
+function validateMealTemplate(input) {
+  const name = String(input?.name ?? "").trim().slice(0, 120);
+  if (!name) throw new Error("Meal name is required");
+  const rawItems = Array.isArray(input?.items) ? input.items : [];
+  if (rawItems.length < 1) throw new Error("Meal needs at least one item");
+  if (rawItems.length > 50) throw new Error("Meal has too many items");
+
+  return {
+    id: String(input?.id ?? randomUUID()),
+    name,
+    createdAt: String(input?.createdAt ?? new Date().toISOString()),
+    items: rawItems.map((item) => {
+      const entry = validateEntry({
+        ...item,
+        consumedAt: item?.consumedAt ?? new Date().toISOString().slice(0, 16),
+      });
+      return {
+        foodKey: entry.foodKey,
+        foodName: entry.foodName,
+        quantityValue: entry.quantityValue,
+        quantityUnit: entry.quantityUnit,
+        caloriesPer100g: entry.caloriesPer100g,
+        proteinPer100g: entry.proteinPer100g,
+        carbsPer100g: entry.carbsPer100g,
+        fatPer100g: entry.fatPer100g,
+        source: entry.source,
+      };
+    }),
+  };
+}
+
+function mealTemplateItemFromRow(row) {
+  return {
+    foodKey: row.food_key ?? undefined,
+    foodName: row.food_name,
+    quantityValue: row.quantity_value,
+    quantityUnit: row.quantity_unit,
+    caloriesPer100g: row.calories_per_100g,
+    proteinPer100g: row.protein_per_100g,
+    carbsPer100g: row.carbs_per_100g,
+    fatPer100g: row.fat_per_100g,
+    source: row.source,
+  };
+}
+
+function normalizeAnalysisItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map(normalizeAnalysisItem).filter(Boolean).slice(0, 12);
+}
+
+function normalizeAnalysisItem(rawItem) {
+  const estimatedGrams = clampNumber(rawItem?.estimatedGrams, 1, 5000);
+  const calories = clampNumber(rawItem?.calories, 0, 10000);
+  const protein = clampNumber(rawItem?.protein, 0, 1000);
+  const carbs = clampNumber(rawItem?.carbs, 0, 1000);
+  const fat = clampNumber(rawItem?.fat, 0, 1000);
+  if (!estimatedGrams || !Number.isFinite(calories)) return null;
+
+  return {
+    description: String(rawItem?.description ?? "Lebensmittel").trim().slice(0, 120) || "Lebensmittel",
+    estimatedGrams: Math.round(estimatedGrams),
+    calories: Math.round(calories),
+    protein: roundNutrition(protein),
+    carbs: roundNutrition(carbs),
+    fat: roundNutrition(fat),
+    caloriesPer100g: roundNutrition((calories / estimatedGrams) * 100),
+    proteinPer100g: roundNutrition((protein / estimatedGrams) * 100),
+    carbsPer100g: roundNutrition((carbs / estimatedGrams) * 100),
+    fatPer100g: roundNutrition((fat / estimatedGrams) * 100),
+    confidence: ["low", "medium", "high"].includes(rawItem?.confidence) ? rawItem.confidence : "medium",
   };
 }
 
