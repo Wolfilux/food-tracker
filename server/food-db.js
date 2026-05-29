@@ -285,6 +285,17 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname.startsWith("/api/entries/") && request.method === "PATCH") {
+      const id = decodeURIComponent(url.pathname.replace("/api/entries/", ""));
+      try {
+        const entry = updateEntry(id, await readJsonBody(request));
+        sendJson(response, { entry });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname.startsWith("/api/entries/") && request.method === "DELETE") {
       const id = decodeURIComponent(url.pathname.replace("/api/entries/", ""));
       deleteEntry(id);
@@ -440,6 +451,52 @@ export function createEntry(input) {
       entry.createdAt,
       entry.source ?? "manual",
       JSON.stringify(entry.aiUsage ?? null),
+    );
+
+  return entry;
+}
+
+export function updateEntry(id, input) {
+  const existing = getFoodDatabase()
+    .prepare("SELECT created_at FROM entries WHERE id = ?")
+    .get(id);
+  if (!existing) throw new Error("Entry not found");
+
+  const entry = validateEntry({
+    ...input,
+    id,
+    createdAt: existing.created_at,
+  });
+
+  getFoodDatabase()
+    .prepare([
+      "UPDATE entries SET",
+      "  food_key = ?,",
+      "  food_name = ?,",
+      "  quantity_value = ?,",
+      "  quantity_unit = ?,",
+      "  calories_per_100g = ?,",
+      "  protein_per_100g = ?,",
+      "  carbs_per_100g = ?,",
+      "  fat_per_100g = ?,",
+      "  consumed_at = ?,",
+      "  source = ?,",
+      "  ai_usage_json = ?",
+      "WHERE id = ?",
+    ].join("\n"))
+    .run(
+      entry.foodKey ?? null,
+      entry.foodName,
+      entry.quantityValue,
+      entry.quantityUnit,
+      entry.caloriesPer100g,
+      entry.proteinPer100g,
+      entry.carbsPer100g,
+      entry.fatPer100g,
+      entry.consumedAt,
+      entry.source ?? "manual",
+      JSON.stringify(entry.aiUsage ?? null),
+      id,
     );
 
   return entry;

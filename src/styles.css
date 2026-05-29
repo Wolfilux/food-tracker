@@ -412,10 +412,26 @@ h1 {
   align-self: start;
 }
 
+.entry-form--editing {
+  border-color: rgba(213, 81, 42, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(213, 81, 42, 0.18);
+}
+
 .entry-form h2,
 .entry-list h2 {
   margin-bottom: 18px;
   font-size: 1.3rem;
+}
+
+.entry-form__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.entry-form__heading h2 {
+  margin-bottom: 0;
 }
 
 label {
@@ -588,6 +604,12 @@ button:focus-visible {
   color: #fff8eb;
   background: #24403a;
   border-color: #24403a;
+}
+
+.secondary-button--compact {
+  min-height: 36px;
+  padding: 8px 11px;
+  font-size: 0.84rem;
 }
 
 .analysis-card {

@@ -9,6 +9,7 @@ import {
   KeyRound,
   Loader2,
   MessageSquareText,
+  Pencil,
   Plus,
   Scale,
   Search,
@@ -19,6 +20,7 @@ import {
   Trash2,
   Upload,
   Utensils,
+  X,
 } from "lucide-react";
 
 type Unit = "g" | "kg";
@@ -128,6 +130,18 @@ type MacroPreset = {
   fat: number;
   note: string;
 };
+
+const createEmptyDraft = (): FoodDraft => ({
+  foodName: "",
+  quantityValue: 100,
+  quantityUnit: "g",
+  caloriesPer100g: 100,
+  proteinPer100g: 0,
+  carbsPer100g: 0,
+  fatPer100g: 0,
+  consumedAt: nowLocal(),
+  source: "manual",
+});
 
 const defaultNutritionConfig: NutritionConfig = {
   calorieGoal: 2200,
@@ -420,17 +434,8 @@ function App() {
     apiKey: "",
   });
   const [isConfigLoaded, setConfigLoaded] = useState(false);
-  const [draft, setDraft] = useState<FoodDraft>({
-    foodName: "",
-    quantityValue: 100,
-    quantityUnit: "g",
-    caloriesPer100g: 100,
-    proteinPer100g: 0,
-    carbsPer100g: 0,
-    fatPer100g: 0,
-    consumedAt: nowLocal(),
-    source: "manual",
-  });
+  const [draft, setDraft] = useState<FoodDraft>(createEmptyDraft);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [results, setResults] = useState<FoodSearchResult[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [photoPreview, setPhotoPreview] = useState("");
@@ -450,6 +455,7 @@ function App() {
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
+  const entryFormRef = useRef<HTMLFormElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -577,20 +583,28 @@ function App() {
     };
   }, [draft.foodName, isAutocompleteOpen, searchFoods]);
 
-  async function addEntry(event: FormEvent<HTMLFormElement>) {
+  async function saveEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const foodName = draft.foodName.trim();
     if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0 || !draft.consumedAt) return;
 
     setEntryError("");
     try {
-      const entry = await createEntry({
+      const payload = {
         ...draft,
         foodName,
-      });
-      setEntries((currentEntries) => [entry, ...currentEntries]);
+      };
+      const entry = editingEntryId
+        ? await updateBackendEntry(editingEntryId, payload)
+        : await createEntry(payload);
+      setEntries((currentEntries) =>
+        editingEntryId
+          ? currentEntries.map((currentEntry) => (currentEntry.id === entry.id ? entry : currentEntry))
+          : [entry, ...currentEntries],
+      );
       setSelectedDate(entry.consumedAt.slice(0, 10));
-      setDraft({ ...draft, foodName: "", consumedAt: nowLocal() });
+      setDraft(createEmptyDraft());
+      setEditingEntryId(null);
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Eintrag konnte nicht gespeichert werden.");
     }
@@ -795,6 +809,34 @@ function App() {
   async function deleteEntry(id: string) {
     await deleteBackendEntry(id);
     setEntries(entries.filter((entry) => entry.id !== id));
+    if (editingEntryId === id) cancelEdit();
+  }
+
+  function editEntry(entry: FoodEntry) {
+    setDraft({
+      foodKey: entry.foodKey,
+      foodName: entry.foodName,
+      quantityValue: entry.quantityValue,
+      quantityUnit: entry.quantityUnit,
+      caloriesPer100g: entry.caloriesPer100g,
+      proteinPer100g: entry.proteinPer100g,
+      carbsPer100g: entry.carbsPer100g,
+      fatPer100g: entry.fatPer100g,
+      consumedAt: entry.consumedAt,
+      source: entry.source ?? "manual",
+      aiUsage: entry.aiUsage,
+    });
+    setEditingEntryId(entry.id);
+    setEntryError("");
+    setAutocompleteOpen(false);
+    entryFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => quantityInputRef.current?.select(), 220);
+  }
+
+  function cancelEdit() {
+    setEditingEntryId(null);
+    setDraft(createEmptyDraft());
+    setEntryError("");
   }
 
   async function exportData() {
@@ -1063,8 +1105,16 @@ function App() {
       {activeView === "tracker" && (
         <>
       <section className="workspace-grid">
-        <form className="entry-form" onSubmit={addEntry}>
-          <h2>Neuer Eintrag</h2>
+        <form ref={entryFormRef} className={editingEntryId ? "entry-form entry-form--editing" : "entry-form"} onSubmit={saveEntry}>
+          <div className="entry-form__heading">
+            <h2>{editingEntryId ? "Eintrag bearbeiten" : "Neuer Eintrag"}</h2>
+            {editingEntryId && (
+              <button className="secondary-button secondary-button--compact" type="button" onClick={cancelEdit}>
+                <X size={17} aria-hidden="true" />
+                Abbrechen
+              </button>
+            )}
+          </div>
           <section className="photo-panel" aria-label="Food photo analysis">
             <div className="search-panel__heading">
               <Camera size={18} aria-hidden="true" />
@@ -1251,8 +1301,8 @@ function App() {
             <strong>{draftCalories.toLocaleString()} kcal</strong>
           </div>
           <button className="primary-button" type="submit">
-            <Plus size={18} aria-hidden="true" />
-            4. Speichern
+            {editingEntryId ? <Pencil size={18} aria-hidden="true" /> : <Plus size={18} aria-hidden="true" />}
+            {editingEntryId ? "Änderungen speichern" : "4. Speichern"}
           </button>
           {entryError && <p className="form-error">{entryError}</p>}
         </form>
@@ -1291,6 +1341,9 @@ function App() {
             </div>
             <div className="food-actions">
               <strong>{caloriesFor(entry).toLocaleString()} kcal</strong>
+              <button type="button" aria-label={entry.foodName + " bearbeiten"} onClick={() => editEntry(entry)}>
+                <Pencil size={17} aria-hidden="true" />
+              </button>
               <button type="button" aria-label={`Delete ${entry.foodName}`} onClick={() => deleteEntry(entry.id)}>
                 <Trash2 size={17} aria-hidden="true" />
               </button>
@@ -1362,6 +1415,17 @@ async function createEntry(draft: FoodDraft): Promise<FoodEntry> {
     body: JSON.stringify(draft),
   });
   if (!response.ok) throw new Error("Entry could not be saved");
+  const data = (await response.json()) as { entry: FoodEntry };
+  return normalizeBackendEntry(data.entry);
+}
+
+async function updateBackendEntry(id: string, draft: FoodDraft): Promise<FoodEntry> {
+  const response = await fetch(`/api/entries/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+  if (!response.ok) throw new Error("Entry could not be updated");
   const data = (await response.json()) as { entry: FoodEntry };
   return normalizeBackendEntry(data.entry);
 }
