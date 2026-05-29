@@ -53,7 +53,7 @@ type FoodSearchResult = {
   carbsPer100g: number;
   fatPer100g: number;
   imageUrl?: string;
-  usageCount: number;
+  usageCount?: number;
   source: string;
 };
 
@@ -121,6 +121,7 @@ type FoodImageAnalysis = {
   provider: string;
   model: string;
   aiUsage?: AiUsageSnapshot;
+  matchedFood?: FoodSearchResult;
 };
 
 type MacroPreset = {
@@ -704,19 +705,7 @@ function App() {
   }
 
   function applyPhotoAnalysis(analysis: FoodImageAnalysis) {
-    setDraft({
-      ...draft,
-      foodKey: undefined,
-      foodName: analysis.description,
-      quantityValue: analysis.estimatedGrams,
-      quantityUnit: "g",
-      caloriesPer100g: analysis.caloriesPer100g,
-      proteinPer100g: analysis.proteinPer100g,
-      carbsPer100g: analysis.carbsPer100g,
-      fatPer100g: analysis.fatPer100g,
-      source: `AI ${analysis.provider}/${analysis.model}`,
-      aiUsage: analysis.aiUsage,
-    });
+    setDraft({ ...draft, ...draftFromAnalysis(analysis), consumedAt: draft.consumedAt });
   }
 
   async function analyzeFoodText() {
@@ -742,16 +731,8 @@ function App() {
     setEntryError("");
     try {
       const entry = await createEntry({
-        foodName: textAnalysis.description,
-        quantityValue: textAnalysis.estimatedGrams,
-        quantityUnit: "g",
-        caloriesPer100g: textAnalysis.caloriesPer100g,
-        proteinPer100g: textAnalysis.proteinPer100g,
-        carbsPer100g: textAnalysis.carbsPer100g,
-        fatPer100g: textAnalysis.fatPer100g,
+        ...draftFromAnalysis(textAnalysis),
         consumedAt: draft.consumedAt,
-        source: `AI ${textAnalysis.provider}/${textAnalysis.model}`,
-        aiUsage: textAnalysis.aiUsage,
       });
       setEntries((currentEntries) => [entry, ...currentEntries]);
       setSelectedDate(entry.consumedAt.slice(0, 10));
@@ -768,16 +749,8 @@ function App() {
     setEntryError("");
     try {
       const entry = await createEntry({
-        foodName: photoAnalysis.description,
-        quantityValue: photoAnalysis.estimatedGrams,
-        quantityUnit: "g",
-        caloriesPer100g: photoAnalysis.caloriesPer100g,
-        proteinPer100g: photoAnalysis.proteinPer100g,
-        carbsPer100g: photoAnalysis.carbsPer100g,
-        fatPer100g: photoAnalysis.fatPer100g,
+        ...draftFromAnalysis(photoAnalysis),
         consumedAt: draft.consumedAt,
-        source: `AI ${photoAnalysis.provider}/${photoAnalysis.model}`,
-        aiUsage: photoAnalysis.aiUsage,
       });
       setEntries((currentEntries) => [entry, ...currentEntries]);
       setSelectedDate(entry.consumedAt.slice(0, 10));
@@ -1163,6 +1136,7 @@ function App() {
                 <strong>{photoAnalysis.description}</strong>
                 <span>{photoAnalysis.estimatedGrams} g · {photoAnalysis.calories} kcal · Sicherheit {confidenceLabel(photoAnalysis.confidence)}</span>
                 <small>P {formatMacro(photoAnalysis.protein)}g · C {formatMacro(photoAnalysis.carbs)}g · F {formatMacro(photoAnalysis.fat)}g</small>
+                {photoAnalysis.matchedFood && <small>Datenbank-Match: {photoAnalysis.matchedFood.name} · {photoAnalysis.matchedFood.source}</small>}
                 {photoAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
               </div>
             )}
@@ -1205,6 +1179,7 @@ function App() {
                 <strong>{textAnalysis.description}</strong>
                 <span>{textAnalysis.estimatedGrams} g · {textAnalysis.calories} kcal · Sicherheit {confidenceLabel(textAnalysis.confidence)}</span>
                 <small>P {formatMacro(textAnalysis.protein)}g · C {formatMacro(textAnalysis.carbs)}g · F {formatMacro(textAnalysis.fat)}g</small>
+                {textAnalysis.matchedFood && <small>Datenbank-Match: {textAnalysis.matchedFood.name} · {textAnalysis.matchedFood.source}</small>}
                 {textAnalysis.aiUsage && <small>Usage-Rohwerte werden mit dem Eintrag gespeichert.</small>}
               </div>
             )}
@@ -1534,6 +1509,38 @@ async function fetchFoodHits(searchTerm: string, signal?: AbortSignal): Promise<
   return data.hits ?? [];
 }
 
+function draftFromAnalysis(analysis: FoodImageAnalysis): FoodDraft {
+  const matchedFood = analysis.matchedFood;
+  if (matchedFood) {
+    return {
+      foodKey: matchedFood.id,
+      foodName: matchedFood.brand ? `${matchedFood.name} · ${matchedFood.brand}` : matchedFood.name,
+      quantityValue: analysis.estimatedGrams,
+      quantityUnit: "g",
+      caloriesPer100g: matchedFood.caloriesPer100g,
+      proteinPer100g: matchedFood.proteinPer100g,
+      carbsPer100g: matchedFood.carbsPer100g,
+      fatPer100g: matchedFood.fatPer100g,
+      consumedAt: nowLocal(),
+      source: matchedFood.source + " via AI",
+      aiUsage: analysis.aiUsage,
+    };
+  }
+
+  return {
+    foodName: analysis.description,
+    quantityValue: analysis.estimatedGrams,
+    quantityUnit: "g",
+    caloriesPer100g: analysis.caloriesPer100g,
+    proteinPer100g: analysis.proteinPer100g,
+    carbsPer100g: analysis.carbsPer100g,
+    fatPer100g: analysis.fatPer100g,
+    consumedAt: nowLocal(),
+    source: "AI " + analysis.provider + "/" + analysis.model,
+    aiUsage: analysis.aiUsage,
+  };
+}
+
 function findCommonFoodCompletion(searchTerm: string) {
   const normalized = normalizeFoodKey(searchTerm);
   if (normalized.length < 2) return null;
@@ -1616,7 +1623,7 @@ function sortFoodResults(results: FoodSearchResult[], searchTerm: string) {
   const query = normalizeFoodKey(searchTerm);
   const completion = findCommonFoodCompletion(searchTerm);
   return [...results].sort((left, right) => {
-    const usageDelta = right.usageCount - left.usageCount;
+    const usageDelta = (right.usageCount ?? 0) - (left.usageCount ?? 0);
     if (usageDelta !== 0) return usageDelta;
 
     return relevanceScore(right, query, completion) - relevanceScore(left, query, completion);

@@ -712,7 +712,7 @@ async function analyzeFoodImage(input) {
 
   if (!estimatedGrams || !Number.isFinite(calories)) throw new Error("AI response could not be understood");
 
-  return {
+  return withFoodDatabaseMatch({
     description: String(parsed.description ?? "Foto-Eintrag").trim().slice(0, 160) || "Foto-Eintrag",
     estimatedGrams: Math.round(estimatedGrams),
     calories: Math.round(calories),
@@ -727,7 +727,7 @@ async function analyzeFoodImage(input) {
     provider: config.provider,
     model: config.model,
     aiUsage,
-  };
+  });
 }
 
 async function analyzeFoodText(input) {
@@ -792,7 +792,7 @@ async function analyzeFoodText(input) {
 
   if (!estimatedGrams || !Number.isFinite(calories)) throw new Error("AI response could not be understood");
 
-  return {
+  return withFoodDatabaseMatch({
     description: String(parsed.description ?? "AI-Eintrag").trim().slice(0, 160) || "AI-Eintrag",
     estimatedGrams: Math.round(estimatedGrams),
     calories: Math.round(calories),
@@ -807,7 +807,58 @@ async function analyzeFoodText(input) {
     provider: config.provider,
     model: config.model,
     aiUsage,
-  };
+  });
+}
+
+async function withFoodDatabaseMatch(analysis) {
+  const matchedFood = await findBestFoodDatabaseMatch(analysis.description);
+  return matchedFood ? { ...analysis, matchedFood } : analysis;
+}
+
+async function findBestFoodDatabaseMatch(description) {
+  const query = String(description ?? "").trim();
+  if (query.length < 3) return null;
+
+  const hits = await searchFoodsExpanded(query, 8);
+  const rankedHits = hits
+    .map((hit) => ({ hit, score: foodMatchScore(query, hit) }))
+    .filter(({ score }) => score >= 42)
+    .sort((left, right) => right.score - left.score);
+
+  return rankedHits[0]?.hit ?? null;
+}
+
+function foodMatchScore(query, hit) {
+  const normalizedQuery = normalizeFoodKey(query);
+  const name = normalizeFoodKey(hit.name);
+  const brand = normalizeFoodKey(hit.brand);
+  const display = normalizeFoodKey(String(hit.name ?? "") + " " + String(hit.brand ?? ""));
+  if (!normalizedQuery || !name) return 0;
+
+  let score = 0;
+  if (name === normalizedQuery || display === normalizedQuery) score += 90;
+  if (name.startsWith(normalizedQuery) || display.startsWith(normalizedQuery)) score += 65;
+  if (normalizedQuery.includes(name)) score += 45;
+  if (brand && normalizedQuery.includes(brand)) score += 15;
+
+  const queryTokens = meaningfulFoodTokens(normalizedQuery);
+  const displayTokens = meaningfulFoodTokens(display);
+  if (queryTokens.length && displayTokens.length) {
+    const shared = queryTokens.filter((token) => displayTokens.includes(token)).length;
+    score += Math.round((shared / queryTokens.length) * 35);
+  }
+
+  if (hit.source === "OpenFoodFacts") score += 8;
+  if (hit.source === "Common food") score += 5;
+  return score;
+}
+
+function meaningfulFoodTokens(value) {
+  const stopWords = new Set(["mit", "und", "oder", "der", "die", "das", "ein", "eine", "einer", "portion", "ca"]);
+  return value
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stopWords.has(token));
 }
 
 async function buildAiUsageSnapshot(config, payload) {
