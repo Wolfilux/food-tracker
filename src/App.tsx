@@ -1236,7 +1236,7 @@ function App() {
                     <strong>{result.name}</strong>
                     <small>
                       {result.brand || result.source} · {result.caloriesPer100g} kcal / 100g
-                      {result.usageCount > 0 ? ` · used ${result.usageCount}x` : ""}
+                      {(result.usageCount ?? 0) > 0 ? ` · used ${result.usageCount}x` : ""}
                     </small>
                   </span>
                 </button>
