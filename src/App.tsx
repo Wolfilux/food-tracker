@@ -25,6 +25,7 @@ import {
 
 type Unit = "g" | "kg";
 type AppView = "tracker" | "settings";
+type EntryMode = "search" | "photo" | "text" | "meal";
 
 type FoodEntry = {
   id: string;
@@ -242,6 +243,14 @@ const macroPresets: Record<NutritionGoal, MacroPreset> = {
     note: "Kalorienfreundlich, kohlenhydratbetont, Fett moderat.",
   },
 };
+
+const entryModes: Array<{ id: EntryMode; label: string; icon: ReactNode }> = [
+  { id: "search", label: "Suchen", icon: <Search size={17} aria-hidden="true" /> },
+  { id: "photo", label: "Foto", icon: <Camera size={17} aria-hidden="true" /> },
+  { id: "text", label: "Beschreiben", icon: <MessageSquareText size={17} aria-hidden="true" /> },
+  { id: "meal", label: "Vorlagen", icon: <Utensils size={17} aria-hidden="true" /> },
+];
+
 const COMMON_FOODS: CommonFood[] = [
   {
     id: "common:magerquark",
@@ -441,6 +450,7 @@ function macroFor(
 
 function App() {
   const [activeView, setActiveView] = useState<AppView>("tracker");
+  const [entryMode, setEntryMode] = useState<EntryMode>("search");
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [mealTemplates, setMealTemplates] = useState<MealTemplate[]>([]);
   const [selectedDate, setSelectedDate] = useState(todayLocal());
@@ -1006,7 +1016,7 @@ function App() {
           </p>
           <h1>Food Tracker</h1>
         </div>
-        <div className="goal-card" aria-label="Daily calorie progress">
+        <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
           <div className="goal-card__top">
             <Target size={22} aria-hidden="true" />
             <span>Tagesziel</span>
@@ -1015,11 +1025,11 @@ function App() {
           <div className="progress-track">
             <span style={{ width: `${progress}%` }} />
           </div>
-          <small>{progress}% of {nutritionConfig.calorieGoal.toLocaleString()} kcal</small>
+          <small>{progress}% von {nutritionConfig.calorieGoal.toLocaleString()} kcal</small>
         </div>
       </section>
 
-      <nav className="view-tabs" aria-label="App views">
+      <nav className="view-tabs" aria-label="App-Ansichten">
         <button className={activeView === "tracker" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("tracker")}>
           <Utensils size={17} aria-hidden="true" />
           Protokoll
@@ -1169,6 +1179,14 @@ function App() {
 
       {activeView === "tracker" && (
         <>
+      <section className="metric-grid" aria-label="Tagessummen">
+        <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
+        <Metric icon={<Scale />} label="Menge" value={Math.round(totals.grams)} suffix="g" />
+        <MacroMetric label="Protein" target={macroTargets.protein.grams} actual={totals.protein} />
+        <MacroMetric label="Kohlenhydrate" target={macroTargets.carbs.grams} actual={totals.carbs} />
+        <MacroMetric label="Fett" target={macroTargets.fat.grams} actual={totals.fat} />
+      </section>
+
       <section className="workspace-grid">
         <form ref={entryFormRef} className={editingEntryId ? "entry-form entry-form--editing" : "entry-form"} onSubmit={saveEntry}>
           <div className="entry-form__heading">
@@ -1180,7 +1198,22 @@ function App() {
               </button>
             )}
           </div>
-          <section className="photo-panel" aria-label="Food photo analysis">
+          <nav className="entry-mode-tabs" aria-label="Erfassungsart">
+            {entryModes.map((mode) => (
+              <button
+                className={entryMode === mode.id ? "entry-mode-tab entry-mode-tab--active" : "entry-mode-tab"}
+                type="button"
+                key={mode.id}
+                aria-pressed={entryMode === mode.id}
+                onClick={() => setEntryMode(mode.id)}
+              >
+                {mode.icon}
+                {mode.label}
+              </button>
+            ))}
+          </nav>
+          {entryMode === "photo" && (
+          <section className="photo-panel" aria-label="Fotoanalyse">
             <div className="search-panel__heading">
               <Camera size={18} aria-hidden="true" />
               <span>Foto analysieren</span>
@@ -1234,10 +1267,12 @@ function App() {
               </div>
             )}
           </section>
-          <section className="ai-text-panel" aria-label="AI text analysis">
+          )}
+          {entryMode === "text" && (
+          <section className="ai-text-panel" aria-label="Essen beschreiben">
             <div className="search-panel__heading">
               <MessageSquareText size={18} aria-hidden="true" />
-              <span>AI-Text</span>
+              <span>Essen beschreiben</span>
               <small>{aiConfig.hasApiKey ? aiConfig.model : "Key fehlt"}</small>
             </div>
             <label>
@@ -1278,7 +1313,9 @@ function App() {
               </div>
             )}
           </section>
-          <section className="meal-panel" aria-label="Meal templates">
+          )}
+          {entryMode === "meal" && (
+          <section className="meal-panel" aria-label="Mahlzeiten-Vorlagen">
             <div className="search-panel__heading">
               <Utensils size={18} aria-hidden="true" />
               <span>Mahlzeiten</span>
@@ -1291,15 +1328,15 @@ function App() {
             <div className="photo-actions">
               <button className="secondary-button" type="button" disabled={!draft.foodName.trim()} onClick={addDraftToMeal}>
                 <Plus size={18} aria-hidden="true" />
-                Auswahl dazu
+                Zur Vorlage hinzufügen
               </button>
               <button className="secondary-button" type="button" disabled={!mealNameDraft.trim() || mealBuilderItems.length === 0 || mealState === "saving"} onClick={() => void saveMealBuilder(false)}>
                 {mealState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Database size={18} aria-hidden="true" />}
-                Vorlage
+                Vorlage speichern
               </button>
               <button className="secondary-button secondary-button--dark" type="button" disabled={!mealNameDraft.trim() || mealBuilderItems.length === 0 || mealState === "saving"} onClick={() => void saveMealBuilder(true)}>
                 <Plus size={18} aria-hidden="true" />
-                Vorlage + Tag
+                Vorlage heute eintragen
               </button>
             </div>
             {mealBuilderItems.length > 0 && (
@@ -1337,7 +1374,9 @@ function App() {
               </div>
             )}
           </section>
-          <section className="search-panel search-panel--embedded" aria-label="Food search">
+          )}
+          {entryMode === "search" && (
+          <section className="search-panel search-panel--embedded" aria-label="Lebensmittelsuche">
             <div className="search-panel__heading">
               <Database size={18} aria-hidden="true" />
               <span>1. Lebensmittel suchen</span>
@@ -1360,7 +1399,7 @@ function App() {
                     onKeyDown={handleFoodKeyDown}
                     placeholder="z.B. körniger Frischkäse, Milbona Skyr"
                   />
-                  <button type="button" aria-label="Search food database" onMouseDown={(event) => event.preventDefault()} onClick={() => {
+                  <button type="button" aria-label="Lebensmittel suchen" onMouseDown={(event) => event.preventDefault()} onClick={() => {
                     setAutocompleteOpen(true);
                     void searchFoods();
                   }}>
@@ -1389,13 +1428,14 @@ function App() {
                     <strong>{result.name}</strong>
                     <small>
                       {result.brand || result.source} · {result.caloriesPer100g} kcal / 100g
-                      {(result.usageCount ?? 0) > 0 ? ` · used ${result.usageCount}x` : ""}
+                      {(result.usageCount ?? 0) > 0 ? ` · ${result.usageCount}x genutzt` : ""}
                     </small>
                   </span>
                 </button>
               ))}
             </div>
           </section>
+          )}
           <div className={draft.foodKey ? "selection-card selection-card--active" : "selection-card"} aria-live="polite">
             <span>2. Auswahl</span>
             <strong>{draft.foodName || "Noch kein Lebensmittel gewählt"}</strong>
@@ -1437,15 +1477,7 @@ function App() {
 
       </section>
 
-      <section className="metric-grid" aria-label="Daily totals">
-        <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
-        <Metric icon={<Scale />} label="Menge" value={Math.round(totals.grams)} suffix="g" />
-        <MacroMetric label="Protein" target={macroTargets.protein.grams} actual={totals.protein} />
-        <MacroMetric label="Kohlenhydrate" target={macroTargets.carbs.grams} actual={totals.carbs} />
-        <MacroMetric label="Fett" target={macroTargets.fat.grams} actual={totals.fat} />
-      </section>
-
-      <section className="entry-list" aria-label="Food entries">
+      <section className="entry-list" aria-label="Tagesprotokoll Einträge">
         <div className="section-heading">
           <h2>{selectedDate === todayLocal() ? "Heute" : formatDateLabel(selectedDate)}</h2>
           <label className="date-filter">
