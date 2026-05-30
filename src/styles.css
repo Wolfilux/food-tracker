@@ -1,5 +1,19 @@
 :root {
-  color: #17211b;
+  --color-ink: #17211b;
+  --color-ink-soft: #425045;
+  --color-muted: #627064;
+  --color-primary: #24403a;
+  --color-primary-strong: #17211b;
+  --color-accent: #d5512a;
+  --color-danger: #a43d20;
+  --color-surface: #fffaf0;
+  --color-surface-strong: #fffdf7;
+  --color-surface-cool: #eef5f0;
+  --color-surface-warm: #fff3df;
+  --color-line: rgba(23, 33, 27, 0.12);
+  --radius: 8px;
+  --shadow-soft: 0 16px 40px rgba(23, 33, 27, 0.12);
+  color: var(--color-ink);
   background: #f4f1ea;
   font-family: Inter, Avenir Next, Avenir, Segoe UI, sans-serif;
   font-synthesis: none;
@@ -40,25 +54,25 @@ button:disabled {
 }
 
 .app-shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1280px, calc(100% - 32px));
   margin: 0 auto;
-  padding: max(32px, env(safe-area-inset-top)) 0 max(48px, env(safe-area-inset-bottom));
+  padding: max(24px, env(safe-area-inset-top)) 0 max(48px, env(safe-area-inset-bottom));
 }
 
 .hero-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  gap: 24px;
-  align-items: stretch;
-  min-height: 320px;
-  padding: 32px;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 340px);
+  gap: 18px;
+  align-items: end;
+  min-height: 190px;
+  padding: 24px;
   color: #fff8eb;
   background:
-    linear-gradient(120deg, rgba(16, 24, 20, 0.84), rgba(16, 24, 20, 0.48)),
+    linear-gradient(120deg, rgba(16, 24, 20, 0.88), rgba(16, 24, 20, 0.56)),
     url("https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=1600&q=80");
   background-position: center;
   background-size: cover;
-  border-radius: 8px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -100,9 +114,9 @@ p {
 
 h1 {
   max-width: 760px;
-  margin-bottom: 12px;
-  font-size: clamp(3.1rem, 8vw, 7rem);
-  line-height: 0.94;
+  margin-bottom: 0;
+  font-size: clamp(2.4rem, 5vw, 4.75rem);
+  line-height: 0.96;
 }
 
 .intro {
@@ -118,15 +132,15 @@ h1 {
 .entry-form,
 .entry-list {
   border: 1px solid rgba(23, 33, 27, 0.12);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .goal-card {
   align-self: end;
-  padding: 22px;
-  color: #17211b;
-  background: rgba(255, 248, 235, 0.94);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  padding: 18px;
+  color: var(--color-ink);
+  background: rgba(255, 248, 235, 0.95);
+  box-shadow: var(--shadow-soft);
 }
 
 .goal-card__top,
@@ -139,8 +153,8 @@ h1 {
 
 .goal-card strong {
   display: block;
-  margin: 18px 0 10px;
-  font-size: 2.4rem;
+  margin: 12px 0 10px;
+  font-size: 2rem;
   line-height: 1;
 }
 
@@ -154,19 +168,19 @@ h1 {
 .progress-track span {
   display: block;
   height: 100%;
-  background: #d5512a;
+  background: var(--color-accent);
   border-radius: inherit;
 }
 
 .view-tabs {
   display: flex;
   gap: 8px;
-  margin: 18px 0;
+  margin: 14px 0;
   padding: 6px;
   width: fit-content;
   background: rgba(255, 250, 240, 0.92);
   border: 1px solid rgba(23, 33, 27, 0.12);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .view-tab {
@@ -185,7 +199,7 @@ h1 {
 
 .view-tab--active {
   color: #fff8eb;
-  background: #17211b;
+  background: var(--color-primary-strong);
 }
 
 .settings-page {
@@ -195,8 +209,8 @@ h1 {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
-  margin: 14px 0 18px;
+  gap: 10px;
+  margin: 12px 0 18px;
 }
 
 .config-panel {
@@ -319,25 +333,25 @@ h1 {
 }
 
 .metric-card {
-  min-height: 138px;
-  padding: 18px;
-  background: #fffaf0;
+  min-height: 112px;
+  padding: 15px;
+  background: var(--color-surface);
 }
 
 .metric-icon {
   display: grid;
-  width: 38px;
-  height: 38px;
-  margin-bottom: 20px;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 14px;
   place-items: center;
   color: #fff8eb;
-  background: #17211b;
+  background: var(--color-primary-strong);
   border-radius: 50%;
 }
 
 .metric-icon svg {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
 }
 
 .metric-card p {
@@ -347,7 +361,8 @@ h1 {
 }
 
 .metric-card strong {
-  font-size: 1.75rem;
+  font-size: 1.58rem;
+  line-height: 1;
 }
 
 .metric-card small {
@@ -397,9 +412,10 @@ h1 {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 460px);
+  grid-template-columns: minmax(340px, 460px) minmax(0, 1fr);
   gap: 18px;
   margin: 0 0 18px;
+  align-items: start;
 }
 
 .entry-form,
@@ -410,6 +426,8 @@ h1 {
 
 .entry-form {
   align-self: start;
+  position: sticky;
+  top: 16px;
 }
 
 .entry-form--editing {
@@ -419,7 +437,7 @@ h1 {
 
 .entry-form h2,
 .entry-list h2 {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   font-size: 1.3rem;
 }
 
@@ -438,7 +456,7 @@ h1 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
-  margin: 18px 0;
+  margin: 16px 0;
   padding: 5px;
   background: rgba(238, 245, 240, 0.72);
   border: 1px solid rgba(36, 64, 58, 0.14);
@@ -915,6 +933,7 @@ button:focus-visible {
 
 .entry-list {
   min-width: 0;
+  min-height: 100%;
 }
 
 .section-heading {
@@ -1059,6 +1078,10 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .entry-form {
+    position: static;
+  }
+
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1072,7 +1095,30 @@ button:focus-visible {
 
   .hero-panel {
     min-height: auto;
-    padding: 22px;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .eyebrow {
+    margin-bottom: 12px;
+    font-size: 0.76rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 13vw, 3.1rem);
+  }
+
+  .intro {
+    font-size: 0.98rem;
+  }
+
+  .goal-card {
+    padding: 14px;
+  }
+
+  .goal-card strong {
+    margin: 8px 0;
+    font-size: 1.65rem;
   }
 
   .view-tabs {
@@ -1087,9 +1133,24 @@ button:focus-visible {
   .macro-target-grid,
   .macro-grid,
   .quantity-grid,
-  .entry-mode-tabs,
   .photo-actions {
     grid-template-columns: 1fr;
+  }
+
+  .entry-mode-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .entry-form,
+  .entry-list {
+    padding: 16px;
+  }
+
+  .entry-form .primary-button {
+    position: sticky;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    box-shadow: 0 12px 28px rgba(23, 33, 27, 0.24);
+    z-index: 2;
   }
 
   .food-row {

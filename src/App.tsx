@@ -1475,9 +1475,7 @@ function App() {
           {entryError && <p className="form-error">{entryError}</p>}
         </form>
 
-      </section>
-
-      <section className="entry-list" aria-label="Tagesprotokoll Einträge">
+        <section className="entry-list" aria-label="Tagesprotokoll Einträge">
         <div className="section-heading">
           <h2>{selectedDate === todayLocal() ? "Heute" : formatDateLabel(selectedDate)}</h2>
           <label className="date-filter">
@@ -1506,6 +1504,7 @@ function App() {
             </div>
           </article>
         ))}
+        </section>
       </section>
         </>
       )}
