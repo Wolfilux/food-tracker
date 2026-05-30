@@ -30,8 +30,8 @@ export async function getGarminDailySummary(dateString, credentials = {}) {
     const displayName = pickDisplayName(profile);
     if (!displayName) throw new Error("Garmin profile has no display name");
 
-    const summary = await client.get(
-      `https://connect.garmin.com/modern/proxy/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}`,
+    const summary = await client.client.get(
+      `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}`,
       { params: { calendarDate: date } },
     );
 
