@@ -104,11 +104,13 @@ type GarminConfig = {
   username: string;
   hasCredential: boolean;
   keyHint: string;
+  autoSyncMinutes: number;
 };
 
 type GarminConfigDraft = {
   username: string;
   authValue: string;
+  autoSyncMinutes: number;
 };
 
 type ImportResult = {
@@ -234,7 +236,16 @@ const defaultGarminConfig: GarminConfig = {
   username: "",
   hasCredential: false,
   keyHint: "",
+  autoSyncMinutes: 0,
 };
+
+const garminAutoSyncOptions = [
+  { value: 0, label: "Aus" },
+  { value: 15, label: "Alle 15 Minuten" },
+  { value: 30, label: "Alle 30 Minuten" },
+  { value: 45, label: "Alle 45 Minuten" },
+  { value: 60, label: "Alle 60 Minuten" },
+] as const;
 
 const macroPresets: Record<NutritionGoal, MacroPreset> = {
   "fat-loss": {
@@ -495,6 +506,7 @@ function App() {
   const [garminDraft, setGarminDraft] = useState<GarminConfigDraft>({
     username: "",
     authValue: "",
+    autoSyncMinutes: defaultGarminConfig.autoSyncMinutes,
   });
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [draft, setDraft] = useState<FoodDraft>(createEmptyDraft);
@@ -588,7 +600,7 @@ function App() {
         setNutritionConfig(configResponse);
         setAiConfig(aiConfigResponse);
         setGarminConfig(garminConfigResponse);
-        setGarminDraft({ username: garminConfigResponse.username, authValue: "" });
+        setGarminDraft({ username: garminConfigResponse.username, authValue: "", autoSyncMinutes: garminConfigResponse.autoSyncMinutes });
         setAiDraft({
           provider: aiConfigResponse.provider,
           model: aiConfigResponse.model,
@@ -615,8 +627,26 @@ function App() {
     return () => window.clearTimeout(timeoutId);
   }, [isConfigLoaded, nutritionConfig]);
 
+  const refreshGarminSummary = useCallback(async () => {
+    if (!hasGarminCredentials) {
+      setGarminSummary(null);
+      setGarminState("idle");
+      return;
+    }
+
+    setGarminState("loading");
+    try {
+      const summary = await fetchGarminDailySummary(selectedDate, true);
+      setGarminSummary(summary);
+      setGarminState(summary.error ? "error" : "done");
+    } catch {
+      setGarminSummary(null);
+      setGarminState("error");
+    }
+  }, [hasGarminCredentials, selectedDate]);
+
   useEffect(() => {
-    let isMounted = true;
+    if (!isConfigLoaded) return;
     const timeoutId = window.setTimeout(() => {
       if (!hasGarminCredentials) {
         setGarminSummary(null);
@@ -627,40 +657,17 @@ function App() {
       setGarminState("loading");
       void fetchGarminDailySummary(selectedDate)
         .then((summary) => {
-          if (!isMounted) return;
           setGarminSummary(summary);
           setGarminState(summary.error ? "error" : "done");
         })
         .catch(() => {
-          if (!isMounted) return;
           setGarminSummary(null);
           setGarminState("error");
         });
     }, 0);
 
-    return () => {
-      isMounted = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [hasGarminCredentials, selectedDate]);
-
-  async function refreshGarminSummary() {
-    if (!hasGarminCredentials) {
-      setGarminSummary(null);
-      setGarminState("idle");
-      return;
-    }
-
-    setGarminState("loading");
-    try {
-      const summary = await fetchGarminDailySummary(selectedDate);
-      setGarminSummary(summary);
-      setGarminState(summary.error ? "error" : "done");
-    } catch {
-      setGarminSummary(null);
-      setGarminState("error");
-    }
-  }
+    return () => window.clearTimeout(timeoutId);
+  }, [hasGarminCredentials, isConfigLoaded, selectedDate]);
 
   const searchFoods = useCallback(async (searchTerm = draft.foodName.trim(), signal?: AbortSignal) => {
     const trimmedQuery = searchTerm.trim();
@@ -760,9 +767,19 @@ function App() {
     try {
       const savedConfig = await saveGarminConfig(garminDraft);
       setGarminConfig(savedConfig);
-      setGarminDraft({ username: savedConfig.username, authValue: "" });
+      setGarminDraft({ username: savedConfig.username, authValue: "", autoSyncMinutes: savedConfig.autoSyncMinutes });
       setGarminConfigState("saved");
-      void refreshGarminSummary();
+      if (savedConfig.username && savedConfig.hasCredential) {
+        void fetchGarminDailySummary(selectedDate, true)
+          .then((summary) => {
+            setGarminSummary(summary);
+            setGarminState(summary.error ? "error" : "done");
+          })
+          .catch(() => {
+            setGarminSummary(null);
+            setGarminState("error");
+          });
+      }
     } catch (error) {
       setGarminConfigError(error instanceof Error ? error.message : "Garmin-Konfiguration konnte nicht gespeichert werden.");
       setGarminConfigState("error");
@@ -1228,6 +1245,20 @@ function App() {
                   autoComplete="current-password"
                 />
               </label>
+              <label>
+                Auto-Abruf
+                <select
+                  value={garminDraft.autoSyncMinutes}
+                  onChange={(event) => {
+                    setGarminDraft({ ...garminDraft, autoSyncMinutes: Number(event.target.value) });
+                    setGarminConfigState("idle");
+                  }}
+                >
+                  {garminAutoSyncOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
               <button className="primary-button" type="submit" disabled={garminConfigState === "saving"}>
                 {garminConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
                 Garmin speichern
@@ -1244,6 +1275,12 @@ function App() {
                     ? `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)} · Ruhe ${formatOptionalCalories(garminSummary.bmrKilocalories)}`
                     : "Garmin kann jetzt abgefragt werden."}
               </span>
+              {garminSummary?.fetchedAt && <small>Letzter Abruf {formatTime(garminSummary.fetchedAt)}</small>}
+              {hasGarminCredentials && (
+                <small>
+                  Server-Auto-Abruf {garminConfig.autoSyncMinutes === 0 ? "aus" : `alle ${garminConfig.autoSyncMinutes} Minuten`}
+                </small>
+              )}
             </div>
             <div className="config-controls">
               <button className="secondary-button" type="button" disabled={garminState === "loading"} onClick={() => void refreshGarminSummary()}>
@@ -1969,8 +2006,9 @@ async function fetchAiModels(provider: string): Promise<string[]> {
   return data.models;
 }
 
-async function fetchGarminDailySummary(date: string): Promise<GarminDailySummary> {
+async function fetchGarminDailySummary(date: string, refresh = false): Promise<GarminDailySummary> {
   const params = new URLSearchParams({ date });
+  if (refresh) params.set("refresh", "1");
   const response = await fetch(`/api/garmin/daily-summary?${params.toString()}`);
   const data = (await response.json()) as { summary?: GarminDailySummary };
   if (!response.ok || !data.summary) throw new Error("Garmin konnte nicht abgefragt werden.");
@@ -2241,10 +2279,12 @@ function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
 }
 
 function normalizeGarminConfig(config: Partial<GarminConfig> | undefined): GarminConfig {
+  const autoSyncMinutes = Number(config?.autoSyncMinutes);
   return {
     username: String(config?.username ?? ""),
     hasCredential: Boolean(config?.hasCredential),
     keyHint: String(config?.keyHint ?? ""),
+    autoSyncMinutes: [0, 15, 30, 45, 60].includes(autoSyncMinutes) ? autoSyncMinutes : 0,
   };
 }
 

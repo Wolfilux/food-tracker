@@ -2,13 +2,14 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFoodApiMiddleware } from "./food-db.js";
+import { createFoodApiMiddleware, startGarminSyncScheduler } from "./food-db.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = join(here, "..", "dist");
 const port = Number(process.env.PORT ?? 4173);
 const host = process.env.HOST ?? "0.0.0.0";
 const apiMiddleware = createFoodApiMiddleware();
+const stopGarminSyncScheduler = startGarminSyncScheduler();
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -63,4 +64,9 @@ const server = createServer((request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Food Tracker listening on http://${host}:${port}`);
+});
+
+process.on("SIGTERM", () => {
+  stopGarminSyncScheduler();
+  server.close(() => process.exit(0));
 });

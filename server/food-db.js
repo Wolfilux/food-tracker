@@ -69,6 +69,8 @@ const aiProviders = new Map([
 ]);
 
 let db;
+let garminSchedulerTimer;
+let garminSchedulerRunning = false;
 
 export function getFoodDatabase() {
   if (!db) {
@@ -78,6 +80,24 @@ export function getFoodDatabase() {
   }
 
   return db;
+}
+
+export function startGarminSyncScheduler() {
+  getFoodDatabase();
+  if (garminSchedulerTimer) return () => clearInterval(garminSchedulerTimer);
+
+  const tick = () => {
+    void runGarminScheduledSync().catch((error) => {
+      console.warn("Garmin scheduled sync failed:", error instanceof Error ? error.message : error);
+    });
+  };
+
+  garminSchedulerTimer = setInterval(tick, 60 * 1000);
+  setTimeout(tick, 2000);
+  return () => {
+    clearInterval(garminSchedulerTimer);
+    garminSchedulerTimer = undefined;
+  };
 }
 
 export function searchFoods(query, limit = 12) {
@@ -256,10 +276,8 @@ export function createFoodApiMiddleware() {
     }
 
     if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
-      const config = getGarminConfigRecord();
-      sendJson(response, { summary: await getGarminDailySummary(url.searchParams.get("date"), {
-        username: config.username,
-        authValue: config.authValue,
+      sendJson(response, { summary: await readGarminDailySummary(url.searchParams.get("date"), {
+        refresh: url.searchParams.get("refresh") === "1",
       }) });
       return;
     }
@@ -475,6 +493,7 @@ export function getPublicGarminConfig() {
     username: config.username,
     hasCredential: Boolean(config.authValue),
     keyHint: config.keyHint,
+    autoSyncMinutes: config.autoSyncMinutes,
   };
 }
 
@@ -483,6 +502,7 @@ export function saveGarminConfig(input) {
   const current = getGarminConfigRecord();
   const credentialInput = typeof input?.authValue === "string" ? input.authValue.trim() : "";
   const shouldClearCredential = input?.clearCredential === true;
+  const autoSyncMinutes = normalizeGarminAutoSyncMinutes(input?.autoSyncMinutes, current.autoSyncMinutes);
 
   if (username && !/^\S+@\S+\.\S+$/.test(username)) {
     throw new Error("Invalid Garmin username");
@@ -494,14 +514,15 @@ export function saveGarminConfig(input) {
 
   getFoodDatabase()
     .prepare([
-      "INSERT INTO garmin_config (id, username, encrypted_credential, credential_iv, credential_tag, key_hint, updated_at)",
-      "VALUES ('default', ?, ?, ?, ?, ?, datetime('now'))",
+      "INSERT INTO garmin_config (id, username, encrypted_credential, credential_iv, credential_tag, key_hint, auto_sync_minutes, updated_at)",
+      "VALUES ('default', ?, ?, ?, ?, ?, ?, datetime('now'))",
       "ON CONFLICT(id) DO UPDATE SET",
       "  username = excluded.username,",
       "  encrypted_credential = CASE WHEN ? THEN excluded.encrypted_credential WHEN ? THEN '' ELSE garmin_config.encrypted_credential END,",
       "  credential_iv = CASE WHEN ? THEN excluded.credential_iv WHEN ? THEN '' ELSE garmin_config.credential_iv END,",
       "  credential_tag = CASE WHEN ? THEN excluded.credential_tag WHEN ? THEN '' ELSE garmin_config.credential_tag END,",
       "  key_hint = excluded.key_hint,",
+      "  auto_sync_minutes = excluded.auto_sync_minutes,",
       "  updated_at = excluded.updated_at",
     ].join("\n"))
     .run(
@@ -510,6 +531,7 @@ export function saveGarminConfig(input) {
       encrypted?.iv ?? "",
       encrypted?.tag ?? "",
       keyHint,
+      autoSyncMinutes,
       hasNewCredential ? 1 : 0,
       shouldClearCredential ? 1 : 0,
       hasNewCredential ? 1 : 0,
@@ -871,7 +893,13 @@ function initializeDatabase(database) {
     "  credential_iv TEXT NOT NULL DEFAULT '',",
     "  credential_tag TEXT NOT NULL DEFAULT '',",
     "  key_hint TEXT NOT NULL DEFAULT '',",
+    "  auto_sync_minutes INTEGER NOT NULL DEFAULT 0,",
     "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ");",
+    "CREATE TABLE IF NOT EXISTS garmin_daily_summary (",
+    "  date TEXT PRIMARY KEY,",
+    "  summary_json TEXT NOT NULL,",
+    "  fetched_at TEXT NOT NULL",
     ");",
     "CREATE TABLE IF NOT EXISTS entries (",
     "  id TEXT PRIMARY KEY,",
@@ -919,8 +947,97 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "garmin_config", "auto_sync_minutes", "INTEGER NOT NULL DEFAULT 0");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   seedFoodRecords(database);
+}
+
+async function readGarminDailySummary(dateString, options = {}) {
+  const date = normalizeGarminDate(dateString);
+  const config = getGarminConfigRecord();
+
+  if (!config.username || !config.authValue) {
+    return {
+      configured: false,
+      date,
+      source: "garmin-connect",
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  const cached = getGarminCachedSummary(date);
+  if (cached && options.refresh !== true) return cached;
+
+  return fetchAndStoreGarminDailySummary(date, config);
+}
+
+async function runGarminScheduledSync() {
+  if (garminSchedulerRunning) return;
+  const config = getGarminConfigRecord();
+  if (!config.username || !config.authValue || config.autoSyncMinutes === 0) return;
+
+  const date = todayInBerlin();
+  const cached = getGarminCachedSummary(date);
+  if (cached?.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < config.autoSyncMinutes * 60 * 1000) return;
+
+  garminSchedulerRunning = true;
+  try {
+    await fetchAndStoreGarminDailySummary(date, config);
+  } finally {
+    garminSchedulerRunning = false;
+  }
+}
+
+async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRecord()) {
+  const summary = await getGarminDailySummary(date, {
+    username: config.username,
+    authValue: config.authValue,
+  });
+  storeGarminDailySummary(summary);
+  return summary;
+}
+
+function getGarminCachedSummary(date) {
+  const row = getFoodDatabase()
+    .prepare("SELECT summary_json FROM garmin_daily_summary WHERE date = ?")
+    .get(date);
+  if (!row?.summary_json) return null;
+
+  try {
+    return JSON.parse(row.summary_json);
+  } catch {
+    return null;
+  }
+}
+
+function storeGarminDailySummary(summary) {
+  if (!summary?.date) return;
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO garmin_daily_summary (date, summary_json, fetched_at)",
+      "VALUES (?, ?, ?)",
+      "ON CONFLICT(date) DO UPDATE SET",
+      "  summary_json = excluded.summary_json,",
+      "  fetched_at = excluded.fetched_at",
+    ].join("\n"))
+    .run(summary.date, JSON.stringify(summary), summary.fetchedAt ?? new Date().toISOString());
+}
+
+function normalizeGarminDate(value) {
+  const raw = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return todayInBerlin();
+}
+
+function todayInBerlin() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 async function analyzeFoodImage(input) {
@@ -1279,18 +1396,25 @@ function getAiConfigRecord() {
 
 function getGarminConfigRecord() {
   const row = getFoodDatabase()
-    .prepare("SELECT username, encrypted_credential, credential_iv, credential_tag, key_hint FROM garmin_config WHERE id = 'default'")
+    .prepare("SELECT username, encrypted_credential, credential_iv, credential_tag, key_hint, auto_sync_minutes FROM garmin_config WHERE id = 'default'")
     .get();
 
   if (!row) {
-    return { username: "", authValue: "", keyHint: "" };
+    return { username: "", authValue: "", keyHint: "", autoSyncMinutes: 0 };
   }
 
   return {
     username: row.username,
     authValue: decryptSecret(row.encrypted_credential, row.credential_iv, row.credential_tag),
     keyHint: row.key_hint,
+    autoSyncMinutes: normalizeGarminAutoSyncMinutes(row.auto_sync_minutes, 0),
   };
+}
+
+function normalizeGarminAutoSyncMinutes(value, fallback = 0) {
+  const number = Number(value);
+  if ([0, 15, 30, 45, 60].includes(number)) return number;
+  return [0, 15, 30, 45, 60].includes(fallback) ? fallback : 0;
 }
 
 function getSecretKey() {
