@@ -85,7 +85,7 @@ function normalizeDate(value) {
 }
 
 function pickDisplayName(profile) {
-  return String(profile?.userName ?? profile?.displayName ?? profile?.profileId ?? "").trim();
+  return String(profile?.displayName ?? profile?.userName ?? profile?.profileId ?? "").trim();
 }
 
 function normalizeGarminSummary(summary, date) {
