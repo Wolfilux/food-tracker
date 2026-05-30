@@ -12,12 +12,13 @@
     "security:scan": "bash scripts/security-scan.sh"
   },
   "dependencies": {
+    "@gooin/garmin-connect": "^1.8.1",
     "@vitejs/plugin-react": "^5.1.1",
-    "vite": "^7.2.4",
-    "typescript": "^5.9.3",
+    "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "lucide-react": "^0.555.0"
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

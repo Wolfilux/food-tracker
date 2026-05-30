@@ -12,6 +12,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - AI-Konfiguration mit Provider, Modell-Dropdown und sicher gespeicherten API-Keys
 - Live-Modellabruf ueber Provider-APIs
 - Rohspeicherung von AI-Usage-Daten am Fotoeintrag
+- Optionaler Garmin-Connect-Abruf fuer den echten Tagesverbrauch als dynamisches Kalorienziel
 - Progressive Web App fuer iPhone Home-Screen-Nutzung
 
 ## Architecture
@@ -21,6 +22,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Storage: lokale SQLite-Datei unter `data/`
 - Secrets: API-Keys werden serverseitig mit AES-GCM verschluesselt und nicht im Browser gespeichert
 - AI Usage: Token-/Kosten-Rohwerte werden als JSON am Eintrag gespeichert; OpenRouter-Generation-Stats bleiben unveraendert fuer spaetere Auswertung erhalten
+- Garmin: optionale serverseitige Garmin-Connect-Anbindung ueber `GARMIN_USERNAME`/`GARMIN_PASSWORD`; Tokens werden im persistenten `data/`-Volume wiederverwendet
 - PWA: `manifest.webmanifest`, App-Icons und Service Worker unter `public/`
 
 ## Security Baseline
@@ -54,6 +56,15 @@ docker run --rm -p 4173:4173 -v food-tracker-data:/app/data food-tracker:local
 Default URL: `http://localhost:4173`
 
 Persistent files live in the named Docker volume `food-tracker-data`, mounted at `/app/data`. This stores the SQLite database and the local encryption key used for saved AI provider credentials. Do not delete or recreate this volume unless you intentionally want to reset the app data and saved API keys.
+
+Optional Garmin Connect:
+
+~~~bash
+GARMIN_USERNAME=you@example.com
+GARMIN_PASSWORD=...
+~~~
+
+When configured, `/api/garmin/daily-summary?date=YYYY-MM-DD` reads Garmin's daily calories burned and the frontend uses that value as the day's calorie target. If Garmin is not configured or the login fails, the app falls back to the manually configured calorie target.
 
 For Portainer, use the repository as a Git stack. The compose file pulls `ghcr.io/wolfilux/food-tracker:dev`, which is published by GitHub Actions after the quality gate passes. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
 

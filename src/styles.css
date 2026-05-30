@@ -158,6 +158,17 @@ h1 {
   line-height: 1;
 }
 
+.goal-card__note {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-muted);
+  font-weight: 750;
+}
+
+.goal-card__note--error {
+  color: var(--color-danger);
+}
+
 .progress-track {
   height: 10px;
   overflow: hidden;
@@ -235,6 +246,10 @@ h1 {
 }
 
 .backup-panel {
+  margin-top: 18px;
+}
+
+.garmin-panel {
   margin-top: 18px;
 }
 
@@ -330,6 +345,11 @@ h1 {
   color: #627064;
   font-size: 0.86rem;
   font-weight: 750;
+}
+
+.garmin-status-card {
+  min-height: 104px;
+  justify-content: center;
 }
 
 .metric-card {

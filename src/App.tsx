@@ -107,6 +107,19 @@ type ImportResult = {
   warnings: string[];
 };
 
+type GarminDailySummary = {
+  configured: boolean;
+  date: string;
+  source: string;
+  totalKilocalories?: number;
+  activeKilocalories?: number;
+  bmrKilocalories?: number;
+  consumedKilocalories?: number;
+  remainingKilocalories?: number;
+  error?: string;
+  fetchedAt?: string;
+};
+
 type AiUsageSnapshot = {
   provider: string;
   model: string;
@@ -484,6 +497,8 @@ function App() {
   const [aiModelsState, setAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [importExportMessage, setImportExportMessage] = useState("");
+  const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
+  const [garminState, setGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
@@ -526,7 +541,9 @@ function App() {
     () => calculateMacroTargets(nutritionConfig.calorieGoal, selectedPreset),
     [nutritionConfig.calorieGoal, selectedPreset],
   );
-  const progress = Math.min(100, Math.round((totals.calories / nutritionConfig.calorieGoal) * 100));
+  const garminCalorieGoal = garminSummary?.configured && garminSummary.totalKilocalories ? garminSummary.totalKilocalories : null;
+  const effectiveCalorieGoal = garminCalorieGoal ?? nutritionConfig.calorieGoal;
+  const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
 
   useEffect(() => {
     let isMounted = true;
@@ -569,6 +586,41 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [isConfigLoaded, nutritionConfig]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const timeoutId = window.setTimeout(() => {
+      setGarminState("loading");
+      void fetchGarminDailySummary(selectedDate)
+        .then((summary) => {
+          if (!isMounted) return;
+          setGarminSummary(summary);
+          setGarminState(summary.error ? "error" : "done");
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          setGarminSummary(null);
+          setGarminState("error");
+        });
+    }, 0);
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [selectedDate]);
+
+  async function refreshGarminSummary() {
+    setGarminState("loading");
+    try {
+      const summary = await fetchGarminDailySummary(selectedDate);
+      setGarminSummary(summary);
+      setGarminState(summary.error ? "error" : "done");
+    } catch {
+      setGarminSummary(null);
+      setGarminState("error");
+    }
+  }
 
   const searchFoods = useCallback(async (searchTerm = draft.foodName.trim(), signal?: AbortSignal) => {
     const trimmedQuery = searchTerm.trim();
@@ -1019,13 +1071,20 @@ function App() {
         <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
           <div className="goal-card__top">
             <Target size={22} aria-hidden="true" />
-            <span>Tagesziel</span>
+            <span>{garminCalorieGoal ? "Garmin Verbrauch" : "Tagesziel"}</span>
           </div>
           <strong>{totals.calories.toLocaleString()} kcal</strong>
           <div className="progress-track">
             <span style={{ width: `${progress}%` }} />
           </div>
-          <small>{progress}% von {nutritionConfig.calorieGoal.toLocaleString()} kcal</small>
+          <small>{progress}% von {effectiveCalorieGoal.toLocaleString()} kcal</small>
+          {garminSummary?.configured && (
+            <small className={garminSummary.error ? "goal-card__note goal-card__note--error" : "goal-card__note"}>
+              {garminSummary.error
+                ? "Garmin Sync fehlgeschlagen"
+                : `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)} · Ruhe ${formatOptionalCalories(garminSummary.bmrKilocalories)}`}
+            </small>
+          )}
         </div>
       </section>
 
@@ -1075,6 +1134,38 @@ function App() {
               <MacroTarget label="Kohlenhydrate" grams={macroTargets.carbs.grams} calories={macroTargets.carbs.calories} percent={selectedPreset.carbs} />
               <MacroTarget label="Protein" grams={macroTargets.protein.grams} calories={macroTargets.protein.calories} percent={selectedPreset.protein} />
               <MacroTarget label="Fett" grams={macroTargets.fat.grams} calories={macroTargets.fat.calories} percent={selectedPreset.fat} />
+            </div>
+          </section>
+          <section className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration">
+            <div className="config-copy">
+              <p className="eyebrow eyebrow--dark">
+                <Activity size={16} aria-hidden="true" />
+                Garmin
+              </p>
+              <h2>Tagesverbrauch</h2>
+              <p>Wenn Garmin im Container konfiguriert ist, nutzt der Tracker den echten Tagesverbrauch als Kalorienziel.</p>
+            </div>
+            <div className="backup-note garmin-status-card">
+              <strong>{garminCalorieGoal ? `${garminCalorieGoal.toLocaleString("de-DE")} kcal Verbrauch` : "Nicht verbunden"}</strong>
+              <span>
+                {garminSummary?.error
+                  ? "Sync fehlgeschlagen. Credentials oder Garmin MFA pruefen."
+                  : garminSummary?.configured
+                    ? `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)} · Ruhe ${formatOptionalCalories(garminSummary.bmrKilocalories)}`
+                    : "Setze GARMIN_USERNAME und GARMIN_PASSWORD in Portainer."}
+              </span>
+            </div>
+            <div className="config-controls">
+              <button className="secondary-button" type="button" disabled={garminState === "loading"} onClick={() => void refreshGarminSummary()}>
+                {garminState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Activity size={18} aria-hidden="true" />}
+                Garmin abrufen
+              </button>
+              <p className={garminState === "error" ? "config-status config-status--error" : "config-status"}>
+                {garminState === "loading" && "Garmin wird abgefragt."}
+                {garminState === "done" && (garminSummary?.configured ? "Garmin-Abruf bereit." : "Garmin ist noch nicht konfiguriert.")}
+                {garminState === "error" && "Garmin-Abruf nicht erfolgreich."}
+                {garminState === "idle" && "Noch nicht abgefragt."}
+              </p>
             </div>
           </section>
           <form className="config-panel config-panel--page ai-config-panel" aria-label="AI photo analysis configuration" onSubmit={saveAiSettings}>
@@ -1768,6 +1859,14 @@ async function fetchAiModels(provider: string): Promise<string[]> {
   return data.models;
 }
 
+async function fetchGarminDailySummary(date: string): Promise<GarminDailySummary> {
+  const params = new URLSearchParams({ date });
+  const response = await fetch(`/api/garmin/daily-summary?${params.toString()}`);
+  const data = (await response.json()) as { summary?: GarminDailySummary };
+  if (!response.ok || !data.summary) throw new Error("Garmin konnte nicht abgefragt werden.");
+  return normalizeGarminDailySummary(data.summary);
+}
+
 async function fetchExportData(): Promise<unknown> {
   const response = await fetch("/api/export");
   if (!response.ok) throw new Error("Export konnte nicht erstellt werden.");
@@ -2031,6 +2130,21 @@ function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
   };
 }
 
+function normalizeGarminDailySummary(summary: Partial<GarminDailySummary>): GarminDailySummary {
+  return {
+    configured: Boolean(summary.configured),
+    date: String(summary.date ?? todayLocal()),
+    source: String(summary.source ?? "garmin-connect"),
+    totalKilocalories: optionalNumber(summary.totalKilocalories),
+    activeKilocalories: optionalNumber(summary.activeKilocalories),
+    bmrKilocalories: optionalNumber(summary.bmrKilocalories),
+    consumedKilocalories: optionalNumber(summary.consumedKilocalories),
+    remainingKilocalories: optionalNumber(summary.remainingKilocalories),
+    error: summary.error ? String(summary.error) : undefined,
+    fetchedAt: summary.fetchedAt ? String(summary.fetchedAt) : undefined,
+  };
+}
+
 function normalizeMealTemplate(meal: MealTemplate): MealTemplate {
   return {
     id: String(meal.id),
@@ -2038,6 +2152,11 @@ function normalizeMealTemplate(meal: MealTemplate): MealTemplate {
     createdAt: String(meal.createdAt ?? new Date().toISOString()),
     items: Array.isArray(meal.items) ? meal.items.map(normalizeMealTemplateItem).filter(Boolean) : [],
   };
+}
+
+function optionalNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function normalizeMealTemplateItem(item: MealTemplateItem): MealTemplateItem {
@@ -2120,6 +2239,10 @@ function formatQuantity(entry: Pick<FoodEntry, "quantityValue" | "quantityUnit">
 
 function formatMacro(value: number) {
   return (Math.round(value * 10) / 10).toLocaleString("de-DE");
+}
+
+function formatOptionalCalories(value: number | undefined) {
+  return value === undefined ? "n/a" : `${value.toLocaleString("de-DE")} kcal`;
 }
 
 function confidenceLabel(value: FoodImageAnalysis["confidence"]) {

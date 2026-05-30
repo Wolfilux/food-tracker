@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { seedFoods } from "./food-data.js";
+import { getGarminDailySummary } from "./garmin-service.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbPath = join(here, "..", "data", "food-tracker.sqlite");
@@ -251,6 +252,11 @@ export function createFoodApiMiddleware() {
       } catch (error) {
         sendJson(response, { error: error.message }, 400);
       }
+      return;
+    }
+
+    if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
+      sendJson(response, { summary: await getGarminDailySummary(url.searchParams.get("date")) });
       return;
     }
 
