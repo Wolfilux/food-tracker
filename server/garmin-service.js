@@ -32,7 +32,7 @@ export async function getGarminDailySummary(dateString, credentials = {}) {
 
     const summary = await client.get(
       `https://connect.garmin.com/modern/proxy/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}`,
-      { calendarDate: date },
+      { params: { calendarDate: date } },
     );
 
     return normalizeGarminSummary(summary, date);
