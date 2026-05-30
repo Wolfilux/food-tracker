@@ -565,6 +565,7 @@ function App() {
     () => calculateMacroTargets(nutritionConfig.calorieGoal, selectedPreset),
     [nutritionConfig.calorieGoal, selectedPreset],
   );
+  const hasGarminCredentials = Boolean(garminConfig.username && garminConfig.hasCredential);
   const garminCalorieGoal = garminSummary?.configured && garminSummary.totalKilocalories ? garminSummary.totalKilocalories : null;
   const effectiveCalorieGoal = garminCalorieGoal ?? nutritionConfig.calorieGoal;
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
@@ -617,6 +618,12 @@ function App() {
   useEffect(() => {
     let isMounted = true;
     const timeoutId = window.setTimeout(() => {
+      if (!hasGarminCredentials) {
+        setGarminSummary(null);
+        setGarminState("idle");
+        return;
+      }
+
       setGarminState("loading");
       void fetchGarminDailySummary(selectedDate)
         .then((summary) => {
@@ -635,9 +642,15 @@ function App() {
       isMounted = false;
       window.clearTimeout(timeoutId);
     };
-  }, [selectedDate, garminConfig.hasCredential, garminConfig.username]);
+  }, [hasGarminCredentials, selectedDate]);
 
   async function refreshGarminSummary() {
+    if (!hasGarminCredentials) {
+      setGarminSummary(null);
+      setGarminState("idle");
+      return;
+    }
+
     setGarminState("loading");
     try {
       const summary = await fetchGarminDailySummary(selectedDate);
@@ -1221,13 +1234,15 @@ function App() {
               </button>
             </div>
             <div className="backup-note garmin-status-card">
-              <strong>{garminCalorieGoal ? `${garminCalorieGoal.toLocaleString("de-DE")} kcal Verbrauch` : "Nicht verbunden"}</strong>
+              <strong>{garminCalorieGoal ? `${garminCalorieGoal.toLocaleString("de-DE")} kcal Verbrauch` : hasGarminCredentials ? "Garmin bereit" : "Nicht verbunden"}</strong>
               <span>
-                {garminSummary?.error
+                {!hasGarminCredentials
+                  ? "Garmin Benutzer und Passwort speichern."
+                  : garminSummary?.error
                   ? "Sync fehlgeschlagen. Credentials oder Garmin MFA pruefen."
                   : garminSummary?.configured
                     ? `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)} · Ruhe ${formatOptionalCalories(garminSummary.bmrKilocalories)}`
-                    : "Garmin Benutzer und Passwort speichern."}
+                    : "Garmin kann jetzt abgefragt werden."}
               </span>
             </div>
             <div className="config-controls">
