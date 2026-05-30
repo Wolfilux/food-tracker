@@ -8,11 +8,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const tokenDir = join(here, "..", "data", "garmin-tokens");
 
 let clientPromise;
+let clientIdentity = "";
 
-export async function getGarminDailySummary(dateString) {
+export async function getGarminDailySummary(dateString, credentials = {}) {
   const date = normalizeDate(dateString);
-  const username = process.env.GARMIN_USERNAME?.trim();
-  const garminPass = process.env.GARMIN_PASSWORD?.trim();
+  const username = String(credentials.username ?? "").trim();
+  const garminPass = String(credentials.authValue ?? "").trim();
 
   if (!username || !garminPass) {
     return {
@@ -48,7 +49,9 @@ export async function getGarminDailySummary(dateString) {
 }
 
 async function getGarminClient(username, password) {
-  if (!clientPromise) {
+  const identity = username;
+  if (!clientPromise || clientIdentity !== identity) {
+    clientIdentity = identity;
     clientPromise = createGarminClient(username, password);
   }
 

@@ -22,7 +22,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Storage: lokale SQLite-Datei unter `data/`
 - Secrets: API-Keys werden serverseitig mit AES-GCM verschluesselt und nicht im Browser gespeichert
 - AI Usage: Token-/Kosten-Rohwerte werden als JSON am Eintrag gespeichert; OpenRouter-Generation-Stats bleiben unveraendert fuer spaetere Auswertung erhalten
-- Garmin: optionale serverseitige Garmin-Connect-Anbindung ueber `GARMIN_USERNAME`/`GARMIN_PASSWORD`; Tokens werden im persistenten `data/`-Volume wiederverwendet
+- Garmin: optionale serverseitige Garmin-Connect-Anbindung; Login-Daten werden in der WebUI gepflegt, verschluesselt gespeichert und Tokens im persistenten `data/`-Volume wiederverwendet
 - PWA: `manifest.webmanifest`, App-Icons und Service Worker unter `public/`
 
 ## Security Baseline
@@ -59,12 +59,7 @@ Persistent files live in the named Docker volume `food-tracker-data`, mounted at
 
 Optional Garmin Connect:
 
-~~~bash
-GARMIN_USERNAME=you@example.com
-GARMIN_PASSWORD=...
-~~~
-
-When configured, `/api/garmin/daily-summary?date=YYYY-MM-DD` reads Garmin's daily calories burned and the frontend uses that value as the day's calorie target. If Garmin is not configured or the login fails, the app falls back to the manually configured calorie target.
+Configure Garmin in the app under `Konfiguration -> Garmin`. The app stores the login server-side with the same encrypted local secret storage used for AI credentials. When configured, `/api/garmin/daily-summary?date=YYYY-MM-DD` reads Garmin's daily calories burned and the frontend uses that value as the day's calorie target. If Garmin is not configured or the login fails, the app falls back to the manually configured calorie target.
 
 For Portainer, use the repository as a Git stack. The compose file pulls `ghcr.io/wolfilux/food-tracker:dev`, which is published by GitHub Actions after the quality gate passes. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
 

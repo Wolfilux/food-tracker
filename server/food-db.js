@@ -256,8 +256,28 @@ export function createFoodApiMiddleware() {
     }
 
     if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
-      sendJson(response, { summary: await getGarminDailySummary(url.searchParams.get("date")) });
+      const config = getGarminConfigRecord();
+      sendJson(response, { summary: await getGarminDailySummary(url.searchParams.get("date"), {
+        username: config.username,
+        authValue: config.authValue,
+      }) });
       return;
+    }
+
+    if (url.pathname === "/api/config/garmin") {
+      if (request.method === "GET") {
+        sendJson(response, getPublicGarminConfig());
+        return;
+      }
+
+      if (request.method === "PUT") {
+        try {
+          sendJson(response, saveGarminConfig(await readJsonBody(request)));
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
     }
 
     if (url.pathname === "/api/export" && request.method === "GET") {
@@ -447,6 +467,58 @@ export function saveAiConfig(input) {
     );
 
   return getPublicAiConfig();
+}
+
+export function getPublicGarminConfig() {
+  const config = getGarminConfigRecord();
+  return {
+    username: config.username,
+    hasCredential: Boolean(config.authValue),
+    keyHint: config.keyHint,
+  };
+}
+
+export function saveGarminConfig(input) {
+  const username = String(input?.username ?? "").trim();
+  const current = getGarminConfigRecord();
+  const credentialInput = typeof input?.authValue === "string" ? input.authValue.trim() : "";
+  const shouldClearCredential = input?.clearCredential === true;
+
+  if (username && !/^\S+@\S+\.\S+$/.test(username)) {
+    throw new Error("Invalid Garmin username");
+  }
+
+  const encrypted = credentialInput ? encryptSecret(credentialInput) : null;
+  const hasNewCredential = Boolean(encrypted);
+  const keyHint = credentialInput ? makeKeyHint(credentialInput) : shouldClearCredential ? "" : current.keyHint;
+
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO garmin_config (id, username, encrypted_credential, credential_iv, credential_tag, key_hint, updated_at)",
+      "VALUES ('default', ?, ?, ?, ?, ?, datetime('now'))",
+      "ON CONFLICT(id) DO UPDATE SET",
+      "  username = excluded.username,",
+      "  encrypted_credential = CASE WHEN ? THEN excluded.encrypted_credential WHEN ? THEN '' ELSE garmin_config.encrypted_credential END,",
+      "  credential_iv = CASE WHEN ? THEN excluded.credential_iv WHEN ? THEN '' ELSE garmin_config.credential_iv END,",
+      "  credential_tag = CASE WHEN ? THEN excluded.credential_tag WHEN ? THEN '' ELSE garmin_config.credential_tag END,",
+      "  key_hint = excluded.key_hint,",
+      "  updated_at = excluded.updated_at",
+    ].join("\n"))
+    .run(
+      username,
+      encrypted?.ciphertext ?? "",
+      encrypted?.iv ?? "",
+      encrypted?.tag ?? "",
+      keyHint,
+      hasNewCredential ? 1 : 0,
+      shouldClearCredential ? 1 : 0,
+      hasNewCredential ? 1 : 0,
+      shouldClearCredential ? 1 : 0,
+      hasNewCredential ? 1 : 0,
+      shouldClearCredential ? 1 : 0,
+    );
+
+  return getPublicGarminConfig();
 }
 
 export function listEntries() {
@@ -792,6 +864,15 @@ function initializeDatabase(database) {
     "  key_hint TEXT NOT NULL DEFAULT '',",
     "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
     ");",
+    "CREATE TABLE IF NOT EXISTS garmin_config (",
+    "  id TEXT PRIMARY KEY,",
+    "  username TEXT NOT NULL DEFAULT '',",
+    "  encrypted_credential TEXT NOT NULL DEFAULT '',",
+    "  credential_iv TEXT NOT NULL DEFAULT '',",
+    "  credential_tag TEXT NOT NULL DEFAULT '',",
+    "  key_hint TEXT NOT NULL DEFAULT '',",
+    "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ");",
     "CREATE TABLE IF NOT EXISTS entries (",
     "  id TEXT PRIMARY KEY,",
     "  food_key TEXT,",
@@ -835,6 +916,9 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "meal_id", "TEXT");
   addColumnIfMissing(database, "entries", "meal_name", "TEXT");
+  addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   seedFoodRecords(database);
 }
@@ -1189,6 +1273,22 @@ function getAiConfigRecord() {
     provider: row.provider,
     model: row.model,
     apiKey: decryptSecret(row.encrypted_api_key, row.api_key_iv, row.api_key_tag),
+    keyHint: row.key_hint,
+  };
+}
+
+function getGarminConfigRecord() {
+  const row = getFoodDatabase()
+    .prepare("SELECT username, encrypted_credential, credential_iv, credential_tag, key_hint FROM garmin_config WHERE id = 'default'")
+    .get();
+
+  if (!row) {
+    return { username: "", authValue: "", keyHint: "" };
+  }
+
+  return {
+    username: row.username,
+    authValue: decryptSecret(row.encrypted_credential, row.credential_iv, row.credential_tag),
     keyHint: row.key_hint,
   };
 }

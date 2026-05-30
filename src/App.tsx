@@ -100,6 +100,17 @@ type AiConfigDraft = {
   apiKey: string;
 };
 
+type GarminConfig = {
+  username: string;
+  hasCredential: boolean;
+  keyHint: string;
+};
+
+type GarminConfigDraft = {
+  username: string;
+  authValue: string;
+};
+
 type ImportResult = {
   entriesImported: number;
   nutritionConfigImported: boolean;
@@ -217,6 +228,12 @@ const defaultAiConfig: AiConfig = {
       ],
     },
   ],
+};
+
+const defaultGarminConfig: GarminConfig = {
+  username: "",
+  hasCredential: false,
+  keyHint: "",
 };
 
 const macroPresets: Record<NutritionGoal, MacroPreset> = {
@@ -474,6 +491,11 @@ function App() {
     model: defaultAiConfig.model,
     apiKey: "",
   });
+  const [garminConfig, setGarminConfig] = useState<GarminConfig>(defaultGarminConfig);
+  const [garminDraft, setGarminDraft] = useState<GarminConfigDraft>({
+    username: "",
+    authValue: "",
+  });
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [draft, setDraft] = useState<FoodDraft>(createEmptyDraft);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
@@ -499,6 +521,8 @@ function App() {
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
   const [garminState, setGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [garminConfigState, setGarminConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [garminConfigError, setGarminConfigError] = useState("");
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
@@ -550,10 +574,11 @@ function App() {
 
     async function loadBackendState() {
       try {
-        const [entriesResponse, configResponse, aiConfigResponse, mealsResponse] = await Promise.all([
+        const [entriesResponse, configResponse, aiConfigResponse, garminConfigResponse, mealsResponse] = await Promise.all([
           fetchEntries(),
           fetchNutritionConfig(),
           fetchAiConfig(),
+          fetchGarminConfig(),
           fetchMealTemplates(),
         ]);
         if (!isMounted) return;
@@ -561,6 +586,8 @@ function App() {
         setMealTemplates(mealsResponse);
         setNutritionConfig(configResponse);
         setAiConfig(aiConfigResponse);
+        setGarminConfig(garminConfigResponse);
+        setGarminDraft({ username: garminConfigResponse.username, authValue: "" });
         setAiDraft({
           provider: aiConfigResponse.provider,
           model: aiConfigResponse.model,
@@ -608,7 +635,7 @@ function App() {
       isMounted = false;
       window.clearTimeout(timeoutId);
     };
-  }, [selectedDate]);
+  }, [selectedDate, garminConfig.hasCredential, garminConfig.username]);
 
   async function refreshGarminSummary() {
     setGarminState("loading");
@@ -710,6 +737,22 @@ function App() {
     } catch {
       setAiConfigError("Konfiguration konnte nicht gespeichert werden.");
       setAiConfigState("error");
+    }
+  }
+
+  async function saveGarminSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setGarminConfigError("");
+    setGarminConfigState("saving");
+    try {
+      const savedConfig = await saveGarminConfig(garminDraft);
+      setGarminConfig(savedConfig);
+      setGarminDraft({ username: savedConfig.username, authValue: "" });
+      setGarminConfigState("saved");
+      void refreshGarminSummary();
+    } catch (error) {
+      setGarminConfigError(error instanceof Error ? error.message : "Garmin-Konfiguration konnte nicht gespeichert werden.");
+      setGarminConfigState("error");
     }
   }
 
@@ -1136,14 +1179,46 @@ function App() {
               <MacroTarget label="Fett" grams={macroTargets.fat.grams} calories={macroTargets.fat.calories} percent={selectedPreset.fat} />
             </div>
           </section>
-          <section className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration">
+          <form className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration" onSubmit={saveGarminSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
                 Garmin
               </p>
               <h2>Tagesverbrauch</h2>
-              <p>Wenn Garmin im Container konfiguriert ist, nutzt der Tracker den echten Tagesverbrauch als Kalorienziel.</p>
+              <p>Speichert den Garmin-Login verschluesselt und nutzt den echten Tagesverbrauch als Kalorienziel.</p>
+            </div>
+            <div className="config-controls">
+              <label>
+                Garmin Benutzer
+                <input
+                  type="email"
+                  value={garminDraft.username}
+                  onChange={(event) => {
+                    setGarminDraft({ ...garminDraft, username: event.target.value });
+                    setGarminConfigState("idle");
+                  }}
+                  placeholder="you@example.com"
+                  autoComplete="username"
+                />
+              </label>
+              <label>
+                Garmin Passwort
+                <input
+                  type="password"
+                  value={garminDraft.authValue}
+                  onChange={(event) => {
+                    setGarminDraft({ ...garminDraft, authValue: event.target.value });
+                    setGarminConfigState("idle");
+                  }}
+                  placeholder={garminConfig.hasCredential ? `Gespeichert: ${garminConfig.keyHint}` : "Passwort einmalig eintragen"}
+                  autoComplete="current-password"
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={garminConfigState === "saving"}>
+                {garminConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
+                Garmin speichern
+              </button>
             </div>
             <div className="backup-note garmin-status-card">
               <strong>{garminCalorieGoal ? `${garminCalorieGoal.toLocaleString("de-DE")} kcal Verbrauch` : "Nicht verbunden"}</strong>
@@ -1152,7 +1227,7 @@ function App() {
                   ? "Sync fehlgeschlagen. Credentials oder Garmin MFA pruefen."
                   : garminSummary?.configured
                     ? `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)} · Ruhe ${formatOptionalCalories(garminSummary.bmrKilocalories)}`
-                    : "Setze GARMIN_USERNAME und GARMIN_PASSWORD in Portainer."}
+                    : "Garmin Benutzer und Passwort speichern."}
               </span>
             </div>
             <div className="config-controls">
@@ -1161,13 +1236,15 @@ function App() {
                 Garmin abrufen
               </button>
               <p className={garminState === "error" ? "config-status config-status--error" : "config-status"}>
+                {garminConfigState === "saved" && "Garmin-Konfiguration gespeichert."}
+                {garminConfigState === "error" && (garminConfigError || "Garmin-Konfiguration konnte nicht gespeichert werden.")}
                 {garminState === "loading" && "Garmin wird abgefragt."}
                 {garminState === "done" && (garminSummary?.configured ? "Garmin-Abruf bereit." : "Garmin ist noch nicht konfiguriert.")}
                 {garminState === "error" && "Garmin-Abruf nicht erfolgreich."}
                 {garminState === "idle" && "Noch nicht abgefragt."}
               </p>
             </div>
-          </section>
+          </form>
           <form className="config-panel config-panel--page ai-config-panel" aria-label="AI photo analysis configuration" onSubmit={saveAiSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
@@ -1851,6 +1928,24 @@ async function saveAiConfig(config: AiConfigDraft): Promise<AiConfig> {
   return normalizeAiConfig(data);
 }
 
+async function fetchGarminConfig(): Promise<GarminConfig> {
+  const response = await fetch("/api/config/garmin");
+  if (!response.ok) throw new Error("Garmin config request failed");
+  const data = (await response.json()) as Partial<GarminConfig>;
+  return normalizeGarminConfig(data);
+}
+
+async function saveGarminConfig(config: GarminConfigDraft): Promise<GarminConfig> {
+  const response = await fetch("/api/config/garmin", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  const data = (await response.json()) as Partial<GarminConfig> & { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Garmin-Konfiguration konnte nicht gespeichert werden.");
+  return normalizeGarminConfig(data);
+}
+
 async function fetchAiModels(provider: string): Promise<string[]> {
   const params = new URLSearchParams({ provider });
   const response = await fetch(`/api/ai/models?${params.toString()}`);
@@ -2127,6 +2222,14 @@ function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
     hasApiKey: Boolean(config?.hasApiKey),
     keyHint: String(config?.keyHint ?? ""),
     providers,
+  };
+}
+
+function normalizeGarminConfig(config: Partial<GarminConfig> | undefined): GarminConfig {
+  return {
+    username: String(config?.username ?? ""),
+    hasCredential: Boolean(config?.hasCredential),
+    keyHint: String(config?.keyHint ?? ""),
   };
 }
 
