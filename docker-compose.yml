@@ -1,8 +1,6 @@
 services:
   food-tracker:
-    build:
-      context: .
-    image: food-tracker:latest
+    image: ghcr.io/wolfilux/food-tracker:dev
     container_name: food-tracker
     restart: unless-stopped
     environment:
