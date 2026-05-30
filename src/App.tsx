@@ -1477,12 +1477,14 @@ function App() {
 
         <section className="entry-list" aria-label="Tagesprotokoll Einträge">
         <div className="section-heading">
-          <h2>{selectedDate === todayLocal() ? "Heute" : formatDateLabel(selectedDate)}</h2>
+          <div className="section-heading__copy">
+            <h2>{selectedDate === todayLocal() ? "Heute" : formatDateLabel(selectedDate)}</h2>
+            <span>{dayEntries.length} Einträge · {totals.calories.toLocaleString("de-DE")} kcal</span>
+          </div>
           <label className="date-filter">
             Tag
             <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value || todayLocal())} />
           </label>
-          <span>{dayEntries.length} Einträge</span>
         </div>
         {sortedEntries.length === 0 && <p className="empty-state">Noch keine Einträge fuer diesen Tag.</p>}
         {groupedEntries.map((group) => group.kind === "single" ? (
@@ -1581,24 +1583,35 @@ function FoodEntryRow({
   onDelete: (id: string) => void;
   compact?: boolean;
 }) {
+  const entryCalories = caloriesFor(entry);
+  const rowMacros = [
+    ["P", macroFor(entry, entry.proteinPer100g)],
+    ["C", macroFor(entry, entry.carbsPer100g)],
+    ["F", macroFor(entry, entry.fatPer100g)],
+  ] as const;
+
   return (
     <article className={compact ? "food-row food-row--compact" : "food-row"}>
-      <div>
-        {!compact && <span className="time-tag">{formatDateTime(entry.consumedAt)}</span>}
-        <h3>{entry.foodName}</h3>
-        <p>
-          {formatQuantity(entry)} / {entry.caloriesPer100g.toLocaleString()} kcal per 100g
+      {!compact && <time className="entry-time" dateTime={entry.consumedAt}>{formatTime(entry.consumedAt)}</time>}
+      <div className="food-row__main">
+        <div className="food-row__titleline">
+          <h3>{entry.foodName}</h3>
+          <strong>{entryCalories.toLocaleString()} kcal</strong>
+        </div>
+        <p className="food-row__meta">
+          {formatQuantity(entry)} · {entry.caloriesPer100g.toLocaleString()} kcal / 100g
         </p>
         <p className="macro-line">
-          P {formatMacro(macroFor(entry, entry.proteinPer100g))}g · C {formatMacro(macroFor(entry, entry.carbsPer100g))}g · F {formatMacro(macroFor(entry, entry.fatPer100g))}g
+          {rowMacros.map(([label, value]) => (
+            <span key={label}>{label} {formatMacro(value)}g</span>
+          ))}
         </p>
       </div>
-      <div className="food-actions">
-        <strong>{caloriesFor(entry).toLocaleString()} kcal</strong>
+      <div className="food-actions food-actions--inline">
         <button type="button" aria-label={entry.foodName + " bearbeiten"} onClick={() => onEdit(entry)}>
           <Pencil size={17} aria-hidden="true" />
         </button>
-        <button type="button" aria-label={`Delete ${entry.foodName}`} onClick={() => onDelete(entry.id)}>
+        <button type="button" aria-label={entry.foodName + " löschen"} onClick={() => onDelete(entry.id)}>
           <Trash2 size={17} aria-hidden="true" />
         </button>
       </div>
@@ -2081,6 +2094,13 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("de-DE", {
     day: "2-digit",
     month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("de-DE", {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
