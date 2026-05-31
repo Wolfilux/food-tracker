@@ -218,6 +218,7 @@ const defaultAiConfig: AiConfig = {
         "openai/gpt-5",
         "openai/gpt-4.1-mini",
         "openai/gpt-4o-mini",
+        "google/gemini-3.1-flash",
         "google/gemini-2.5-flash",
         "google/gemini-2.5-pro",
         "anthropic/claude-sonnet-4",
