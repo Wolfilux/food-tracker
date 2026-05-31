@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, ReactNode, Ref, useCallback, useEffect, useMe
 import {
   Activity,
   Camera,
+  Copy,
   Database,
   Download,
   Flame,
@@ -1019,6 +1020,29 @@ function App() {
     if (editingEntryId === id) cancelEdit();
   }
 
+  async function duplicateEntry(entry: FoodEntry) {
+    setEntryError("");
+    try {
+      const duplicatedEntry = await createEntry({
+        foodKey: entry.foodKey,
+        foodName: entry.foodName,
+        quantityValue: entry.quantityValue,
+        quantityUnit: entry.quantityUnit,
+        caloriesPer100g: entry.caloriesPer100g,
+        proteinPer100g: entry.proteinPer100g,
+        carbsPer100g: entry.carbsPer100g,
+        fatPer100g: entry.fatPer100g,
+        consumedAt: nowLocal(),
+        source: entry.source ?? "manual",
+        aiUsage: entry.aiUsage,
+      });
+      setEntries((currentEntries) => [duplicatedEntry, ...currentEntries]);
+      setSelectedDate(duplicatedEntry.consumedAt.slice(0, 10));
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Eintrag konnte nicht dupliziert werden.");
+    }
+  }
+
   function editEntry(entry: FoodEntry) {
     setDraft({
       foodKey: entry.foodKey,
@@ -1715,7 +1739,13 @@ function App() {
         </div>
         {sortedEntries.length === 0 && <p className="empty-state">Noch keine Einträge fuer diesen Tag.</p>}
         {groupedEntries.map((group) => group.kind === "single" ? (
-          <FoodEntryRow entry={group.entry} key={group.entry.id} onEdit={editEntry} onDelete={(id) => void deleteEntry(id)} />
+          <FoodEntryRow
+            entry={group.entry}
+            key={group.entry.id}
+            onDuplicate={(entry) => void duplicateEntry(entry)}
+            onEdit={editEntry}
+            onDelete={(id) => void deleteEntry(id)}
+          />
         ) : (
           <article className="meal-row" key={group.id}>
             <div className="meal-row__heading">
@@ -1728,7 +1758,14 @@ function App() {
             </div>
             <div className="meal-row__items">
               {group.entries.map((entry) => (
-                <FoodEntryRow entry={entry} key={entry.id} onEdit={editEntry} onDelete={(id) => void deleteEntry(id)} compact />
+                <FoodEntryRow
+                  entry={entry}
+                  key={entry.id}
+                  onDuplicate={(entry) => void duplicateEntry(entry)}
+                  onEdit={editEntry}
+                  onDelete={(id) => void deleteEntry(id)}
+                  compact
+                />
               ))}
             </div>
           </article>
@@ -1801,11 +1838,13 @@ function AnalysisItems({ items }: { items: FoodImageAnalysisItem[] }) {
 
 function FoodEntryRow({
   entry,
+  onDuplicate,
   onEdit,
   onDelete,
   compact = false,
 }: {
   entry: FoodEntry;
+  onDuplicate: (entry: FoodEntry) => void;
   onEdit: (entry: FoodEntry) => void;
   onDelete: (id: string) => void;
   compact?: boolean;
@@ -1835,6 +1874,9 @@ function FoodEntryRow({
         </p>
       </div>
       <div className="food-actions food-actions--inline">
+        <button type="button" aria-label={entry.foodName + " mit aktueller Uhrzeit duplizieren"} onClick={() => onDuplicate(entry)}>
+          <Copy size={17} aria-hidden="true" />
+        </button>
         <button type="button" aria-label={entry.foodName + " bearbeiten"} onClick={() => onEdit(entry)}>
           <Pencil size={17} aria-hidden="true" />
         </button>
