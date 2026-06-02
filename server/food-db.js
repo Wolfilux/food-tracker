@@ -584,7 +584,8 @@ export function getPublicAnalysisAiConfig() {
 }
 
 export function saveAnalysisAiConfig(input) {
-  const provider = String(input?.provider ?? defaultAnalysisAiConfig.provider);
+  const sharedConfig = getAiConfigRecord();
+  const provider = String(input?.provider ?? sharedConfig.provider ?? defaultAnalysisAiConfig.provider);
   const providerDefinition = aiProviders.get(provider);
   if (!providerDefinition) throw new Error("Invalid AI provider");
 
@@ -592,12 +593,7 @@ export function saveAnalysisAiConfig(input) {
   if (!isSafeModelId(model)) throw new Error("Invalid AI model");
 
   const current = getAnalysisAiConfigRecord();
-  const apiKeyInput = typeof input?.apiKey === "string" ? input.apiKey.trim() : "";
-  validateProviderKeyPair(provider, apiKeyInput || current.apiKey);
-  const shouldClearKey = input?.clearApiKey === true;
-  const encrypted = apiKeyInput ? encryptSecret(apiKeyInput) : null;
-  const hasNewKey = Boolean(encrypted);
-  const keyHint = apiKeyInput ? makeKeyHint(apiKeyInput) : shouldClearKey ? "" : current.keyHint;
+  validateProviderKeyPair(provider, sharedConfig.apiKey);
 
   getFoodDatabase()
     .prepare([
@@ -615,16 +611,16 @@ export function saveAnalysisAiConfig(input) {
     .run(
       provider,
       model,
-      encrypted?.ciphertext ?? "",
-      encrypted?.iv ?? "",
-      encrypted?.tag ?? "",
-      keyHint,
-      hasNewKey ? 1 : 0,
-      shouldClearKey ? 1 : 0,
-      hasNewKey ? 1 : 0,
-      shouldClearKey ? 1 : 0,
-      hasNewKey ? 1 : 0,
-      shouldClearKey ? 1 : 0,
+      "",
+      "",
+      "",
+      current.keyHint,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
     );
 
   return getPublicAnalysisAiConfig();
@@ -1950,12 +1946,12 @@ async function fetchProviderModels(providerId, capability = "photo") {
   try {
     const headers = { accept: "application/json" };
     if (providerId === "openai") {
-      const config = capability === "analysis" ? getAnalysisAiConfigRecord() : getAiConfigRecord();
+      const config = getAiConfigRecord();
       if (!config.apiKey) throw new Error("API key fehlt in der Konfiguration");
       headers.authorization = `Bearer ${config.apiKey}`;
     }
     if (providerId === "openrouter") {
-      const config = capability === "analysis" ? getAnalysisAiConfigRecord() : getAiConfigRecord();
+      const config = getAiConfigRecord();
       if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
     }
 
@@ -2025,20 +2021,25 @@ function getAiConfigRecord() {
 }
 
 function getAnalysisAiConfigRecord() {
+  const sharedConfig = getAiConfigRecord();
   const row = getFoodDatabase()
-    .prepare("SELECT provider, model, encrypted_api_key, api_key_iv, api_key_tag, key_hint FROM analysis_ai_config WHERE id = 'default'")
+    .prepare("SELECT provider, model FROM analysis_ai_config WHERE id = 'default'")
     .get();
 
-  if (!row) {
-    return { ...defaultAnalysisAiConfig, apiKey: "", keyHint: "" };
+  if (!row || row.provider !== sharedConfig.provider) {
+    return { ...sharedConfig, model: getDefaultAnalysisModel(sharedConfig.provider) };
   }
 
   return {
-    provider: row.provider,
+    provider: sharedConfig.provider,
     model: row.model,
-    apiKey: decryptSecret(row.encrypted_api_key, row.api_key_iv, row.api_key_tag),
-    keyHint: row.key_hint,
+    apiKey: sharedConfig.apiKey,
+    keyHint: sharedConfig.keyHint,
   };
+}
+
+function getDefaultAnalysisModel(providerId) {
+  return aiProviders.get(providerId)?.models[0] ?? defaultAnalysisAiConfig.model;
 }
 
 function getGarminConfigRecord() {

@@ -11,7 +11,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
 - Fotoanalyse fuer Beschreibung, ungefaehres Gewicht, Kalorien und Makros
 - AI-Textanalyse fuer freie Essensbeschreibungen wie Omelette mit Schinken und Pilzen
-- Separate AI-Konfiguration fuer Foto- und Wochenanalyse mit Provider, Modell-Dropdown und sicher gespeicherten API-Keys
+- Gemeinsame AI-Konfiguration mit einem sicher gespeicherten API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
 - Live-Modellabruf ueber Provider-APIs
 - Rohspeicherung von AI-Usage-Daten am Fotoeintrag
@@ -26,7 +26,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Secrets: API-Keys werden serverseitig mit AES-GCM verschluesselt und nicht im Browser gespeichert
 - AI Usage: Token-/Kosten-Rohwerte werden als JSON am Eintrag gespeichert; OpenRouter-Generation-Stats bleiben unveraendert fuer spaetere Auswertung erhalten
 - Garmin: optionale serverseitige Garmin-Connect-Anbindung; Login-Daten werden in der WebUI gepflegt, verschluesselt gespeichert und Tokens im persistenten `data/`-Volume wiederverwendet
-- Wochenmail: SMTP wird per Env konfiguriert; Zieladresse und Analyse-AI-Key werden in der WebUI gepflegt und serverseitig gespeichert
+- Wochenmail: SMTP wird per Env konfiguriert; Zieladresse wird in der WebUI gepflegt, die Analyse nutzt den gemeinsamen AI-Key
 - PWA: `manifest.webmanifest`, App-Icons und Service Worker unter `public/`
 
 ## Security Baseline
@@ -67,7 +67,7 @@ Configure Garmin in the app under `Konfiguration -> Garmin`. The app stores the 
 
 Optional weekly email:
 
-Set SMTP in Docker, Portainer, or `.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`. Configure the recipient in the app under `Konfiguration -> Wochenmail` and store an analysis AI key under `Konfiguration -> Wochenanalyse`. If SMTP, recipient, or analysis API key is missing, the scheduler logs a no-op and keeps running.
+Set SMTP in Docker, Portainer, or `.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`. Configure the recipient in the app under `Konfiguration -> Wochenmail` and store the shared AI key under `Konfiguration -> KI-Konfiguration`. If SMTP, recipient, or AI key is missing, the scheduler logs a no-op and keeps running.
 
 For Portainer, use the repository as a Git stack. The compose file pulls `ghcr.io/wolfilux/food-tracker:dev`, which is published by GitHub Actions after the quality gate passes. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
 

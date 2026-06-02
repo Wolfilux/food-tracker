@@ -899,29 +899,26 @@ function App() {
   async function saveAiSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAiConfigError("");
-    setAiConfigState("saving");
-    try {
-      const savedConfig = await saveAiConfig(aiDraft);
-      setAiConfig(savedConfig);
-      setAiDraft({ provider: savedConfig.provider, model: savedConfig.model, apiKey: "" });
-      setAiConfigState("saved");
-    } catch {
-      setAiConfigError("Konfiguration konnte nicht gespeichert werden.");
-      setAiConfigState("error");
-    }
-  }
-
-  async function saveAnalysisAiSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
     setAnalysisAiConfigError("");
+    setAiConfigState("saving");
     setAnalysisAiConfigState("saving");
     try {
-      const savedConfig = await saveAnalysisAiConfig(analysisAiDraft);
-      setAnalysisAiConfig(savedConfig);
-      setAnalysisAiDraft({ provider: savedConfig.provider, model: savedConfig.model, apiKey: "" });
+      const savedConfig = await saveAiConfig(aiDraft);
+      const savedAnalysisConfig = await saveAnalysisAiConfig({
+        provider: savedConfig.provider,
+        model: analysisAiDraft.model,
+        apiKey: "",
+      });
+      setAiConfig(savedConfig);
+      setAnalysisAiConfig(savedAnalysisConfig);
+      setAiDraft({ provider: savedConfig.provider, model: savedConfig.model, apiKey: "" });
+      setAnalysisAiDraft({ provider: savedConfig.provider, model: savedAnalysisConfig.model, apiKey: "" });
+      setAiConfigState("saved");
       setAnalysisAiConfigState("saved");
     } catch {
+      setAiConfigError("Konfiguration konnte nicht gespeichert werden.");
       setAnalysisAiConfigError("Analyse-Konfiguration konnte nicht gespeichert werden.");
+      setAiConfigState("error");
       setAnalysisAiConfigState("error");
     }
   }
@@ -969,23 +966,20 @@ function App() {
 
   function updateAiProvider(provider: string) {
     const providerOption = aiConfig.providers.find((option) => option.id === provider);
+    const analysisProviderOption = analysisAiConfig.providers.find((option) => option.id === provider);
     setAiDraft({
       ...aiDraft,
       provider,
       model: providerOption?.models[0] ?? aiDraft.model,
     });
-    setAiConfigState("idle");
-    setAiConfigError("");
-    setAiModelsState("idle");
-  }
-
-  function updateAnalysisAiProvider(provider: string) {
-    const providerOption = analysisAiConfig.providers.find((option) => option.id === provider);
     setAnalysisAiDraft({
       ...analysisAiDraft,
       provider,
-      model: providerOption?.models[0] ?? analysisAiDraft.model,
+      model: analysisProviderOption?.models[0] ?? analysisAiDraft.model,
     });
+    setAiConfigState("idle");
+    setAiConfigError("");
+    setAiModelsState("idle");
     setAnalysisAiConfigState("idle");
     setAnalysisAiConfigError("");
     setAnalysisAiModelsState("idle");
@@ -1018,20 +1012,22 @@ function App() {
   async function refreshAnalysisAiModels() {
     setAnalysisAiModelsState("loading");
     try {
-      let nextConfig = analysisAiConfig;
-      if (analysisAiDraft.apiKey.trim()) {
-        nextConfig = await saveAnalysisAiConfig(analysisAiDraft);
-        setAnalysisAiConfig(nextConfig);
-        setAnalysisAiDraft({ provider: nextConfig.provider, model: nextConfig.model, apiKey: "" });
+      const nextConfig = analysisAiConfig;
+      let nextPhotoConfig = aiConfig;
+      if (aiDraft.apiKey.trim()) {
+        nextPhotoConfig = await saveAiConfig(aiDraft);
+        setAiConfig(nextPhotoConfig);
+        setAiDraft({ provider: nextPhotoConfig.provider, model: nextPhotoConfig.model, apiKey: "" });
       }
 
-      const models = mergeModelsWithCurrent(await fetchAiModels(analysisAiDraft.provider, "analysis"), analysisAiDraft.model);
+      const provider = nextPhotoConfig.provider;
+      const models = mergeModelsWithCurrent(await fetchAiModels(provider, "analysis"), analysisAiDraft.model);
       const providers = nextConfig.providers.map((provider) =>
-        provider.id === analysisAiDraft.provider ? { ...provider, models } : provider,
+        provider.id === nextPhotoConfig.provider ? { ...provider, models } : provider,
       );
       const model = analysisAiDraft.model || models[0];
-      setAnalysisAiConfig({ ...nextConfig, providers });
-      setAnalysisAiDraft((currentDraft) => ({ ...currentDraft, model }));
+      setAnalysisAiConfig({ ...nextConfig, provider, providers });
+      setAnalysisAiDraft((currentDraft) => ({ ...currentDraft, provider, model }));
       setAnalysisAiModelsState("done");
     } catch {
       setAnalysisAiConfigError("Analyse-Modellliste konnte nicht geladen werden.");
@@ -1666,13 +1662,14 @@ function App() {
               </p>
             </div>
           </form>
-          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI photo analysis configuration" onSubmit={saveAiSettings}>
+          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI configuration" onSubmit={saveAiSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <KeyRound size={16} aria-hidden="true" />
-                Foto
+                KI
               </p>
-              <h2>Fotoanalyse</h2>
+              <h2>KI-Konfiguration</h2>
+              <p>Ein API-Key fuer Foto- und Wochenanalyse. Die Modelle bleiben getrennt.</p>
             </div>
             <div className="config-controls">
               <label>
@@ -1684,7 +1681,7 @@ function App() {
                 </select>
               </label>
               <label>
-                Modell
+                Foto-Modell
                 <select value={aiDraft.model} onChange={(event) => {
                   setAiDraft({ ...aiDraft, model: event.target.value });
                   setAiConfigState("idle");
@@ -1701,6 +1698,23 @@ function App() {
             </div>
             <div className="config-controls">
               <label>
+                Analyse-Modell
+                <select value={analysisAiDraft.model} onChange={(event) => {
+                  setAnalysisAiDraft({ ...analysisAiDraft, provider: aiDraft.provider, model: event.target.value });
+                  setAnalysisAiConfigState("idle");
+                }}>
+                  {(analysisAiConfig.providers.find((provider) => provider.id === aiDraft.provider)?.models ?? []).map((model) => (
+                    <option value={model} key={model}>{model}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="secondary-button" type="button" disabled={analysisAiModelsState === "loading"} onClick={() => void refreshAnalysisAiModels()}>
+                {analysisAiModelsState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+                Analysemodelle abrufen
+              </button>
+            </div>
+            <div className="config-controls">
+              <label>
                 API-Key
                 <input
                   type="password"
@@ -1713,77 +1727,19 @@ function App() {
                   autoComplete="off"
                 />
               </label>
-              <button className="primary-button" type="submit" disabled={aiConfigState === "saving"}>
-                {aiConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
-                AI-Konfiguration speichern
+              <button className="primary-button" type="submit" disabled={aiConfigState === "saving" || analysisAiConfigState === "saving"}>
+                {aiConfigState === "saving" || analysisAiConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
+                KI-Konfiguration speichern
               </button>
-              <p className={aiConfigState === "error" ? "config-status config-status--error" : "config-status"}>
-                {aiConfigState === "saved" && "Gespeichert."}
-                {aiConfigState === "error" && (aiConfigError || "Konnte nicht gespeichert werden.")}
-                {aiConfigState === "idle" && (aiConfig.hasApiKey ? `Key hinterlegt: ${aiConfig.keyHint}` : "Noch kein Key hinterlegt.")}
+              <p className={aiConfigState === "error" || analysisAiConfigState === "error" ? "config-status config-status--error" : "config-status"}>
+                {aiConfigState === "saved" && analysisAiConfigState === "saved" && "Gespeichert."}
+                {(aiConfigState === "error" || analysisAiConfigState === "error") && (aiConfigError || analysisAiConfigError || "Konnte nicht gespeichert werden.")}
+                {aiConfigState === "idle" && analysisAiConfigState === "idle" && (aiConfig.hasApiKey ? `Key hinterlegt: ${aiConfig.keyHint}` : "Noch kein Key hinterlegt.")}
               </p>
               <p className={aiModelsState === "error" ? "config-status config-status--error" : "config-status"}>
-                {aiModelsState === "done" && "Modellliste aktualisiert."}
+                {aiModelsState === "done" && "Foto-Modellliste aktualisiert."}
                 {aiModelsState === "error" && (aiConfigError || "Live-Abruf fehlgeschlagen. Fallback-Liste bleibt aktiv.")}
-                {aiModelsState === "idle" && "Live-Abruf zeigt nur Modelle, die Bild-Input fuer Fotoanalyse melden."}
-              </p>
-            </div>
-          </form>
-          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI weekly analysis configuration" onSubmit={saveAnalysisAiSettings}>
-            <div className="config-copy">
-              <p className="eyebrow eyebrow--dark">
-                <Sparkles size={16} aria-hidden="true" />
-                Analyse
-              </p>
-              <h2>Wochenanalyse</h2>
-            </div>
-            <div className="config-controls">
-              <label>
-                Anbieter
-                <select value={analysisAiDraft.provider} onChange={(event) => updateAnalysisAiProvider(event.target.value)}>
-                  {analysisAiConfig.providers.map((provider) => (
-                    <option value={provider.id} key={provider.id}>{provider.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Modell
-                <select value={analysisAiDraft.model} onChange={(event) => {
-                  setAnalysisAiDraft({ ...analysisAiDraft, model: event.target.value });
-                  setAnalysisAiConfigState("idle");
-                }}>
-                  {(analysisAiConfig.providers.find((provider) => provider.id === analysisAiDraft.provider)?.models ?? []).map((model) => (
-                    <option value={model} key={model}>{model}</option>
-                  ))}
-                </select>
-              </label>
-              <button className="secondary-button" type="button" disabled={analysisAiModelsState === "loading"} onClick={() => void refreshAnalysisAiModels()}>
-                {analysisAiModelsState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
-                Modelle live abrufen
-              </button>
-            </div>
-            <div className="config-controls">
-              <label>
-                API-Key
-                <input
-                  type="password"
-                  value={analysisAiDraft.apiKey}
-                  onChange={(event) => {
-                    setAnalysisAiDraft({ ...analysisAiDraft, apiKey: event.target.value });
-                    setAnalysisAiConfigState("idle");
-                  }}
-                  placeholder={analysisAiConfig.hasApiKey ? `Gespeichert: ${analysisAiConfig.keyHint}` : "Key einmalig eintragen"}
-                  autoComplete="off"
-                />
-              </label>
-              <button className="primary-button" type="submit" disabled={analysisAiConfigState === "saving"}>
-                {analysisAiConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
-                Analyse-AI speichern
-              </button>
-              <p className={analysisAiConfigState === "error" ? "config-status config-status--error" : "config-status"}>
-                {analysisAiConfigState === "saved" && "Gespeichert."}
-                {analysisAiConfigState === "error" && (analysisAiConfigError || "Konnte nicht gespeichert werden.")}
-                {analysisAiConfigState === "idle" && (analysisAiConfig.hasApiKey ? `Key hinterlegt: ${analysisAiConfig.keyHint}` : "Noch kein Key hinterlegt.")}
+                {aiModelsState === "idle" && "Foto-Live-Abruf zeigt nur Modelle mit Bild-Input."}
               </p>
               <p className={analysisAiModelsState === "error" ? "config-status config-status--error" : "config-status"}>
                 {analysisAiModelsState === "done" && "Analyse-Modellliste aktualisiert."}
