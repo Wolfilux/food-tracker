@@ -213,6 +213,10 @@ const defaultAiConfig: AiConfig = {
       id: "openrouter",
       label: "OpenRouter",
       models: [
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v3.2",
+        "deepseek/deepseek-chat-v3.1",
         "openai/gpt-5.5-pro",
         "openai/gpt-5.5",
         "openai/gpt-5.4-nano",
@@ -1557,7 +1561,7 @@ function App() {
               <p className={aiModelsState === "error" ? "config-status config-status--error" : "config-status"}>
                 {aiModelsState === "done" && "Modellliste aktualisiert."}
                 {aiModelsState === "error" && (aiConfigError || "Live-Abruf fehlgeschlagen. Fallback-Liste bleibt aktiv.")}
-                {aiModelsState === "idle" && "OpenAI braucht einen gespeicherten Key fuer den Live-Abruf."}
+                {aiModelsState === "idle" && "Live-Abruf aktualisiert die Modellliste des gewaehlten Anbieters."}
               </p>
             </div>
           </form>

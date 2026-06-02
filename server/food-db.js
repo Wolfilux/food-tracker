@@ -44,6 +44,10 @@ const aiProviders = new Map([
     endpoint: "https://openrouter.ai/api/v1/chat/completions",
     modelsEndpoint: "https://openrouter.ai/api/v1/models",
     models: [
+      "deepseek/deepseek-v4-pro",
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v3.2",
+      "deepseek/deepseek-chat-v3.1",
       "openai/gpt-5.5-pro",
       "openai/gpt-5.5",
       "openai/gpt-5.4-nano",
@@ -1345,7 +1349,7 @@ async function fetchProviderModels(providerId) {
     const remoteModels = providerId === "openrouter"
       ? parseOpenRouterModels(payload)
       : parseOpenAiModels(payload);
-    return mergeModels(remoteModels, fallbackModels);
+    return remoteModels.length > 0 ? remoteModels : fallbackModels;
   } catch (error) {
     if (providerId === "openai" && String(error?.message ?? "").includes("API key fehlt")) throw error;
     return fallbackModels;
@@ -1364,16 +1368,16 @@ function parseOpenRouterModels(payload) {
   const models = Array.isArray(payload?.data) ? payload.data : [];
   return models
     .filter((model) => {
-      const modalities = model?.architecture?.input_modalities;
-      return !Array.isArray(modalities) || modalities.includes("image");
+      const inputModalities = model?.architecture?.input_modalities;
+      const outputModalities = model?.architecture?.output_modalities;
+      const supportsTextInput = !Array.isArray(inputModalities) || inputModalities.includes("text");
+      const supportsTextOutput = !Array.isArray(outputModalities) || outputModalities.includes("text");
+      return supportsTextInput && supportsTextOutput;
     })
     .map((model) => String(model?.id ?? ""))
     .filter(isSafeModelId)
-    .sort(compareModelIds);
-}
-
-function mergeModels(primary, fallback) {
-  return Array.from(new Set([...fallback, ...primary])).slice(0, 80);
+    .filter((model, index, allModels) => allModels.indexOf(model) === index)
+    .slice(0, 250);
 }
 
 function isSafeModelId(value) {
