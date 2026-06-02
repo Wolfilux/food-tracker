@@ -1370,11 +1370,6 @@ function App() {
             />
           </section>
 
-          <section className="week-analysis-grid" aria-label="Tagesanalyse">
-            {weekAnalysis.map((day) => (
-              <DayAnalysisCard key={day.date} day={day} isSelected={day.date === selectedDate} onSelectDate={setSelectedDate} />
-            ))}
-          </section>
         </section>
       )}
 
@@ -2028,61 +2023,6 @@ function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: stri
         <span><i className="weekly-chart-legend__target" />Ziel</span>
       </div>
     </article>
-  );
-}
-
-function DayAnalysisCard({
-  day,
-  isSelected,
-  onSelectDate,
-}: {
-  day: WeekAnalysisDay;
-  isSelected: boolean;
-  onSelectDate: (date: string) => void;
-}) {
-  const calorieDelta = day.totals.calories - day.calorieTarget;
-
-  return (
-    <article className={isSelected ? "day-analysis-card day-analysis-card--selected" : "day-analysis-card"}>
-      <button className="day-analysis-card__head" type="button" onClick={() => onSelectDate(day.date)}>
-        <span>
-          <strong>{formatWeekday(day.date)}</strong>
-          <small>{formatDateLabel(day.date)}</small>
-        </span>
-        <b className={calorieDelta > 0 ? "delta-pill delta-pill--over" : calorieDelta < 0 ? "delta-pill delta-pill--under" : "delta-pill"}>
-          {formatSignedNumber(calorieDelta)} kcal
-        </b>
-      </button>
-      <div className="calorie-bar" aria-label={`${day.totals.calories} von ${day.calorieTarget} Kalorien`}>
-        <span style={{ width: `${Math.min(130, Math.round((day.totals.calories / day.calorieTarget) * 100))}%` }} />
-      </div>
-      <div className="day-analysis-card__meta">
-        <span>{day.totals.calories.toLocaleString("de-DE")} / {day.calorieTarget.toLocaleString("de-DE")} kcal</span>
-        <span>{day.entryCount} Einträge</span>
-      </div>
-      <div className="daily-macro-list">
-        <MacroDelta label="Protein" actual={day.totals.protein} target={day.macroTargets.protein.grams} />
-        <MacroDelta label="Kohlenhydrate" actual={day.totals.carbs} target={day.macroTargets.carbs.grams} />
-        <MacroDelta label="Fett" actual={day.totals.fat} target={day.macroTargets.fat.grams} />
-      </div>
-      {day.garminError && <p className="day-analysis-card__error">Garmin Sync fehlgeschlagen</p>}
-    </article>
-  );
-}
-
-function MacroDelta({ label, actual, target }: { label: string; actual: number; target: number }) {
-  const roundedActual = Math.round(actual);
-  const roundedTarget = Math.round(target);
-  const delta = roundedActual - roundedTarget;
-
-  return (
-    <div className="macro-delta">
-      <span>{label}</span>
-      <strong>{roundedActual.toLocaleString("de-DE")} / {roundedTarget.toLocaleString("de-DE")} g</strong>
-      <small className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
-        {formatSignedNumber(delta)} g
-      </small>
-    </div>
   );
 }
 
@@ -2819,10 +2759,6 @@ function formatDateLabel(value: string) {
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(`${value}T12:00:00`));
-}
-
-function formatWeekday(value: string) {
-  return new Intl.DateTimeFormat("de-DE", { weekday: "long" }).format(new Date(`${value}T12:00:00`));
 }
 
 function formatWeekdayShort(value: string) {

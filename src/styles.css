@@ -404,8 +404,7 @@ h1 {
 }
 
 .analysis-summary-card,
-.weekly-chart-card,
-.day-analysis-card {
+.weekly-chart-card {
   background: var(--color-surface);
   border: 1px solid rgba(23, 33, 27, 0.12);
   border-radius: var(--radius);
@@ -617,120 +616,6 @@ h1 {
 .weekly-chart-legend__target {
   height: 2px !important;
   background: #17211b;
-}
-
-.week-analysis-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.day-analysis-card {
-  display: grid;
-  gap: 11px;
-  min-width: 0;
-  padding: 13px;
-}
-
-.day-analysis-card--selected {
-  border-color: rgba(213, 81, 42, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(213, 81, 42, 0.18);
-}
-
-.day-analysis-card__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 0;
-  color: inherit;
-  text-align: left;
-  background: transparent;
-  border: 0;
-}
-
-.day-analysis-card__head span,
-.day-analysis-card__meta,
-.macro-delta {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.day-analysis-card__head strong {
-  overflow-wrap: anywhere;
-  font-size: 0.98rem;
-  line-height: 1.1;
-}
-
-.day-analysis-card__head small,
-.day-analysis-card__meta,
-.macro-delta span,
-.macro-delta small,
-.day-analysis-card__error {
-  color: #627064;
-  font-size: 0.78rem;
-  font-weight: 750;
-}
-
-.delta-pill {
-  flex: 0 0 auto;
-  padding: 4px 7px;
-  color: #24403a;
-  background: #eef5f0;
-  border: 1px solid rgba(36, 64, 58, 0.14);
-  border-radius: 999px;
-  font-size: 0.72rem;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.delta-pill--over {
-  color: #a43d20;
-  background: #fff3df;
-  border-color: rgba(164, 61, 32, 0.2);
-}
-
-.delta-pill--under {
-  color: #236245;
-  background: #eef5f0;
-}
-
-.calorie-bar {
-  height: 9px;
-  overflow: hidden;
-  background: rgba(23, 33, 27, 0.12);
-  border-radius: 999px;
-}
-
-.calorie-bar span {
-  display: block;
-  height: 100%;
-  max-width: 100%;
-  background: #d5512a;
-  border-radius: inherit;
-}
-
-.daily-macro-list {
-  display: grid;
-  gap: 7px;
-}
-
-.macro-delta {
-  padding-top: 7px;
-  border-top: 1px solid rgba(23, 33, 27, 0.08);
-}
-
-.macro-delta strong {
-  color: #17211b;
-  font-size: 0.86rem;
-  line-height: 1.1;
-}
-
-.day-analysis-card__error {
-  margin: 0;
-  color: #a43d20;
 }
 
 .metric-card {
@@ -1562,10 +1447,6 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .week-analysis-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .week-actions {
     justify-content: flex-start;
   }
@@ -1625,7 +1506,6 @@ button:focus-visible {
   .metric-grid,
   .analysis-summary-grid,
   .weekly-chart-grid,
-  .week-analysis-grid,
   .macro-target-grid,
   .macro-grid,
   .quantity-grid,
