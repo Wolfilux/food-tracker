@@ -455,6 +455,60 @@ h1 {
   gap: 10px;
 }
 
+.weekly-ai-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  background: #eef5f0;
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-left: 6px solid #627064;
+  border-radius: var(--radius);
+}
+
+.weekly-ai-card--gut {
+  border-left-color: #236245;
+}
+
+.weekly-ai-card--okay {
+  border-left-color: #9a6b16;
+}
+
+.weekly-ai-card--schlecht {
+  border-left-color: #a43d20;
+}
+
+.weekly-ai-card__head {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.weekly-ai-card__head div {
+  display: grid;
+  gap: 3px;
+}
+
+.weekly-ai-card__head span,
+.weekly-ai-card__head small {
+  color: #627064;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.weekly-ai-card__head strong {
+  color: #17211b;
+  font-size: 1.1rem;
+}
+
+.weekly-ai-card p {
+  max-width: 74ch;
+  margin: 0;
+  color: #324238;
+  line-height: 1.5;
+}
+
 .weekly-chart-card {
   display: grid;
   gap: 12px;
@@ -1515,6 +1569,10 @@ button:focus-visible {
 
   .weekly-chart-card {
     padding: 13px;
+  }
+
+  .weekly-ai-card__head {
+    display: grid;
   }
 
   .weekly-bar-chart {

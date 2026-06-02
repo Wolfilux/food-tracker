@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import nodemailer from "nodemailer";
 import { seedFoods } from "./food-data.js";
 import { getGarminDailySummary } from "./garmin-service.js";
 
@@ -17,7 +18,21 @@ const defaultAiConfig = {
   provider: "openai",
   model: "gpt-5.5-mini",
 };
+const defaultAnalysisAiConfig = {
+  provider: "openai",
+  model: "gpt-5.5-mini",
+};
+const defaultWeeklyEmailConfig = {
+  targetEmail: "",
+};
 const nutritionGoals = new Set(["fat-loss", "muscle-gain", "maintenance", "recomposition", "weight-gain"]);
+const nutritionGoalPresets = {
+  "fat-loss": { label: "Fettabbau", protein: 0.35, carbs: 0.35, fat: 0.3 },
+  "muscle-gain": { label: "Muskelaufbau", protein: 0.25, carbs: 0.5, fat: 0.25 },
+  maintenance: { label: "Normal", protein: 0.2, carbs: 0.5, fat: 0.3 },
+  recomposition: { label: "Fettabbau/Muskelaufbau", protein: 0.3, carbs: 0.4, fat: 0.3 },
+  "weight-gain": { label: "Gewichtszunahme", protein: 0.2, carbs: 0.55, fat: 0.25 },
+};
 const aiProviders = new Map([
   ["openai", {
     label: "OpenAI",
@@ -74,6 +89,8 @@ const aiProviders = new Map([
 let db;
 let garminSchedulerTimer;
 let garminSchedulerRunning = false;
+let weeklyEmailSchedulerTimer;
+let weeklyEmailSchedulerRunning = false;
 
 export function getFoodDatabase() {
   if (!db) {
@@ -100,6 +117,24 @@ export function startGarminSyncScheduler() {
   return () => {
     clearInterval(garminSchedulerTimer);
     garminSchedulerTimer = undefined;
+  };
+}
+
+export function startWeeklyEmailScheduler() {
+  getFoodDatabase();
+  if (weeklyEmailSchedulerTimer) return () => clearInterval(weeklyEmailSchedulerTimer);
+
+  const tick = () => {
+    void runWeeklyEmailScheduler().catch((error) => {
+      console.warn("Weekly email scheduler failed:", error instanceof Error ? error.message : error);
+    });
+  };
+
+  weeklyEmailSchedulerTimer = setInterval(tick, 60 * 1000);
+  setTimeout(tick, 5000);
+  return () => {
+    clearInterval(weeklyEmailSchedulerTimer);
+    weeklyEmailSchedulerTimer = undefined;
   };
 }
 
@@ -248,6 +283,22 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname === "/api/config/analysis-ai") {
+      if (request.method === "GET") {
+        sendJson(response, getPublicAnalysisAiConfig());
+        return;
+      }
+
+      if (request.method === "PUT") {
+        try {
+          sendJson(response, saveAnalysisAiConfig(await readJsonBody(request)));
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
+    }
+
     if (url.pathname === "/api/ai/analyze-food" && request.method === "POST") {
       try {
         const analysis = await analyzeFoodImage(await readJsonBody(request, 8_000_000));
@@ -268,14 +319,41 @@ export function createFoodApiMiddleware() {
       return;
     }
 
-    if (url.pathname === "/api/ai/models" && request.method === "GET") {
+    if (url.pathname === "/api/ai/weekly-analysis" && request.method === "POST") {
       try {
-        const provider = url.searchParams.get("provider") ?? getAiConfigRecord().provider;
-        sendJson(response, { models: await fetchProviderModels(provider) });
+        const analysis = await analyzeWeekManually(await readJsonBody(request));
+        sendJson(response, { analysis });
       } catch (error) {
         sendJson(response, { error: error.message }, 400);
       }
       return;
+    }
+
+    if (url.pathname === "/api/ai/models" && request.method === "GET") {
+      try {
+        const provider = url.searchParams.get("provider") ?? getAiConfigRecord().provider;
+        const capability = url.searchParams.get("capability") === "analysis" ? "analysis" : "photo";
+        sendJson(response, { models: await fetchProviderModels(provider, capability) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/config/weekly-email") {
+      if (request.method === "GET") {
+        sendJson(response, getWeeklyEmailConfig());
+        return;
+      }
+
+      if (request.method === "PUT") {
+        try {
+          sendJson(response, saveWeeklyEmailConfig(await readJsonBody(request)));
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
     }
 
     if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
@@ -488,6 +566,95 @@ export function saveAiConfig(input) {
     );
 
   return getPublicAiConfig();
+}
+
+export function getPublicAnalysisAiConfig() {
+  const config = getAnalysisAiConfigRecord();
+  return {
+    provider: config.provider,
+    model: config.model,
+    hasApiKey: Boolean(config.apiKey),
+    keyHint: config.keyHint,
+    providers: Array.from(aiProviders.entries()).map(([id, provider]) => ({
+      id,
+      label: provider.label,
+      models: provider.models,
+    })),
+  };
+}
+
+export function saveAnalysisAiConfig(input) {
+  const provider = String(input?.provider ?? defaultAnalysisAiConfig.provider);
+  const providerDefinition = aiProviders.get(provider);
+  if (!providerDefinition) throw new Error("Invalid AI provider");
+
+  const model = String(input?.model ?? defaultAnalysisAiConfig.model);
+  if (!isSafeModelId(model)) throw new Error("Invalid AI model");
+
+  const current = getAnalysisAiConfigRecord();
+  const apiKeyInput = typeof input?.apiKey === "string" ? input.apiKey.trim() : "";
+  validateProviderKeyPair(provider, apiKeyInput || current.apiKey);
+  const shouldClearKey = input?.clearApiKey === true;
+  const encrypted = apiKeyInput ? encryptSecret(apiKeyInput) : null;
+  const hasNewKey = Boolean(encrypted);
+  const keyHint = apiKeyInput ? makeKeyHint(apiKeyInput) : shouldClearKey ? "" : current.keyHint;
+
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO analysis_ai_config (id, provider, model, encrypted_api_key, api_key_iv, api_key_tag, key_hint, updated_at)",
+      "VALUES ('default', ?, ?, ?, ?, ?, ?, datetime('now'))",
+      "ON CONFLICT(id) DO UPDATE SET",
+      "  provider = excluded.provider,",
+      "  model = excluded.model,",
+      "  encrypted_api_key = CASE WHEN ? THEN excluded.encrypted_api_key WHEN ? THEN '' ELSE analysis_ai_config.encrypted_api_key END,",
+      "  api_key_iv = CASE WHEN ? THEN excluded.api_key_iv WHEN ? THEN '' ELSE analysis_ai_config.api_key_iv END,",
+      "  api_key_tag = CASE WHEN ? THEN excluded.api_key_tag WHEN ? THEN '' ELSE analysis_ai_config.api_key_tag END,",
+      "  key_hint = excluded.key_hint,",
+      "  updated_at = excluded.updated_at",
+    ].join("\n"))
+    .run(
+      provider,
+      model,
+      encrypted?.ciphertext ?? "",
+      encrypted?.iv ?? "",
+      encrypted?.tag ?? "",
+      keyHint,
+      hasNewKey ? 1 : 0,
+      shouldClearKey ? 1 : 0,
+      hasNewKey ? 1 : 0,
+      shouldClearKey ? 1 : 0,
+      hasNewKey ? 1 : 0,
+      shouldClearKey ? 1 : 0,
+    );
+
+  return getPublicAnalysisAiConfig();
+}
+
+export function getWeeklyEmailConfig() {
+  const row = getFoodDatabase()
+    .prepare("SELECT target_email FROM weekly_email_config WHERE id = 'default'")
+    .get();
+
+  return {
+    targetEmail: String(row?.target_email ?? defaultWeeklyEmailConfig.targetEmail),
+  };
+}
+
+export function saveWeeklyEmailConfig(input) {
+  const targetEmail = String(input?.targetEmail ?? "").trim();
+  if (targetEmail && !/^\S+@\S+\.\S+$/.test(targetEmail)) throw new Error("Invalid email address");
+
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO weekly_email_config (id, target_email, updated_at)",
+      "VALUES ('default', ?, datetime('now'))",
+      "ON CONFLICT(id) DO UPDATE SET",
+      "  target_email = excluded.target_email,",
+      "  updated_at = excluded.updated_at",
+    ].join("\n"))
+    .run(targetEmail);
+
+  return getWeeklyEmailConfig();
 }
 
 export function getPublicGarminConfig() {
@@ -889,6 +1056,25 @@ function initializeDatabase(database) {
     "  key_hint TEXT NOT NULL DEFAULT '',",
     "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
     ");",
+    "CREATE TABLE IF NOT EXISTS analysis_ai_config (",
+    "  id TEXT PRIMARY KEY,",
+    "  provider TEXT NOT NULL,",
+    "  model TEXT NOT NULL,",
+    "  encrypted_api_key TEXT NOT NULL DEFAULT '',",
+    "  api_key_iv TEXT NOT NULL DEFAULT '',",
+    "  api_key_tag TEXT NOT NULL DEFAULT '',",
+    "  key_hint TEXT NOT NULL DEFAULT '',",
+    "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ");",
+    "CREATE TABLE IF NOT EXISTS weekly_email_config (",
+    "  id TEXT PRIMARY KEY,",
+    "  target_email TEXT NOT NULL DEFAULT '',",
+    "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ");",
+    "CREATE TABLE IF NOT EXISTS weekly_email_log (",
+    "  week_start TEXT PRIMARY KEY,",
+    "  sent_at TEXT NOT NULL",
+    ");",
     "CREATE TABLE IF NOT EXISTS garmin_config (",
     "  id TEXT PRIMARY KEY,",
     "  username TEXT NOT NULL DEFAULT '',",
@@ -989,6 +1175,444 @@ async function runGarminScheduledSync() {
   } finally {
     garminSchedulerRunning = false;
   }
+}
+
+async function runWeeklyEmailScheduler() {
+  if (weeklyEmailSchedulerRunning) return;
+  const berlinNow = getBerlinDateTimeParts();
+  if (berlinNow.weekday !== "Mon" || berlinNow.hour !== 1 || berlinNow.minute !== 0) return;
+
+  const thisMonday = getWeekStart(berlinNow.date);
+  const previousWeekStart = addDays(thisMonday, -7);
+  if (hasWeeklyEmailBeenSent(previousWeekStart)) return;
+
+  weeklyEmailSchedulerRunning = true;
+  try {
+    const result = await sendWeeklyAnalysisEmail(previousWeekStart);
+    if (result.sent) markWeeklyEmailSent(previousWeekStart);
+    if (result.skipped) console.info(`Weekly food email skipped: ${result.reason}`);
+  } finally {
+    weeklyEmailSchedulerRunning = false;
+  }
+}
+
+async function analyzeWeekManually(input) {
+  const weekStart = normalizeWeekStart(input?.weekStart ?? todayInBerlin());
+  const summary = buildWeeklyAnalysis(weekStart);
+  const ai = await generateWeeklyAiText(summary);
+  return {
+    ...summary,
+    aiText: ai.text,
+    provider: ai.provider,
+    model: ai.model,
+    aiUsage: ai.aiUsage,
+  };
+}
+
+function buildWeeklyAnalysis(weekStartInput) {
+  const weekStart = normalizeWeekStart(weekStartInput);
+  const weekEnd = addDays(weekStart, 6);
+  const entries = listEntriesForWeek(weekStart);
+  const nutritionConfig = getNutritionConfig();
+  const preset = nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance;
+  const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const days = dates.map((date) => {
+    const dayEntries = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
+    const totals = summarizeEntryTotals(dayEntries);
+    const macroTargets = calculateMacroTargets(nutritionConfig.calorieGoal, preset);
+    return {
+      date,
+      entryCount: dayEntries.length,
+      totals,
+      calorieTarget: nutritionConfig.calorieGoal,
+      macroTargets,
+    };
+  });
+  const totals = days.reduce((sum, day) => ({
+    calories: sum.calories + day.totals.calories,
+    grams: sum.grams + day.totals.grams,
+    protein: sum.protein + day.totals.protein,
+    carbs: sum.carbs + day.totals.carbs,
+    fat: sum.fat + day.totals.fat,
+    calorieTarget: sum.calorieTarget + day.calorieTarget,
+    proteinTarget: sum.proteinTarget + day.macroTargets.protein.grams,
+    carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
+    fatTarget: sum.fatTarget + day.macroTargets.fat.grams,
+    entryCount: sum.entryCount + day.entryCount,
+  }), {
+    calories: 0,
+    grams: 0,
+    protein: 0,
+    carbs: 0,
+    fat: 0,
+    calorieTarget: 0,
+    proteinTarget: 0,
+    carbsTarget: 0,
+    fatTarget: 0,
+    entryCount: 0,
+  });
+  const signal = calculateTrafficLight(days, totals);
+
+  return {
+    weekStart,
+    weekEnd,
+    goal: nutritionConfig.goal,
+    goalLabel: preset.label,
+    days,
+    totals,
+    signal,
+  };
+}
+
+async function sendWeeklyAnalysisEmail(weekStart) {
+  const mailConfig = getWeeklyEmailConfig();
+  const smtpConfig = getSmtpConfig();
+  const aiConfig = getAnalysisAiConfigRecord();
+
+  if (!mailConfig.targetEmail) return { skipped: true, reason: "no target email configured" };
+  if (!smtpConfig.host || !smtpConfig.port) return { skipped: true, reason: "SMTP_HOST or SMTP_PORT missing" };
+  if (!aiConfig.apiKey) return { skipped: true, reason: "analysis AI API key missing" };
+
+  const analysis = await analyzeWeekManually({ weekStart });
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.secure,
+    auth: smtpConfig.user || smtpConfig.pass ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
+  });
+  await transporter.sendMail({
+    from: smtpConfig.from,
+    to: mailConfig.targetEmail,
+    subject: `Food Tracker Wochenanalyse ${formatDate(analysis.weekStart)} - ${formatDate(analysis.weekEnd)}`,
+    text: buildWeeklyEmailText(analysis),
+    html: buildWeeklyEmailHtml(analysis),
+  });
+
+  return { sent: true };
+}
+
+async function generateWeeklyAiText(summary) {
+  const config = getAnalysisAiConfigRecord();
+  const provider = aiProviders.get(config.provider);
+  if (!provider) throw new Error("Analysis AI provider is not configured");
+  if (!config.apiKey) throw new Error("API key fehlt in der Analyse-Konfiguration");
+  validateProviderKeyPair(config.provider, config.apiKey);
+
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? {
+        "HTTP-Referer": "http://localhost:5173",
+        "X-Title": "Food Tracker",
+      } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.35,
+      response_format: { type: "json_object" },
+      ...(config.provider === "openrouter" ? { usage: { include: true } } : {}),
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Du bist ein pragmatischer deutschsprachiger Nutrition-Coach.",
+            "Antworte ausschliesslich als JSON ohne Markdown.",
+            "Bewerte die Food-Tracker-Woche anhand Zielkalorien, Makroziele, Eintragshaeufigkeit und Ausreissern.",
+            "Keine medizinischen Diagnosen. Gib konkrete, alltagstaugliche Optimierungsvorschlaege.",
+            "Schema: {text:string}. Der Text hat 4 bis 7 kurze Saetze auf Deutsch.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: "Analysiere diese Woche: " + JSON.stringify(buildWeeklyPromptPayload(summary)),
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "AI analysis failed"));
+
+  const parsed = parseJsonObject(payload?.choices?.[0]?.message?.content);
+  const text = String(parsed.text ?? "").trim();
+  if (!text) throw new Error("AI response could not be understood");
+
+  return {
+    text: text.slice(0, 3000),
+    provider: config.provider,
+    model: config.model,
+    aiUsage: await buildAiUsageSnapshot(config, payload),
+  };
+}
+
+function buildWeeklyPromptPayload(summary) {
+  return {
+    weekStart: summary.weekStart,
+    weekEnd: summary.weekEnd,
+    goal: summary.goalLabel,
+    signal: summary.signal,
+    totals: roundWeeklyNumbers(summary.totals),
+    days: summary.days.map((day) => ({
+      date: day.date,
+      entryCount: day.entryCount,
+      totals: roundWeeklyNumbers(day.totals),
+      calorieTarget: Math.round(day.calorieTarget),
+      macroTargets: {
+        protein: day.macroTargets.protein.grams,
+        carbs: day.macroTargets.carbs.grams,
+        fat: day.macroTargets.fat.grams,
+      },
+    })),
+  };
+}
+
+function roundWeeklyNumbers(value) {
+  return Object.fromEntries(Object.entries(value).map(([key, numberValue]) => [
+    key,
+    Math.round(Number(numberValue) * 10) / 10,
+  ]));
+}
+
+function calculateTrafficLight(days, totals) {
+  const calorieTarget = Math.max(1, totals.calorieTarget);
+  const calorieDeviation = Math.abs(totals.calories - totals.calorieTarget) / calorieTarget;
+  const proteinRatio = totals.proteinTarget > 0 ? totals.protein / totals.proteinTarget : 1;
+  const filledDays = days.filter((day) => day.entryCount > 0).length;
+  const severeOutliers = days.filter((day) => {
+    const target = Math.max(1, day.calorieTarget);
+    return Math.abs(day.totals.calories - target) / target > 0.35;
+  }).length;
+
+  let score = 100;
+  score -= Math.min(35, calorieDeviation * 100);
+  score -= proteinRatio < 0.85 ? Math.min(20, (0.85 - proteinRatio) * 100) : 0;
+  score -= (7 - filledDays) * 8;
+  score -= severeOutliers * 5;
+
+  const label = score >= 78 ? "gut" : score >= 55 ? "okay" : "schlecht";
+  const message = label === "gut"
+    ? "Die Woche liegt nah am Ziel."
+    : label === "okay"
+      ? "Die Woche ist solide, hat aber klare Stellschrauben."
+      : "Die Woche weicht deutlich von den Zielen ab.";
+
+  return {
+    label,
+    score: Math.max(0, Math.min(100, Math.round(score))),
+    message,
+  };
+}
+
+function buildWeeklyEmailText(analysis) {
+  return [
+    `Food Tracker Wochenanalyse ${formatDate(analysis.weekStart)} - ${formatDate(analysis.weekEnd)}`,
+    `Ampel: ${analysis.signal.label} (${analysis.signal.score}/100). ${analysis.signal.message}`,
+    "",
+    analysis.aiText,
+    "",
+    `Kalorien: ${Math.round(analysis.totals.calories)} von ${Math.round(analysis.totals.calorieTarget)} kcal`,
+    `Protein: ${Math.round(analysis.totals.protein)} von ${Math.round(analysis.totals.proteinTarget)} g`,
+    `Kohlenhydrate: ${Math.round(analysis.totals.carbs)} von ${Math.round(analysis.totals.carbsTarget)} g`,
+    `Fett: ${Math.round(analysis.totals.fat)} von ${Math.round(analysis.totals.fatTarget)} g`,
+  ].join("\n");
+}
+
+function buildWeeklyEmailHtml(analysis) {
+  const charts = [
+    ["Kalorien", "kcal", "calories", "calorieTarget"],
+    ["Protein", "g", "protein", "proteinTarget"],
+    ["Kohlenhydrate", "g", "carbs", "carbsTarget"],
+    ["Fett", "g", "fat", "fatTarget"],
+  ].map(([label, suffix, key, targetKey]) => buildEmailChart(analysis, label, suffix, key, targetKey)).join("");
+  const signalColor = analysis.signal.label === "gut" ? "#236245" : analysis.signal.label === "okay" ? "#9a6b16" : "#a43d20";
+
+  return `<!doctype html>
+<html lang="de">
+  <body style="margin:0;background:#f5efe2;color:#17211b;font-family:Arial,sans-serif;">
+    <div style="max-width:760px;margin:0 auto;padding:24px;">
+      <p style="margin:0 0 8px;color:#627064;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Food Tracker</p>
+      <h1 style="margin:0 0 8px;font-size:28px;">Wochenanalyse ${escapeHtml(formatDate(analysis.weekStart))} - ${escapeHtml(formatDate(analysis.weekEnd))}</h1>
+      <div style="margin:16px 0;padding:14px 16px;border-radius:8px;background:#fffaf0;border:1px solid rgba(23,33,27,.12);">
+        <strong style="color:${signalColor};text-transform:uppercase;">${escapeHtml(analysis.signal.label)} · ${analysis.signal.score}/100</strong>
+        <p style="margin:8px 0 0;">${escapeHtml(analysis.signal.message)}</p>
+      </div>
+      <div style="margin:16px 0;padding:16px;border-radius:8px;background:#eef5f0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">${escapeHtml(analysis.aiText).replace(/\n/g, "<br>")}</div>
+      ${charts}
+    </div>
+  </body>
+</html>`;
+}
+
+function buildEmailChart(analysis, label, suffix, key, targetKey) {
+  const maxValue = Math.max(1, ...analysis.days.flatMap((day) => [
+    Number(day.totals[key] ?? 0),
+    key === "calories" ? day.calorieTarget : day.macroTargets[key].grams,
+  ])) * 1.12;
+  const bars = analysis.days.map((day) => {
+    const actual = Number(day.totals[key] ?? 0);
+    const target = key === "calories" ? day.calorieTarget : day.macroTargets[key].grams;
+    const height = Math.max(3, Math.round((actual / maxValue) * 128));
+    const targetBottom = Math.min(128, Math.max(0, Math.round((target / maxValue) * 128)));
+    const isOver = actual > target;
+    return `<td style="width:14.28%;padding:0 4px;vertical-align:bottom;text-align:center;">
+      <div style="position:relative;height:128px;background:#ece7dc;border:1px solid rgba(23,33,27,.12);border-radius:7px;overflow:hidden;">
+        <div style="position:absolute;left:0;right:0;bottom:0;height:${height}px;background:${isOver ? "#d5512a" : "#2f8d5b"};"></div>
+        <div style="position:absolute;left:0;right:0;bottom:${targetBottom}px;height:2px;background:#17211b;"></div>
+      </div>
+      <div style="margin-top:6px;font-size:11px;font-weight:700;">${escapeHtml(formatWeekdayShort(day.date))}</div>
+      <div style="font-size:10px;color:#627064;">${Math.round(actual)} / ${Math.round(target)}</div>
+    </td>`;
+  }).join("");
+  const delta = Math.round(Number(analysis.totals[key]) - Number(analysis.totals[targetKey]));
+  return `<section style="margin:16px 0;padding:16px;border-radius:8px;background:#fffaf0;border:1px solid rgba(23,33,27,.12);">
+    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;">
+      <strong>${escapeHtml(label)}</strong>
+      <strong style="color:${delta > 0 ? "#a43d20" : delta < 0 ? "#236245" : "#627064"};">${delta > 0 ? "+" : ""}${delta} ${escapeHtml(suffix)}</strong>
+    </div>
+    <table role="presentation" style="width:100%;border-collapse:collapse;"><tr>${bars}</tr></table>
+  </section>`;
+}
+
+function getSmtpConfig() {
+  const port = Number(process.env.SMTP_PORT ?? "");
+  return {
+    host: String(process.env.SMTP_HOST ?? "").trim(),
+    port: Number.isFinite(port) ? port : 0,
+    secure: String(process.env.SMTP_SECURE ?? "").toLowerCase() === "true",
+    user: String(process.env.SMTP_USER ?? "").trim(),
+    pass: String(process.env.SMTP_PASS ?? ""),
+    from: String(process.env.SMTP_FROM ?? "Food Tracker <food-tracker@localhost>").trim(),
+  };
+}
+
+function hasWeeklyEmailBeenSent(weekStart) {
+  const row = getFoodDatabase()
+    .prepare("SELECT week_start FROM weekly_email_log WHERE week_start = ?")
+    .get(weekStart);
+  return Boolean(row);
+}
+
+function markWeeklyEmailSent(weekStart) {
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO weekly_email_log (week_start, sent_at)",
+      "VALUES (?, datetime('now'))",
+      "ON CONFLICT(week_start) DO UPDATE SET sent_at = excluded.sent_at",
+    ].join("\n"))
+    .run(weekStart);
+}
+
+function listEntriesForWeek(weekStart) {
+  const weekEndExclusive = addDays(weekStart, 7);
+  const rows = getFoodDatabase()
+    .prepare([
+      "SELECT",
+      "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
+      "  meal_id, meal_name",
+      "FROM entries",
+      "WHERE substr(consumed_at, 1, 10) >= ? AND substr(consumed_at, 1, 10) < ?",
+      "ORDER BY consumed_at ASC, created_at ASC",
+    ].join("\n"))
+    .all(weekStart, weekEndExclusive);
+  return rows.map(entryFromRow);
+}
+
+function summarizeEntryTotals(entries) {
+  return entries.reduce((sum, entry) => ({
+    calories: sum.calories + caloriesForEntry(entry),
+    grams: sum.grams + gramsForEntry(entry),
+    protein: sum.protein + macroForEntry(entry, entry.proteinPer100g),
+    carbs: sum.carbs + macroForEntry(entry, entry.carbsPer100g),
+    fat: sum.fat + macroForEntry(entry, entry.fatPer100g),
+  }), { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 });
+}
+
+function calculateMacroTargets(calorieGoal, preset) {
+  return {
+    protein: macroTarget(calorieGoal, preset.protein, 4),
+    carbs: macroTarget(calorieGoal, preset.carbs, 4),
+    fat: macroTarget(calorieGoal, preset.fat, 9),
+  };
+}
+
+function macroTarget(calorieGoal, share, caloriesPerGram) {
+  const calories = Math.round(calorieGoal * share);
+  return {
+    calories,
+    grams: Math.round(calories / caloriesPerGram),
+  };
+}
+
+function gramsForEntry(entry) {
+  return entry.quantityUnit === "kg" ? entry.quantityValue * 1000 : entry.quantityValue;
+}
+
+function caloriesForEntry(entry) {
+  return Math.round((gramsForEntry(entry) / 100) * entry.caloriesPer100g);
+}
+
+function macroForEntry(entry, valuePer100g) {
+  return (gramsForEntry(entry) / 100) * valuePer100g;
+}
+
+function normalizeWeekStart(value) {
+  const raw = String(value ?? "").trim();
+  return getWeekStart(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : todayInBerlin());
+}
+
+function getWeekStart(date) {
+  const dateObject = new Date(`${date}T12:00:00Z`);
+  const day = dateObject.getUTCDay() || 7;
+  dateObject.setUTCDate(dateObject.getUTCDate() - day + 1);
+  return dateObject.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const dateObject = new Date(`${date}T12:00:00Z`);
+  dateObject.setUTCDate(dateObject.getUTCDate() + days);
+  return dateObject.toISOString().slice(0, 10);
+}
+
+function getBerlinDateTimeParts() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Berlin",
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    weekday: values.weekday,
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  };
+}
+
+function formatDate(value) {
+  return new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })
+    .format(new Date(`${value}T12:00:00Z`));
+}
+
+function formatWeekdayShort(value) {
+  return new Intl.DateTimeFormat("de-DE", { weekday: "short" })
+    .format(new Date(`${value}T12:00:00Z`))
+    .replace(".", "");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRecord()) {
@@ -1318,7 +1942,7 @@ function extractRawCost(provider, generationStats) {
   return totalCost === undefined ? null : totalCost;
 }
 
-async function fetchProviderModels(providerId) {
+async function fetchProviderModels(providerId, capability = "photo") {
   const provider = aiProviders.get(providerId);
   if (!provider) throw new Error("Invalid AI provider");
 
@@ -1326,12 +1950,12 @@ async function fetchProviderModels(providerId) {
   try {
     const headers = { accept: "application/json" };
     if (providerId === "openai") {
-      const config = getAiConfigRecord();
+      const config = capability === "analysis" ? getAnalysisAiConfigRecord() : getAiConfigRecord();
       if (!config.apiKey) throw new Error("API key fehlt in der Konfiguration");
       headers.authorization = `Bearer ${config.apiKey}`;
     }
     if (providerId === "openrouter") {
-      const config = getAiConfigRecord();
+      const config = capability === "analysis" ? getAnalysisAiConfigRecord() : getAiConfigRecord();
       if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
     }
 
@@ -1339,7 +1963,7 @@ async function fetchProviderModels(providerId) {
     if (!response.ok) throw new Error("Model request failed");
     const payload = await response.json();
     const remoteModels = providerId === "openrouter"
-      ? parseOpenRouterModels(payload)
+      ? parseOpenRouterModels(payload, capability)
       : parseOpenAiModels(payload);
     return remoteModels.length > 0 ? remoteModels : fallbackModels;
   } catch (error) {
@@ -1356,15 +1980,18 @@ function parseOpenAiModels(payload) {
     .sort(compareModelIds);
 }
 
-function parseOpenRouterModels(payload) {
+function parseOpenRouterModels(payload, capability = "photo") {
   const models = Array.isArray(payload?.data) ? payload.data : [];
   return models
     .filter((model) => {
       const inputModalities = model?.architecture?.input_modalities;
       const outputModalities = model?.architecture?.output_modalities;
       const supportsImageInput = Array.isArray(inputModalities) && inputModalities.includes("image");
+      const supportsTextInput = !Array.isArray(inputModalities) || inputModalities.includes("text");
       const supportsTextOutput = !Array.isArray(outputModalities) || outputModalities.includes("text");
-      return supportsImageInput && supportsTextOutput;
+      return capability === "analysis"
+        ? supportsTextInput && supportsTextOutput
+        : supportsImageInput && supportsTextOutput;
     })
     .map((model) => String(model?.id ?? ""))
     .filter(isSafeModelId)
@@ -1387,6 +2014,23 @@ function getAiConfigRecord() {
 
   if (!row) {
     return { ...defaultAiConfig, apiKey: "", keyHint: "" };
+  }
+
+  return {
+    provider: row.provider,
+    model: row.model,
+    apiKey: decryptSecret(row.encrypted_api_key, row.api_key_iv, row.api_key_tag),
+    keyHint: row.key_hint,
+  };
+}
+
+function getAnalysisAiConfigRecord() {
+  const row = getFoodDatabase()
+    .prepare("SELECT provider, model, encrypted_api_key, api_key_iv, api_key_tag, key_hint FROM analysis_ai_config WHERE id = 'default'")
+    .get();
+
+  if (!row) {
+    return { ...defaultAnalysisAiConfig, apiKey: "", keyHint: "" };
   }
 
   return {

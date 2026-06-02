@@ -12,7 +12,13 @@ RUN npm run build
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=4173
+    PORT=4173 \
+    SMTP_HOST="" \
+    SMTP_PORT=587 \
+    SMTP_SECURE=false \
+    SMTP_USER="" \
+    SMTP_PASS="" \
+    SMTP_FROM="Food Tracker <food-tracker@localhost>"
 WORKDIR /app
 
 COPY package.json package-lock.json ./

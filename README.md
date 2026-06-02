@@ -7,10 +7,12 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
 - Tagesziel mit Kalorien- und Makro-Fortschritt
 - Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien und Makros, Tagesziel-Markern und roter/gruener Ueber-/Unterdeckung
+- Manuelle KI-Wochenanalyse mit Ampel, Text-Einschaetzung und Optimierungsvorschlaegen
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
 - Fotoanalyse fuer Beschreibung, ungefaehres Gewicht, Kalorien und Makros
 - AI-Textanalyse fuer freie Essensbeschreibungen wie Omelette mit Schinken und Pilzen
-- AI-Konfiguration mit Provider, Modell-Dropdown und sicher gespeicherten API-Keys
+- Separate AI-Konfiguration fuer Foto- und Wochenanalyse mit Provider, Modell-Dropdown und sicher gespeicherten API-Keys
+- Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
 - Live-Modellabruf ueber Provider-APIs
 - Rohspeicherung von AI-Usage-Daten am Fotoeintrag
 - Optionaler Garmin-Connect-Abruf fuer den echten Tagesverbrauch als dynamisches Kalorienziel
@@ -24,6 +26,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Secrets: API-Keys werden serverseitig mit AES-GCM verschluesselt und nicht im Browser gespeichert
 - AI Usage: Token-/Kosten-Rohwerte werden als JSON am Eintrag gespeichert; OpenRouter-Generation-Stats bleiben unveraendert fuer spaetere Auswertung erhalten
 - Garmin: optionale serverseitige Garmin-Connect-Anbindung; Login-Daten werden in der WebUI gepflegt, verschluesselt gespeichert und Tokens im persistenten `data/`-Volume wiederverwendet
+- Wochenmail: SMTP wird per Env konfiguriert; Zieladresse und Analyse-AI-Key werden in der WebUI gepflegt und serverseitig gespeichert
 - PWA: `manifest.webmanifest`, App-Icons und Service Worker unter `public/`
 
 ## Security Baseline
@@ -61,6 +64,10 @@ Persistent files live in the named Docker volume `food-tracker-data`, mounted at
 Optional Garmin Connect:
 
 Configure Garmin in the app under `Konfiguration -> Garmin`. The app stores the login server-side with the same encrypted local secret storage used for AI credentials. When configured, `/api/garmin/daily-summary?date=YYYY-MM-DD` reads Garmin's daily calories burned and the frontend uses that value as the day's calorie target. If Garmin is not configured or the login fails, the app falls back to the manually configured calorie target.
+
+Optional weekly email:
+
+Set SMTP in Docker, Portainer, or `.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`. Configure the recipient in the app under `Konfiguration -> Wochenmail` and store an analysis AI key under `Konfiguration -> Wochenanalyse`. If SMTP, recipient, or analysis API key is missing, the scheduler logs a no-op and keeps running.
 
 For Portainer, use the repository as a Git stack. The compose file pulls `ghcr.io/wolfilux/food-tracker:dev`, which is published by GitHub Actions after the quality gate passes. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
 

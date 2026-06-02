@@ -13,6 +13,7 @@ import {
   ImagePlus,
   KeyRound,
   Loader2,
+  Mail,
   MessageSquareText,
   Pencil,
   Plus,
@@ -106,6 +107,12 @@ type AiConfigDraft = {
   apiKey: string;
 };
 
+type WeeklyEmailConfig = {
+  targetEmail: string;
+};
+
+type WeeklyEmailConfigDraft = WeeklyEmailConfig;
+
 type GarminConfig = {
   username: string;
   hasCredential: boolean;
@@ -137,6 +144,33 @@ type GarminDailySummary = {
   remainingKilocalories?: number;
   error?: string;
   fetchedAt?: string;
+};
+
+type WeeklyAiSignal = {
+  label: "gut" | "okay" | "schlecht";
+  score: number;
+  message: string;
+};
+
+type WeeklyAiAnalysis = {
+  weekStart: string;
+  weekEnd: string;
+  goalLabel: string;
+  totals: {
+    calories: number;
+    calorieTarget: number;
+    protein: number;
+    proteinTarget: number;
+    carbs: number;
+    carbsTarget: number;
+    fat: number;
+    fatTarget: number;
+    entryCount: number;
+  };
+  signal: WeeklyAiSignal;
+  aiText: string;
+  provider: string;
+  model: string;
 };
 
 type AiUsageSnapshot = {
@@ -246,6 +280,10 @@ const defaultGarminConfig: GarminConfig = {
   hasCredential: false,
   keyHint: "",
   autoSyncMinutes: 0,
+};
+
+const defaultWeeklyEmailConfig: WeeklyEmailConfig = {
+  targetEmail: "",
 };
 
 const garminAutoSyncOptions = [
@@ -511,6 +549,14 @@ function App() {
     model: defaultAiConfig.model,
     apiKey: "",
   });
+  const [analysisAiConfig, setAnalysisAiConfig] = useState<AiConfig>(defaultAiConfig);
+  const [analysisAiDraft, setAnalysisAiDraft] = useState<AiConfigDraft>({
+    provider: defaultAiConfig.provider,
+    model: defaultAiConfig.model,
+    apiKey: "",
+  });
+  const [weeklyEmailConfig, setWeeklyEmailConfig] = useState<WeeklyEmailConfig>(defaultWeeklyEmailConfig);
+  const [weeklyEmailDraft, setWeeklyEmailDraft] = useState<WeeklyEmailConfigDraft>(defaultWeeklyEmailConfig);
   const [garminConfig, setGarminConfig] = useState<GarminConfig>(defaultGarminConfig);
   const [garminDraft, setGarminDraft] = useState<GarminConfigDraft>({
     username: "",
@@ -538,6 +584,14 @@ function App() {
   const [aiConfigError, setAiConfigError] = useState("");
   const [aiConfigState, setAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [aiModelsState, setAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [analysisAiConfigError, setAnalysisAiConfigError] = useState("");
+  const [analysisAiConfigState, setAnalysisAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [analysisAiModelsState, setAnalysisAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [weeklyEmailConfigState, setWeeklyEmailConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [weeklyEmailConfigError, setWeeklyEmailConfigError] = useState("");
+  const [weeklyAiAnalysis, setWeeklyAiAnalysis] = useState<WeeklyAiAnalysis | null>(null);
+  const [weeklyAiState, setWeeklyAiState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [weeklyAiError, setWeeklyAiError] = useState("");
   const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
@@ -615,16 +669,19 @@ function App() {
       ),
     [weekAnalysis],
   );
+  const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadBackendState() {
       try {
-        const [entriesResponse, configResponse, aiConfigResponse, garminConfigResponse, mealsResponse] = await Promise.all([
+        const [entriesResponse, configResponse, aiConfigResponse, analysisAiConfigResponse, weeklyEmailConfigResponse, garminConfigResponse, mealsResponse] = await Promise.all([
           fetchEntries(),
           fetchNutritionConfig(),
           fetchAiConfig(),
+          fetchAnalysisAiConfig(),
+          fetchWeeklyEmailConfig(),
           fetchGarminConfig(),
           fetchMealTemplates(),
         ]);
@@ -633,6 +690,8 @@ function App() {
         setMealTemplates(mealsResponse);
         setNutritionConfig(configResponse);
         setAiConfig(aiConfigResponse);
+        setAnalysisAiConfig(analysisAiConfigResponse);
+        setWeeklyEmailConfig(weeklyEmailConfigResponse);
         setGarminConfig(garminConfigResponse);
         setGarminDraft({ username: garminConfigResponse.username, authValue: "", autoSyncMinutes: garminConfigResponse.autoSyncMinutes });
         setAiDraft({
@@ -640,6 +699,12 @@ function App() {
           model: aiConfigResponse.model,
           apiKey: "",
         });
+        setAnalysisAiDraft({
+          provider: analysisAiConfigResponse.provider,
+          model: analysisAiConfigResponse.model,
+          apiKey: "",
+        });
+        setWeeklyEmailDraft({ targetEmail: weeklyEmailConfigResponse.targetEmail });
       } finally {
         if (isMounted) setConfigLoaded(true);
       }
@@ -846,6 +911,36 @@ function App() {
     }
   }
 
+  async function saveAnalysisAiSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAnalysisAiConfigError("");
+    setAnalysisAiConfigState("saving");
+    try {
+      const savedConfig = await saveAnalysisAiConfig(analysisAiDraft);
+      setAnalysisAiConfig(savedConfig);
+      setAnalysisAiDraft({ provider: savedConfig.provider, model: savedConfig.model, apiKey: "" });
+      setAnalysisAiConfigState("saved");
+    } catch {
+      setAnalysisAiConfigError("Analyse-Konfiguration konnte nicht gespeichert werden.");
+      setAnalysisAiConfigState("error");
+    }
+  }
+
+  async function saveWeeklyEmailSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWeeklyEmailConfigError("");
+    setWeeklyEmailConfigState("saving");
+    try {
+      const savedConfig = await saveWeeklyEmailConfig(weeklyEmailDraft);
+      setWeeklyEmailConfig(savedConfig);
+      setWeeklyEmailDraft({ targetEmail: savedConfig.targetEmail });
+      setWeeklyEmailConfigState("saved");
+    } catch (error) {
+      setWeeklyEmailConfigError(error instanceof Error ? error.message : "Wochenmail konnte nicht gespeichert werden.");
+      setWeeklyEmailConfigState("error");
+    }
+  }
+
   async function saveGarminSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setGarminConfigError("");
@@ -884,6 +979,18 @@ function App() {
     setAiModelsState("idle");
   }
 
+  function updateAnalysisAiProvider(provider: string) {
+    const providerOption = analysisAiConfig.providers.find((option) => option.id === provider);
+    setAnalysisAiDraft({
+      ...analysisAiDraft,
+      provider,
+      model: providerOption?.models[0] ?? analysisAiDraft.model,
+    });
+    setAnalysisAiConfigState("idle");
+    setAnalysisAiConfigError("");
+    setAnalysisAiModelsState("idle");
+  }
+
   async function refreshAiModels() {
     setAiModelsState("loading");
     try {
@@ -894,17 +1001,55 @@ function App() {
         setAiDraft({ provider: nextConfig.provider, model: nextConfig.model, apiKey: "" });
       }
 
-      const models = await fetchAiModels(aiDraft.provider);
+      const models = mergeModelsWithCurrent(await fetchAiModels(aiDraft.provider, "photo"), aiDraft.model);
       const providers = nextConfig.providers.map((provider) =>
         provider.id === aiDraft.provider ? { ...provider, models } : provider,
       );
-      const model = models.includes(aiDraft.model) ? aiDraft.model : models[0];
+      const model = aiDraft.model || models[0];
       setAiConfig({ ...nextConfig, providers });
       setAiDraft((currentDraft) => ({ ...currentDraft, model }));
       setAiModelsState("done");
     } catch {
       setAiConfigError("Modellliste konnte nicht geladen werden.");
       setAiModelsState("error");
+    }
+  }
+
+  async function refreshAnalysisAiModels() {
+    setAnalysisAiModelsState("loading");
+    try {
+      let nextConfig = analysisAiConfig;
+      if (analysisAiDraft.apiKey.trim()) {
+        nextConfig = await saveAnalysisAiConfig(analysisAiDraft);
+        setAnalysisAiConfig(nextConfig);
+        setAnalysisAiDraft({ provider: nextConfig.provider, model: nextConfig.model, apiKey: "" });
+      }
+
+      const models = mergeModelsWithCurrent(await fetchAiModels(analysisAiDraft.provider, "analysis"), analysisAiDraft.model);
+      const providers = nextConfig.providers.map((provider) =>
+        provider.id === analysisAiDraft.provider ? { ...provider, models } : provider,
+      );
+      const model = analysisAiDraft.model || models[0];
+      setAnalysisAiConfig({ ...nextConfig, providers });
+      setAnalysisAiDraft((currentDraft) => ({ ...currentDraft, model }));
+      setAnalysisAiModelsState("done");
+    } catch {
+      setAnalysisAiConfigError("Analyse-Modellliste konnte nicht geladen werden.");
+      setAnalysisAiModelsState("error");
+    }
+  }
+
+  async function requestWeeklyAiAnalysis() {
+    setWeeklyAiState("loading");
+    setWeeklyAiError("");
+    setWeeklyAiAnalysis(null);
+    try {
+      const analysis = await fetchWeeklyAiAnalysis(selectedWeekStart);
+      setWeeklyAiAnalysis(analysis);
+      setWeeklyAiState("done");
+    } catch (error) {
+      setWeeklyAiError(error instanceof Error ? error.message : "Wochenanalyse fehlgeschlagen.");
+      setWeeklyAiState("error");
     }
   }
 
@@ -1312,6 +1457,10 @@ function App() {
                   Garmin
                 </button>
               )}
+              <button className="secondary-button secondary-button--dark" type="button" disabled={weeklyAiState === "loading" || !analysisAiConfig.hasApiKey} onClick={() => void requestWeeklyAiAnalysis()}>
+                {weeklyAiState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+                KI
+              </button>
             </div>
           </section>
 
@@ -1320,6 +1469,29 @@ function App() {
             <AnalysisSummaryMetric label="Protein" actual={weekSummary.protein} target={weekSummary.proteinTarget} suffix="g" />
             <AnalysisSummaryMetric label="Kohlenhydrate" actual={weekSummary.carbs} target={weekSummary.carbsTarget} suffix="g" />
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
+          </section>
+
+          <section className={displayedWeeklyAiAnalysis ? `weekly-ai-card weekly-ai-card--${displayedWeeklyAiAnalysis.signal.label}` : "weekly-ai-card"} aria-live="polite">
+            <div className="weekly-ai-card__head">
+              <div>
+                <span>KI-Wochenanalyse</span>
+                <strong>
+                  {displayedWeeklyAiAnalysis
+                    ? `${trafficLightLabel(displayedWeeklyAiAnalysis.signal.label)} · ${displayedWeeklyAiAnalysis.signal.score}/100`
+                    : analysisAiConfig.hasApiKey ? "Bereit" : "Analyse-Key fehlt"}
+                </strong>
+              </div>
+              <small>{displayedWeeklyAiAnalysis ? `${displayedWeeklyAiAnalysis.provider}/${displayedWeeklyAiAnalysis.model}` : analysisAiConfig.model}</small>
+            </div>
+            {displayedWeeklyAiAnalysis ? (
+              <>
+                <p>{displayedWeeklyAiAnalysis.signal.message}</p>
+                <p>{displayedWeeklyAiAnalysis.aiText}</p>
+              </>
+            ) : (
+              <p>{weeklyAiState === "error" ? weeklyAiError : "Die Einschaetzung nutzt die Wochensummen, Tagesausreisser und Makroziele."}</p>
+            )}
+            {weeklyAiState === "error" && <small className="config-status config-status--error">{weeklyAiError}</small>}
           </section>
 
           <section className="weekly-chart-grid" aria-label="Wochendiagramme">
@@ -1554,6 +1726,103 @@ function App() {
                 {aiModelsState === "done" && "Modellliste aktualisiert."}
                 {aiModelsState === "error" && (aiConfigError || "Live-Abruf fehlgeschlagen. Fallback-Liste bleibt aktiv.")}
                 {aiModelsState === "idle" && "Live-Abruf zeigt nur Modelle, die Bild-Input fuer Fotoanalyse melden."}
+              </p>
+            </div>
+          </form>
+          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI weekly analysis configuration" onSubmit={saveAnalysisAiSettings}>
+            <div className="config-copy">
+              <p className="eyebrow eyebrow--dark">
+                <Sparkles size={16} aria-hidden="true" />
+                Analyse
+              </p>
+              <h2>Wochenanalyse</h2>
+            </div>
+            <div className="config-controls">
+              <label>
+                Anbieter
+                <select value={analysisAiDraft.provider} onChange={(event) => updateAnalysisAiProvider(event.target.value)}>
+                  {analysisAiConfig.providers.map((provider) => (
+                    <option value={provider.id} key={provider.id}>{provider.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Modell
+                <select value={analysisAiDraft.model} onChange={(event) => {
+                  setAnalysisAiDraft({ ...analysisAiDraft, model: event.target.value });
+                  setAnalysisAiConfigState("idle");
+                }}>
+                  {(analysisAiConfig.providers.find((provider) => provider.id === analysisAiDraft.provider)?.models ?? []).map((model) => (
+                    <option value={model} key={model}>{model}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="secondary-button" type="button" disabled={analysisAiModelsState === "loading"} onClick={() => void refreshAnalysisAiModels()}>
+                {analysisAiModelsState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
+                Modelle live abrufen
+              </button>
+            </div>
+            <div className="config-controls">
+              <label>
+                API-Key
+                <input
+                  type="password"
+                  value={analysisAiDraft.apiKey}
+                  onChange={(event) => {
+                    setAnalysisAiDraft({ ...analysisAiDraft, apiKey: event.target.value });
+                    setAnalysisAiConfigState("idle");
+                  }}
+                  placeholder={analysisAiConfig.hasApiKey ? `Gespeichert: ${analysisAiConfig.keyHint}` : "Key einmalig eintragen"}
+                  autoComplete="off"
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={analysisAiConfigState === "saving"}>
+                {analysisAiConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
+                Analyse-AI speichern
+              </button>
+              <p className={analysisAiConfigState === "error" ? "config-status config-status--error" : "config-status"}>
+                {analysisAiConfigState === "saved" && "Gespeichert."}
+                {analysisAiConfigState === "error" && (analysisAiConfigError || "Konnte nicht gespeichert werden.")}
+                {analysisAiConfigState === "idle" && (analysisAiConfig.hasApiKey ? `Key hinterlegt: ${analysisAiConfig.keyHint}` : "Noch kein Key hinterlegt.")}
+              </p>
+              <p className={analysisAiModelsState === "error" ? "config-status config-status--error" : "config-status"}>
+                {analysisAiModelsState === "done" && "Analyse-Modellliste aktualisiert."}
+                {analysisAiModelsState === "error" && (analysisAiConfigError || "Live-Abruf fehlgeschlagen. Fallback-Liste bleibt aktiv.")}
+                {analysisAiModelsState === "idle" && "Live-Abruf erlaubt Text-Input/Text-Output Modelle."}
+              </p>
+            </div>
+          </form>
+          <form className="config-panel config-panel--page weekly-email-panel" aria-label="Weekly email configuration" onSubmit={saveWeeklyEmailSettings}>
+            <div className="config-copy">
+              <p className="eyebrow eyebrow--dark">
+                <Mail size={16} aria-hidden="true" />
+                E-Mail
+              </p>
+              <h2>Wochenmail</h2>
+              <p>Versand laeuft montags um 01:00 Uhr fuer die vorige Woche.</p>
+            </div>
+            <div className="config-controls">
+              <label>
+                Zieladresse
+                <input
+                  type="email"
+                  value={weeklyEmailDraft.targetEmail}
+                  onChange={(event) => {
+                    setWeeklyEmailDraft({ targetEmail: event.target.value });
+                    setWeeklyEmailConfigState("idle");
+                  }}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={weeklyEmailConfigState === "saving"}>
+                {weeklyEmailConfigState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
+                Wochenmail speichern
+              </button>
+              <p className={weeklyEmailConfigState === "error" ? "config-status config-status--error" : "config-status"}>
+                {weeklyEmailConfigState === "saved" && "Gespeichert."}
+                {weeklyEmailConfigState === "error" && (weeklyEmailConfigError || "Konnte nicht gespeichert werden.")}
+                {weeklyEmailConfigState === "idle" && (weeklyEmailConfig.targetEmail ? `Ziel: ${weeklyEmailConfig.targetEmail}` : "Noch keine Zieladresse hinterlegt.")}
               </p>
             </div>
           </form>
@@ -2329,6 +2598,42 @@ async function saveAiConfig(config: AiConfigDraft): Promise<AiConfig> {
   return normalizeAiConfig(data);
 }
 
+async function fetchAnalysisAiConfig(): Promise<AiConfig> {
+  const response = await fetch("/api/config/analysis-ai");
+  if (!response.ok) throw new Error("Analysis AI config request failed");
+  const data = (await response.json()) as Partial<AiConfig>;
+  return normalizeAiConfig(data);
+}
+
+async function saveAnalysisAiConfig(config: AiConfigDraft): Promise<AiConfig> {
+  const response = await fetch("/api/config/analysis-ai", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  const data = (await response.json()) as Partial<AiConfig> & { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Analysis AI config could not be saved");
+  return normalizeAiConfig(data);
+}
+
+async function fetchWeeklyEmailConfig(): Promise<WeeklyEmailConfig> {
+  const response = await fetch("/api/config/weekly-email");
+  if (!response.ok) throw new Error("Weekly email config request failed");
+  const data = (await response.json()) as Partial<WeeklyEmailConfig>;
+  return normalizeWeeklyEmailConfig(data);
+}
+
+async function saveWeeklyEmailConfig(config: WeeklyEmailConfigDraft): Promise<WeeklyEmailConfig> {
+  const response = await fetch("/api/config/weekly-email", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  const data = (await response.json()) as Partial<WeeklyEmailConfig> & { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Wochenmail konnte nicht gespeichert werden.");
+  return normalizeWeeklyEmailConfig(data);
+}
+
 async function fetchGarminConfig(): Promise<GarminConfig> {
   const response = await fetch("/api/config/garmin");
   if (!response.ok) throw new Error("Garmin config request failed");
@@ -2347,12 +2652,24 @@ async function saveGarminConfig(config: GarminConfigDraft): Promise<GarminConfig
   return normalizeGarminConfig(data);
 }
 
-async function fetchAiModels(provider: string): Promise<string[]> {
+async function fetchAiModels(provider: string, capability: "photo" | "analysis" = "photo"): Promise<string[]> {
   const params = new URLSearchParams({ provider });
+  params.set("capability", capability);
   const response = await fetch(`/api/ai/models?${params.toString()}`);
   const data = (await response.json()) as { models?: string[]; error?: string };
   if (!response.ok || !Array.isArray(data.models)) throw new Error(data.error ?? "Modelle konnten nicht geladen werden.");
   return data.models;
+}
+
+async function fetchWeeklyAiAnalysis(weekStart: string): Promise<WeeklyAiAnalysis> {
+  const response = await fetch("/api/ai/weekly-analysis", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ weekStart }),
+  });
+  const data = (await response.json()) as { analysis?: WeeklyAiAnalysis; error?: string };
+  if (!response.ok || !data.analysis) throw new Error(data.error ?? "Wochenanalyse fehlgeschlagen.");
+  return normalizeWeeklyAiAnalysis(data.analysis);
 }
 
 async function fetchGarminDailySummary(date: string, refresh = false): Promise<GarminDailySummary> {
@@ -2609,14 +2926,19 @@ function normalizeNutritionConfig(config: Partial<NutritionConfig> | undefined):
 }
 
 function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
-  const providers = Array.isArray(config?.providers) && config.providers.length > 0
+  const rawProviders = Array.isArray(config?.providers) && config.providers.length > 0
     ? config.providers
     : defaultAiConfig.providers;
-  const provider = providers.some((option) => option.id === config?.provider)
+  const provider = rawProviders.some((option) => option.id === config?.provider)
     ? String(config?.provider)
     : defaultAiConfig.provider;
-  const models = providers.find((option) => option.id === provider)?.models ?? defaultAiConfig.providers[0].models;
-  const model = models.includes(String(config?.model)) ? String(config?.model) : models[0];
+  const currentModels = rawProviders.find((option) => option.id === provider)?.models ?? defaultAiConfig.providers[0].models;
+  const modelFromConfig = typeof config?.model === "string" && config.model.trim() ? config.model.trim() : "";
+  const models = mergeModelsWithCurrent(currentModels, modelFromConfig);
+  const model = modelFromConfig || models[0];
+  const providers = rawProviders.map((option) =>
+    option.id === provider ? { ...option, models } : option,
+  );
 
   return {
     provider,
@@ -2625,6 +2947,45 @@ function normalizeAiConfig(config: Partial<AiConfig> | undefined): AiConfig {
     keyHint: String(config?.keyHint ?? ""),
     providers,
   };
+}
+
+function mergeModelsWithCurrent(models: string[], currentModel: string) {
+  const safeCurrentModel = currentModel.trim();
+  return [
+    ...(safeCurrentModel ? [safeCurrentModel] : []),
+    ...models,
+  ].filter((model, index, allModels) => model && allModels.indexOf(model) === index);
+}
+
+function normalizeWeeklyEmailConfig(config: Partial<WeeklyEmailConfig> | undefined): WeeklyEmailConfig {
+  return {
+    targetEmail: String(config?.targetEmail ?? ""),
+  };
+}
+
+function normalizeWeeklyAiAnalysis(analysis: WeeklyAiAnalysis): WeeklyAiAnalysis {
+  const signalLabel = ["gut", "okay", "schlecht"].includes(analysis.signal?.label)
+    ? analysis.signal.label
+    : "okay";
+
+  return {
+    ...analysis,
+    weekStart: String(analysis.weekStart ?? selectedFallbackWeekStart()),
+    weekEnd: String(analysis.weekEnd ?? selectedFallbackWeekStart()),
+    goalLabel: String(analysis.goalLabel ?? "Normal"),
+    signal: {
+      label: signalLabel as WeeklyAiSignal["label"],
+      score: Number(analysis.signal?.score ?? 0),
+      message: String(analysis.signal?.message ?? ""),
+    },
+    aiText: String(analysis.aiText ?? ""),
+    provider: String(analysis.provider ?? ""),
+    model: String(analysis.model ?? ""),
+  };
+}
+
+function selectedFallbackWeekStart() {
+  return getWeekStart(todayLocal());
 }
 
 function normalizeGarminConfig(config: Partial<GarminConfig> | undefined): GarminConfig {
@@ -2789,6 +3150,12 @@ function confidenceLabel(value: FoodImageAnalysis["confidence"]) {
   if (value === "high") return "hoch";
   if (value === "low") return "niedrig";
   return "mittel";
+}
+
+function trafficLightLabel(value: WeeklyAiSignal["label"]) {
+  if (value === "gut") return "Gut";
+  if (value === "schlecht") return "Schlecht";
+  return "Okay";
 }
 
 function readFileAsDataUrl(file: File) {
