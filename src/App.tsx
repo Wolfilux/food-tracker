@@ -1326,6 +1326,50 @@ function App() {
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
           </section>
 
+          <section className="weekly-chart-grid" aria-label="Wochendiagramme">
+            <WeeklyBarChart
+              title="Kalorien"
+              suffix="kcal"
+              points={weekAnalysis.map((day) => ({
+                date: day.date,
+                actual: day.totals.calories,
+                target: day.calorieTarget,
+                entryCount: day.entryCount,
+                hasError: Boolean(day.garminError),
+              }))}
+            />
+            <WeeklyBarChart
+              title="Protein"
+              suffix="g"
+              points={weekAnalysis.map((day) => ({
+                date: day.date,
+                actual: day.totals.protein,
+                target: day.macroTargets.protein.grams,
+                entryCount: day.entryCount,
+              }))}
+            />
+            <WeeklyBarChart
+              title="Kohlenhydrate"
+              suffix="g"
+              points={weekAnalysis.map((day) => ({
+                date: day.date,
+                actual: day.totals.carbs,
+                target: day.macroTargets.carbs.grams,
+                entryCount: day.entryCount,
+              }))}
+            />
+            <WeeklyBarChart
+              title="Fett"
+              suffix="g"
+              points={weekAnalysis.map((day) => ({
+                date: day.date,
+                actual: day.totals.fat,
+                target: day.macroTargets.fat.grams,
+                entryCount: day.entryCount,
+              }))}
+            />
+          </section>
+
           <section className="week-analysis-grid" aria-label="Tagesanalyse">
             {weekAnalysis.map((day) => (
               <DayAnalysisCard key={day.date} day={day} isSelected={day.date === selectedDate} onSelectDate={setSelectedDate} />
@@ -1921,6 +1965,65 @@ function AnalysisSummaryMetric({ label, actual, target, suffix }: { label: strin
       <p className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
         {formatSignedNumber(delta)} {suffix} vs. Ziel
       </p>
+    </article>
+  );
+}
+
+type WeeklyChartPoint = {
+  date: string;
+  actual: number;
+  target: number;
+  entryCount: number;
+  hasError?: boolean;
+};
+
+function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: string; points: WeeklyChartPoint[] }) {
+  const chartMax = Math.max(1, ...points.flatMap((point) => [point.actual, point.target])) * 1.12;
+  const totalDelta = Math.round(points.reduce((sum, point) => sum + point.actual - point.target, 0));
+
+  return (
+    <article className="weekly-chart-card">
+      <div className="weekly-chart-card__head">
+        <span>{title}</span>
+        <strong className={totalDelta > 0 ? "delta delta--over" : totalDelta < 0 ? "delta delta--under" : "delta"}>
+          {formatSignedNumber(totalDelta)} {suffix}
+        </strong>
+      </div>
+      <div className="weekly-bar-chart" role="list" aria-label={`${title} Mo bis So`}>
+        {points.map((point) => {
+          const actual = Math.round(point.actual);
+          const target = Math.round(point.target);
+          const delta = actual - target;
+          const actualHeight = Math.max(3, Math.round((point.actual / chartMax) * 100));
+          const targetPosition = Math.min(100, Math.max(0, Math.round((point.target / chartMax) * 100)));
+          const isOver = delta > 0;
+
+          return (
+            <div className="weekly-bar-day" role="listitem" key={`${title}-${point.date}`}>
+              <div
+                className={isOver ? "weekly-bar weekly-bar--over" : "weekly-bar weekly-bar--under"}
+                aria-label={`${formatWeekdayShort(point.date)}: ${actual} von ${target} ${suffix}`}
+              >
+                <span className="weekly-bar__fill" style={{ height: `${actualHeight}%` }} />
+                <span className="weekly-bar__target" style={{ bottom: `${targetPosition}%` }} />
+              </div>
+              <div className="weekly-bar-day__label">
+                <strong>{formatWeekdayShort(point.date)}</strong>
+                <small>{actual.toLocaleString("de-DE")}/{target.toLocaleString("de-DE")}</small>
+                <em className={isOver ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
+                  {formatSignedNumber(delta)}
+                </em>
+                {point.hasError && <small className="weekly-bar-day__error">Garmin</small>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="weekly-chart-legend" aria-hidden="true">
+        <span><i className="weekly-chart-legend__under" />unter Ziel</span>
+        <span><i className="weekly-chart-legend__over" />über Ziel</span>
+        <span><i className="weekly-chart-legend__target" />Ziel</span>
+      </div>
     </article>
   );
 }
@@ -2717,6 +2820,10 @@ function formatDateLabel(value: string) {
 
 function formatWeekday(value: string) {
   return new Intl.DateTimeFormat("de-DE", { weekday: "long" }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatWeekdayShort(value: string) {
+  return new Intl.DateTimeFormat("de-DE", { weekday: "short" }).format(new Date(`${value}T12:00:00`)).replace(".", "");
 }
 
 function formatWeekRange(dates: string[]) {
