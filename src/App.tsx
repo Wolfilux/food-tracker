@@ -213,21 +213,13 @@ const defaultAiConfig: AiConfig = {
       id: "openrouter",
       label: "OpenRouter",
       models: [
-        "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v3.2",
-        "deepseek/deepseek-chat-v3.1",
         "openai/gpt-5.5-pro",
         "openai/gpt-5.5",
-        "openai/gpt-5.4-nano",
-        "openai/gpt-5.4-mini",
-        "openai/gpt-5.4-pro",
-        "openai/gpt-5.4",
         "openai/gpt-5.4-image-2",
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4",
         "openai/gpt-5-mini",
         "openai/gpt-5",
-        "openai/gpt-4.1-mini",
-        "openai/gpt-4o-mini",
         "google/gemini-3.5-flash",
         "google/gemini-3.1-pro-preview",
         "google/gemini-3.1-flash-lite",
@@ -243,7 +235,7 @@ const defaultAiConfig: AiConfig = {
         "meta-llama/llama-4-maverick",
         "meta-llama/llama-4-scout",
         "qwen/qwen2.5-vl-72b-instruct",
-        "mistralai/mistral-medium-3",
+        "mistralai/mistral-medium-3-5",
       ],
     },
   ],
@@ -1561,7 +1553,7 @@ function App() {
               <p className={aiModelsState === "error" ? "config-status config-status--error" : "config-status"}>
                 {aiModelsState === "done" && "Modellliste aktualisiert."}
                 {aiModelsState === "error" && (aiConfigError || "Live-Abruf fehlgeschlagen. Fallback-Liste bleibt aktiv.")}
-                {aiModelsState === "idle" && "Live-Abruf aktualisiert die Modellliste des gewaehlten Anbieters."}
+                {aiModelsState === "idle" && "Live-Abruf zeigt nur Modelle, die Bild-Input fuer Fotoanalyse melden."}
               </p>
             </div>
           </form>

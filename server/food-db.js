@@ -44,21 +44,13 @@ const aiProviders = new Map([
     endpoint: "https://openrouter.ai/api/v1/chat/completions",
     modelsEndpoint: "https://openrouter.ai/api/v1/models",
     models: [
-      "deepseek/deepseek-v4-pro",
-      "deepseek/deepseek-v4-flash",
-      "deepseek/deepseek-v3.2",
-      "deepseek/deepseek-chat-v3.1",
       "openai/gpt-5.5-pro",
       "openai/gpt-5.5",
-      "openai/gpt-5.4-nano",
-      "openai/gpt-5.4-mini",
-      "openai/gpt-5.4-pro",
-      "openai/gpt-5.4",
       "openai/gpt-5.4-image-2",
+      "openai/gpt-5.4-mini",
+      "openai/gpt-5.4",
       "openai/gpt-5-mini",
       "openai/gpt-5",
-      "openai/gpt-4.1-mini",
-      "openai/gpt-4o-mini",
       "google/gemini-3.5-flash",
       "google/gemini-3.1-pro-preview",
       "google/gemini-3.1-flash-lite",
@@ -74,7 +66,7 @@ const aiProviders = new Map([
       "meta-llama/llama-4-maverick",
       "meta-llama/llama-4-scout",
       "qwen/qwen2.5-vl-72b-instruct",
-      "mistralai/mistral-medium-3",
+      "mistralai/mistral-medium-3-5",
     ],
   }],
 ]);
@@ -1370,9 +1362,9 @@ function parseOpenRouterModels(payload) {
     .filter((model) => {
       const inputModalities = model?.architecture?.input_modalities;
       const outputModalities = model?.architecture?.output_modalities;
-      const supportsTextInput = !Array.isArray(inputModalities) || inputModalities.includes("text");
+      const supportsImageInput = Array.isArray(inputModalities) && inputModalities.includes("image");
       const supportsTextOutput = !Array.isArray(outputModalities) || outputModalities.includes("text");
-      return supportsTextInput && supportsTextOutput;
+      return supportsImageInput && supportsTextOutput;
     })
     .map((model) => String(model?.id ?? ""))
     .filter(isSafeModelId)
