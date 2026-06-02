@@ -184,11 +184,13 @@ h1 {
 }
 
 .view-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 14px 0;
   padding: 6px;
-  width: fit-content;
+  width: 100%;
+  max-width: 760px;
   background: rgba(255, 250, 240, 0.92);
   border: 1px solid rgba(23, 33, 27, 0.12);
   border-radius: var(--radius);
@@ -199,6 +201,7 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  min-width: 0;
   min-height: 40px;
   padding: 8px 13px;
   color: #425045;
@@ -206,6 +209,9 @@ h1 {
   border: 0;
   border-radius: 7px;
   font-weight: 850;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .view-tab--active {
@@ -1590,11 +1596,20 @@ button:focus-visible {
   }
 
   .view-tabs {
+    gap: 4px;
     width: 100%;
   }
 
   .view-tab {
-    flex: 1;
+    gap: 5px;
+    padding: 8px 5px;
+    font-size: 0.82rem;
+  }
+
+  .view-tab svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
   }
 
   .metric-grid,
