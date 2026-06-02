@@ -2009,7 +2009,10 @@ function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: stri
               </div>
               <div className="weekly-bar-day__label">
                 <strong>{formatWeekdayShort(point.date)}</strong>
-                <small>{actual.toLocaleString("de-DE")}/{target.toLocaleString("de-DE")}</small>
+                <span className="weekly-bar-day__values">
+                  <small>{actual.toLocaleString("de-DE")}</small>
+                  <small>Z {target.toLocaleString("de-DE")}</small>
+                </span>
                 <em className={isOver ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
                   {formatSignedNumber(delta)}
                 </em>

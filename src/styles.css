@@ -484,14 +484,13 @@ h1 {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  align-items: end;
-  min-height: 236px;
+  align-items: start;
   padding-top: 4px;
 }
 
 .weekly-bar-day {
   display: grid;
-  grid-template-rows: 156px auto;
+  grid-template-rows: 156px 74px;
   gap: 8px;
   min-width: 0;
 }
@@ -544,7 +543,10 @@ h1 {
 
 .weekly-bar-day__label {
   display: grid;
-  gap: 1px;
+  grid-template-rows: 18px 28px 18px;
+  gap: 2px;
+  align-content: start;
+  height: 74px;
   min-width: 0;
   text-align: center;
 }
@@ -556,18 +558,26 @@ h1 {
   text-transform: uppercase;
 }
 
+.weekly-bar-day__values {
+  display: grid;
+  grid-template-rows: repeat(2, 1fr);
+  min-width: 0;
+}
+
 .weekly-bar-day__label small,
 .weekly-bar-day__label em,
 .weekly-bar-day__error {
-  overflow-wrap: anywhere;
   font-size: 0.7rem;
   font-style: normal;
   font-weight: 800;
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .weekly-bar-day__label small {
   color: #627064;
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .weekly-bar-day__error {
@@ -1629,16 +1639,32 @@ button:focus-visible {
 
   .weekly-bar-chart {
     gap: 5px;
-    min-height: 214px;
   }
 
   .weekly-bar-day {
-    grid-template-rows: 140px auto;
+    grid-template-rows: 140px 72px;
     gap: 7px;
   }
 
   .weekly-bar {
     height: 140px;
+  }
+
+  .weekly-bar-day__label {
+    grid-template-rows: 17px 28px 17px;
+    height: 72px;
+  }
+
+  .weekly-bar-day__label strong {
+    font-size: 0.72rem;
+  }
+
+  .weekly-bar-day__label em {
+    font-size: 0.66rem;
+  }
+
+  .weekly-bar-day__label small {
+    font-size: 0.55rem;
   }
 
   .entry-mode-tabs {
