@@ -1,7 +1,11 @@
 import { FormEvent, KeyboardEvent, ReactNode, Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  BarChart3,
   Camera,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Database,
   Download,
@@ -12,6 +16,7 @@ import {
   MessageSquareText,
   Pencil,
   Plus,
+  RefreshCw,
   Scale,
   Search,
   Settings,
@@ -25,7 +30,7 @@ import {
 } from "lucide-react";
 
 type Unit = "g" | "kg";
-type AppView = "tracker" | "settings";
+type AppView = "tracker" | "analysis" | "settings";
 type EntryMode = "search" | "photo" | "text" | "meal";
 
 type FoodEntry = {
@@ -540,7 +545,9 @@ function App() {
   const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
+  const [weekGarminSummaries, setWeekGarminSummaries] = useState<Record<string, GarminDailySummary>>({});
   const [garminState, setGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [weekGarminState, setWeekGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [garminConfigState, setGarminConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [garminConfigError, setGarminConfigError] = useState("");
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
@@ -550,6 +557,8 @@ function App() {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const selectedWeekStart = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
+  const weekDates = useMemo(() => buildWeekDates(selectedWeekStart), [selectedWeekStart]);
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.consumedAt.slice(0, 10) === selectedDate),
@@ -589,6 +598,27 @@ function App() {
   const garminCalorieGoal = garminSummary?.configured && garminSummary.totalKilocalories ? garminSummary.totalKilocalories : null;
   const effectiveCalorieGoal = garminCalorieGoal ?? nutritionConfig.calorieGoal;
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
+  const weekAnalysis = useMemo(
+    () => buildWeekAnalysis(weekDates, entries, nutritionConfig.calorieGoal, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}),
+    [entries, hasGarminCredentials, nutritionConfig.calorieGoal, selectedPreset, weekDates, weekGarminSummaries],
+  );
+  const weekSummary = useMemo(
+    () =>
+      weekAnalysis.reduce(
+        (sum, day) => ({
+          calories: sum.calories + day.totals.calories,
+          calorieTarget: sum.calorieTarget + day.calorieTarget,
+          protein: sum.protein + day.totals.protein,
+          proteinTarget: sum.proteinTarget + day.macroTargets.protein.grams,
+          carbs: sum.carbs + day.totals.carbs,
+          carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
+          fat: sum.fat + day.totals.fat,
+          fatTarget: sum.fatTarget + day.macroTargets.fat.grams,
+        }),
+        { calories: 0, calorieTarget: 0, protein: 0, proteinTarget: 0, carbs: 0, carbsTarget: 0, fat: 0, fatTarget: 0 },
+      ),
+    [weekAnalysis],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -676,6 +706,58 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [hasGarminCredentials, isConfigLoaded, selectedDate]);
+
+  useEffect(() => {
+    if (!isConfigLoaded || activeView !== "analysis") return;
+    if (!hasGarminCredentials) return;
+
+    let isMounted = true;
+    const timeoutId = window.setTimeout(() => {
+      setWeekGarminState("loading");
+      void Promise.all(weekDates.map((date) => fetchGarminDailySummary(date).catch((error) => ({
+        configured: true,
+        date,
+        source: "garmin-connect",
+        error: error instanceof Error ? error.message : "Garmin konnte nicht abgefragt werden.",
+      } satisfies GarminDailySummary))))
+        .then((summaries) => {
+          if (!isMounted) return;
+          setWeekGarminSummaries((currentSummaries) => ({
+            ...currentSummaries,
+            ...Object.fromEntries(summaries.map((summary) => [summary.date, summary])),
+          }));
+          setWeekGarminState(summaries.some((summary) => summary.error) ? "error" : "done");
+        })
+        .catch(() => {
+          if (isMounted) setWeekGarminState("error");
+        });
+    }, 0);
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeView, hasGarminCredentials, isConfigLoaded, weekDates]);
+
+  const refreshWeekGarminSummaries = useCallback(async () => {
+    if (!hasGarminCredentials) return;
+    setWeekGarminState("loading");
+    try {
+      const summaries = await Promise.all(weekDates.map((date) => fetchGarminDailySummary(date, true).catch((error) => ({
+        configured: true,
+        date,
+        source: "garmin-connect",
+        error: error instanceof Error ? error.message : "Garmin konnte nicht abgefragt werden.",
+      } satisfies GarminDailySummary))));
+      setWeekGarminSummaries((currentSummaries) => ({
+        ...currentSummaries,
+        ...Object.fromEntries(summaries.map((summary) => [summary.date, summary])),
+      }));
+      setWeekGarminState(summaries.some((summary) => summary.error) ? "error" : "done");
+    } catch {
+      setWeekGarminState("error");
+    }
+  }, [hasGarminCredentials, weekDates]);
 
   const searchFoods = useCallback(async (searchTerm = draft.foodName.trim(), signal?: AbortSignal) => {
     const trimmedQuery = searchTerm.trim();
@@ -1197,11 +1279,60 @@ function App() {
           <Utensils size={17} aria-hidden="true" />
           Protokoll
         </button>
+        <button className={activeView === "analysis" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("analysis")}>
+          <BarChart3 size={17} aria-hidden="true" />
+          Analyse
+        </button>
         <button className={activeView === "settings" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("settings")}>
           <Settings size={17} aria-hidden="true" />
           Konfiguration
         </button>
       </nav>
+
+      {activeView === "analysis" && (
+        <section className="analysis-page" aria-label="Wochenanalyse">
+          <section className="analysis-toolbar">
+            <div>
+              <p className="eyebrow eyebrow--dark">
+                <CalendarDays size={16} aria-hidden="true" />
+                Wochenansicht
+              </p>
+              <h2>{formatWeekRange(weekDates)}</h2>
+              <span>{weekAnalysis.reduce((sum, day) => sum + day.entryCount, 0)} Einträge · {formatSignedNumber(weekSummary.calories - weekSummary.calorieTarget)} kcal Woche</span>
+            </div>
+            <div className="week-actions">
+              <button className="secondary-button" type="button" aria-label="Vorherige Woche" onClick={() => setSelectedDate(addDays(selectedWeekStart, -7))}>
+                <ChevronLeft size={18} aria-hidden="true" />
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setSelectedDate(todayLocal())}>
+                Heute
+              </button>
+              <button className="secondary-button" type="button" aria-label="Nächste Woche" onClick={() => setSelectedDate(addDays(selectedWeekStart, 7))}>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+              {hasGarminCredentials && (
+                <button className="secondary-button" type="button" disabled={weekGarminState === "loading"} onClick={() => void refreshWeekGarminSummaries()}>
+                  {weekGarminState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+                  Garmin
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section className="analysis-summary-grid" aria-label="Wochensummen">
+            <AnalysisSummaryMetric label="Kalorien" actual={weekSummary.calories} target={weekSummary.calorieTarget} suffix="kcal" />
+            <AnalysisSummaryMetric label="Protein" actual={weekSummary.protein} target={weekSummary.proteinTarget} suffix="g" />
+            <AnalysisSummaryMetric label="Kohlenhydrate" actual={weekSummary.carbs} target={weekSummary.carbsTarget} suffix="g" />
+            <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
+          </section>
+
+          <section className="week-analysis-grid" aria-label="Tagesanalyse">
+            {weekAnalysis.map((day) => (
+              <DayAnalysisCard key={day.date} day={day} isSelected={day.date === selectedDate} onSelectDate={setSelectedDate} />
+            ))}
+          </section>
+        </section>
+      )}
 
       {activeView === "settings" && (
         <section className="settings-page" aria-label="Nutrition configuration page">
@@ -1778,6 +1909,77 @@ function App() {
   );
 }
 
+function AnalysisSummaryMetric({ label, actual, target, suffix }: { label: string; actual: number; target: number; suffix: string }) {
+  const roundedActual = Math.round(actual);
+  const roundedTarget = Math.round(target);
+  const delta = roundedActual - roundedTarget;
+
+  return (
+    <article className="analysis-summary-card">
+      <span>{label}</span>
+      <strong>{roundedActual.toLocaleString("de-DE")} <small>{suffix}</small></strong>
+      <p className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
+        {formatSignedNumber(delta)} {suffix} vs. Ziel
+      </p>
+    </article>
+  );
+}
+
+function DayAnalysisCard({
+  day,
+  isSelected,
+  onSelectDate,
+}: {
+  day: WeekAnalysisDay;
+  isSelected: boolean;
+  onSelectDate: (date: string) => void;
+}) {
+  const calorieDelta = day.totals.calories - day.calorieTarget;
+
+  return (
+    <article className={isSelected ? "day-analysis-card day-analysis-card--selected" : "day-analysis-card"}>
+      <button className="day-analysis-card__head" type="button" onClick={() => onSelectDate(day.date)}>
+        <span>
+          <strong>{formatWeekday(day.date)}</strong>
+          <small>{formatDateLabel(day.date)}</small>
+        </span>
+        <b className={calorieDelta > 0 ? "delta-pill delta-pill--over" : calorieDelta < 0 ? "delta-pill delta-pill--under" : "delta-pill"}>
+          {formatSignedNumber(calorieDelta)} kcal
+        </b>
+      </button>
+      <div className="calorie-bar" aria-label={`${day.totals.calories} von ${day.calorieTarget} Kalorien`}>
+        <span style={{ width: `${Math.min(130, Math.round((day.totals.calories / day.calorieTarget) * 100))}%` }} />
+      </div>
+      <div className="day-analysis-card__meta">
+        <span>{day.totals.calories.toLocaleString("de-DE")} / {day.calorieTarget.toLocaleString("de-DE")} kcal</span>
+        <span>{day.entryCount} Einträge</span>
+      </div>
+      <div className="daily-macro-list">
+        <MacroDelta label="Protein" actual={day.totals.protein} target={day.macroTargets.protein.grams} />
+        <MacroDelta label="Kohlenhydrate" actual={day.totals.carbs} target={day.macroTargets.carbs.grams} />
+        <MacroDelta label="Fett" actual={day.totals.fat} target={day.macroTargets.fat.grams} />
+      </div>
+      {day.garminError && <p className="day-analysis-card__error">Garmin Sync fehlgeschlagen</p>}
+    </article>
+  );
+}
+
+function MacroDelta({ label, actual, target }: { label: string; actual: number; target: number }) {
+  const roundedActual = Math.round(actual);
+  const roundedTarget = Math.round(target);
+  const delta = roundedActual - roundedTarget;
+
+  return (
+    <div className="macro-delta">
+      <span>{label}</span>
+      <strong>{roundedActual.toLocaleString("de-DE")} / {roundedTarget.toLocaleString("de-DE")} g</strong>
+      <small className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
+        {formatSignedNumber(delta)} g
+      </small>
+    </div>
+  );
+}
+
 function Metric({ icon, label, value, suffix }: { icon: ReactNode; label: string; value: number | string; suffix: string }) {
   return (
     <article className="metric-card">
@@ -1925,6 +2127,62 @@ function buildEntryGroups(entries: FoodEntry[]) {
       entries: entriesForMeal,
     };
   });
+}
+
+type DayTotals = {
+  calories: number;
+  grams: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+};
+
+type WeekAnalysisDay = {
+  date: string;
+  entryCount: number;
+  totals: DayTotals;
+  calorieTarget: number;
+  macroTargets: ReturnType<typeof calculateMacroTargets>;
+  garminError?: string;
+};
+
+function buildWeekAnalysis(
+  dates: string[],
+  entries: FoodEntry[],
+  calorieGoal: number,
+  preset: MacroPreset,
+  garminSummaries: Record<string, GarminDailySummary>,
+): WeekAnalysisDay[] {
+  return dates.map((date) => {
+    const dayEntriesForDate = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
+    const totals = summarizeEntries(dayEntriesForDate);
+    const garminSummaryForDate = garminSummaries[date];
+    const calorieTarget = garminSummaryForDate?.configured && garminSummaryForDate.totalKilocalories
+      ? garminSummaryForDate.totalKilocalories
+      : calorieGoal;
+
+    return {
+      date,
+      entryCount: dayEntriesForDate.length,
+      totals,
+      calorieTarget,
+      macroTargets: calculateMacroTargets(calorieTarget, preset),
+      garminError: garminSummaryForDate?.error,
+    };
+  });
+}
+
+function summarizeEntries(entries: FoodEntry[]): DayTotals {
+  return entries.reduce(
+    (sum, entry) => ({
+      calories: sum.calories + caloriesFor(entry),
+      grams: sum.grams + gramsFor(entry),
+      protein: sum.protein + macroFor(entry, entry.proteinPer100g),
+      carbs: sum.carbs + macroFor(entry, entry.carbsPer100g),
+      fat: sum.fat + macroFor(entry, entry.fatPer100g),
+    }),
+    { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 },
+  );
 }
 
 async function fetchEntries(): Promise<FoodEntry[]> {
@@ -2416,6 +2674,23 @@ function NumberInput({ label, min, step, value, onChange, inputRef }: { label: s
   );
 }
 
+function getWeekStart(date: string) {
+  const dateObject = new Date(`${date}T12:00:00`);
+  const day = dateObject.getDay() || 7;
+  dateObject.setDate(dateObject.getDate() - day + 1);
+  return dateObject.toISOString().slice(0, 10);
+}
+
+function buildWeekDates(weekStart: string) {
+  return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+}
+
+function addDays(date: string, days: number) {
+  const dateObject = new Date(`${date}T12:00:00`);
+  dateObject.setDate(dateObject.getDate() + days);
+  return dateObject.toISOString().slice(0, 10);
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("de-DE", {
     day: "2-digit",
@@ -2440,6 +2715,17 @@ function formatDateLabel(value: string) {
   }).format(new Date(`${value}T12:00:00`));
 }
 
+function formatWeekday(value: string) {
+  return new Intl.DateTimeFormat("de-DE", { weekday: "long" }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatWeekRange(dates: string[]) {
+  const first = dates[0] ?? todayLocal();
+  const last = dates[dates.length - 1] ?? first;
+  const formatter = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit" });
+  return `${formatter.format(new Date(`${first}T12:00:00`))} - ${formatter.format(new Date(`${last}T12:00:00`))}`;
+}
+
 function formatQuantity(entry: Pick<FoodEntry, "quantityValue" | "quantityUnit">) {
   return `${entry.quantityValue.toLocaleString("de-DE")} ${entry.quantityUnit}`;
 }
@@ -2450,6 +2736,11 @@ function formatMacro(value: number) {
 
 function formatOptionalCalories(value: number | undefined) {
   return value === undefined ? "n/a" : `${value.toLocaleString("de-DE")} kcal`;
+}
+
+function formatSignedNumber(value: number) {
+  const rounded = Math.round(value);
+  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("de-DE")}`;
 }
 
 function confidenceLabel(value: FoodImageAnalysis["confidence"]) {

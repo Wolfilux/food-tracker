@@ -6,6 +6,7 @@ Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. D
 
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
 - Tagesziel mit Kalorien- und Makro-Fortschritt
+- Analyse-Seite mit Wochenansicht fuer Kalorien- und Makro-Ueber-/Unterdeckung pro Tag
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
 - Fotoanalyse fuer Beschreibung, ungefaehres Gewicht, Kalorien und Makros
 - AI-Textanalyse fuer freie Essensbeschreibungen wie Omelette mit Schinken und Pilzen
