@@ -1,81 +1,196 @@
 # Food Tracker
 
-Food Tracker ist eine Vite/React-App fuer ein taegliches Ernaehrungsprotokoll. Die App kombiniert manuelle Eintraege, SQLite-basierte Lebensmittelsuche, OpenFoodFacts-Fallback und eine optionale Fotoanalyse per LLM.
+Stand: 2026-06-03
+
+Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. Die App kombiniert manuelle Eintraege, Lebensmittelsuche, OpenFoodFacts-Fallback, KI-Fotoanalyse, KI-Textanalyse, Wochenanalyse, optionale Garmin-Connect-Werte und eine woechentliche Analyse-Mail.
+
+## Status
+
+- Branch: `dev`
+- Container-Image: `ghcr.io/wolfilux/food-tracker:dev`
+- Standard-Port im Container: `4173`
+- Persistente Daten: Docker-Volume auf `/app/data`
+- Live-Healthcheck: `/healthz`
 
 ## Features
 
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
 - Tagesziel mit Kalorien- und Makro-Fortschritt
-- Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien und Makros, Tagesziel-Markern und roter/gruener Ueber-/Unterdeckung
-- Manuelle KI-Wochenanalyse mit Ampel, Text-Einschaetzung und Optimierungsvorschlaegen
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
-- Fotoanalyse fuer Beschreibung, ungefaehres Gewicht, Kalorien und Makros
-- AI-Textanalyse fuer freie Essensbeschreibungen wie Omelette mit Schinken und Pilzen
-- Gemeinsame AI-Konfiguration mit einem sicher gespeicherten API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
+- Fotoanalyse fuer Beschreibung, geschaetztes Gewicht, Kalorien und Makros
+- Textanalyse fuer freie Essensbeschreibungen
+- Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate und Fett
+- Manuelle KI-Wochenanalyse mit Ampel, Text-Einschaetzung und Optimierungsvorschlaegen
+- Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
+- Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
-- Live-Modellabruf ueber Provider-APIs
-- Rohspeicherung von AI-Usage-Daten am Fotoeintrag
 - Optionaler Garmin-Connect-Abruf fuer den echten Tagesverbrauch als dynamisches Kalorienziel
+- Backup-Import und -Export ueber die Weboberflaeche
 - Progressive Web App fuer iPhone Home-Screen-Nutzung
 
-## Architecture
+## Architektur
 
 - Frontend: React + Vite
-- Backend: Vite Middleware unter `server/`
-- Storage: lokale SQLite-Datei unter `data/`
-- Secrets: API-Keys werden serverseitig mit AES-GCM verschluesselt und nicht im Browser gespeichert
-- AI Usage: Token-/Kosten-Rohwerte werden als JSON am Eintrag gespeichert; OpenRouter-Generation-Stats bleiben unveraendert fuer spaetere Auswertung erhalten
-- Garmin: optionale serverseitige Garmin-Connect-Anbindung; Login-Daten werden in der WebUI gepflegt, verschluesselt gespeichert und Tokens im persistenten `data/`-Volume wiederverwendet
-- Wochenmail: SMTP wird per Env konfiguriert; Zieladresse wird in der WebUI gepflegt, die Analyse nutzt den gemeinsamen AI-Key
-- PWA: `manifest.webmanifest`, App-Icons und Service Worker unter `public/`
+- Backend: Node/Vite-Middleware unter `server/`
+- Storage: lokale SQLite-Datei unter `/app/data`
+- Secrets: API-Keys und Garmin-Zugangsdaten werden serverseitig verschluesselt gespeichert
+- AI Usage: Token-/Kosten-Rohwerte bleiben als JSON am Eintrag erhalten
+- SMTP: Serverdaten kommen aus Env-Variablen, Zieladresse aus der Weboberflaeche
+- PWA: Manifest, Icons und Service Worker liegen unter `public/`
 
-## Security Baseline
+## Lokale Entwicklung
 
-- Do not commit \`.env\` files or credentials.
-- Keep real API keys, tokens, database URLs, and passwords out of the repository.
-- Use \`.env.example\` only for placeholder variable names.
-- Rotate any secret immediately if it is ever committed.
-
-## Development
-
-~~~bash
+```bash
 npm install
 npm run dev
-npm run build
+```
+
+Wichtige Checks vor Aenderungen am Release-Branch:
+
+```bash
 npm run lint
+npm run build
 npm run security:scan
-~~~
+```
 
-Before pushing, run `npm run security:scan`. The local checkout also installs a Git pre-push hook for this scan.
+Der Security-Scan prueft unter anderem, dass keine `.env`-Dateien oder offensichtlichen Secrets ins Repository geraten.
 
-## Docker / Portainer
+## Installation mit Docker
 
-The repository includes a production `Dockerfile` and `docker-compose.yml`. The container serves the built PWA and the SQLite API from one Node process.
+Build aus dem lokalen Checkout:
 
-~~~bash
+```bash
 docker build -t food-tracker:local .
-docker run --rm -p 4173:4173 -v food-tracker-data:/app/data food-tracker:local
-~~~
+docker volume create food-tracker-data
+docker run --rm \
+  -p 4173:4173 \
+  -v food-tracker-data:/app/data \
+  -e NODE_ENV=production \
+  -e HOST=0.0.0.0 \
+  -e PORT=4173 \
+  food-tracker:local
+```
 
-Default URL: `http://localhost:4173`
+Danach ist die App auf dem Docker-Host unter Port `4173` erreichbar. Der Healthcheck liegt auf `/healthz`.
 
-Persistent files live in the named Docker volume `food-tracker-data`, mounted at `/app/data`. This stores the SQLite database and the local encryption key used for saved AI provider credentials. Do not delete or recreate this volume unless you intentionally want to reset the app data and saved API keys.
+Wichtig: Das Volume `food-tracker-data` speichert die SQLite-Datenbank und den lokalen Verschluesselungs-Key fuer gespeicherte KI- und Garmin-Zugangsdaten. Dieses Volume nur loeschen, wenn die App absichtlich zurueckgesetzt werden soll.
 
-Optional Garmin Connect:
+## Installation mit Docker Compose
 
-Configure Garmin in the app under `Konfiguration -> Garmin`. The app stores the login server-side with the same encrypted local secret storage used for AI credentials. When configured, `/api/garmin/daily-summary?date=YYYY-MM-DD` reads Garmin's daily calories burned and the frontend uses that value as the day's calorie target. If Garmin is not configured or the login fails, the app falls back to the manually configured calorie target.
+```bash
+docker compose up -d
+docker compose logs -f food-tracker
+```
 
-Optional weekly email:
+Die enthaltene `docker-compose.yml` nutzt das Image `ghcr.io/wolfilux/food-tracker:dev`, Port `4173:4173` und das Volume `food-tracker-data:/app/data`.
 
-Set SMTP in Docker, Portainer, or `.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`. Configure the recipient in the app under `Konfiguration -> Wochenmail` and store the shared AI key under `Konfiguration -> KI-Konfiguration`. If SMTP, recipient, or AI key is missing, the scheduler logs a no-op and keeps running.
+Optionale SMTP-Variablen:
 
-For Portainer, use the repository as a Git stack. The compose file pulls `ghcr.io/wolfilux/food-tracker:dev`, which is published by GitHub Actions after the quality gate passes. The exposed host port is `4173`; change the left side of `4173:4173` if the host already uses that port.
+```env
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=Food Tracker <food-tracker@example.com>
+```
+
+Wenn `SMTP_HOST`, Empfaengeradresse oder KI-Key fehlen, laeuft der Scheduler weiter und ueberspringt nur den Mailversand.
+
+## Installation in Portainer
+
+Empfohlener Weg: Portainer Git Stack.
+
+1. In Portainer `Stacks -> Add stack` oeffnen.
+2. `Repository` als Build-Methode waehlen.
+3. Repository auf das Food-Tracker-Repo setzen.
+4. Branch `dev` auswaehlen.
+5. Compose-Pfad `docker-compose.yml` verwenden.
+6. Env-Variablen fuer SMTP setzen, falls Wochenmails verschickt werden sollen.
+7. Stack deployen.
+8. Nach dem Deploy pruefen, ob der Container `healthy` ist und `/healthz` `{"ok":true}` liefert.
+
+Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen wird. Wenn Portainer ein altes Image cached, das Image `ghcr.io/wolfilux/food-tracker:dev` vorher explizit pullen oder den Stack mit Pull-Option neu deployen.
+
+## Erste Einrichtung
+
+1. App im Browser oeffnen.
+2. `Konfiguration -> Tagesziel` setzen: Kalorienziel und Makro-Preset.
+3. `Konfiguration -> KI-Konfiguration` setzen:
+   - Provider auswaehlen
+   - API-Key speichern
+   - Foto-Modell auswaehlen
+   - Analyse-Modell auswaehlen
+4. Optional `Konfiguration -> Garmin` setzen:
+   - Garmin-Benutzer und Passwort speichern
+   - Auto-Sync-Intervall auswaehlen oder manuell abrufen
+5. Optional `Konfiguration -> Wochenmail` setzen:
+   - Zieladresse speichern
+   - SMTP muss zusaetzlich in Docker/Portainer per Env konfiguriert sein
+6. Optional im Browser als PWA installieren.
+
+## Kurze Nutzeranleitung
+
+### Tagesprotokoll
+
+- Im Tab `Protokoll` Lebensmittel suchen oder manuell erfassen.
+- Menge, Einheit und Uhrzeit pruefen.
+- Eintrag speichern.
+- Bei Bedarf Foto hochladen oder eine freie Essensbeschreibung per KI analysieren lassen.
+
+### Analyse
+
+- Im Tab `Analyse` die Woche wechseln.
+- Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
+- Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
+- `KI-Analyse` erzeugt eine Ampel und eine kurze Wochenbewertung.
+- `Garmin` aktualisiert die Tagesverbrauchswerte, falls Garmin konfiguriert ist.
+
+### Konfiguration
+
+- Tagesziel und Makro-Preset bestimmen die Basisziele.
+- Garmin kann das Kalorienziel pro Tag durch den echten Tagesverbrauch ersetzen.
+- Die KI-Konfiguration nutzt einen gemeinsamen API-Key, aber separate Modelle fuer Fotoanalyse und Wochenanalyse.
+- Wochenmail versendet automatisch montags um 01:00 Uhr Europe/Berlin die Analyse der Vorwoche, wenn SMTP, Zieladresse und KI-Key vorhanden sind.
+
+### Backup
+
+- Unter `Konfiguration -> Backup` kann die App-Datenbank exportiert und wieder importiert werden.
+- Vor riskanten Updates oder groesseren Tests immer ein Backup exportieren.
 
 ## iPhone PWA
 
-1. Dev- oder Produktiv-URL in Safari oeffnen.
+1. App-URL in Safari oeffnen.
 2. Teilen-Menue oeffnen.
-3. "Zum Home-Bildschirm" auswaehlen.
+3. `Zum Home-Bildschirm` auswaehlen.
 4. App vom Home-Screen starten.
 
 Die PWA nutzt `display: standalone`, iOS-Meta-Tags, Touch-Icons, sichere Viewport-Inset-Abstaende und einen Service Worker fuer App-Shell-Caching. API-Aufrufe bleiben online und werden nicht gecached.
+
+## Roadmap
+
+Eine Roadmap in der README ist sinnvoll als leichter Feature-Parkplatz. Verbindliche Umsetzung gehoert aber in Jira, und abgeschlossene Tickets gehoeren zusaetzlich nach Confluence.
+
+Aktuelle Ideen:
+
+- Kosten-/Token-Auswertung der gespeicherten AI-Usage-Daten
+- Wochenanalyse als Verlauf speichern und in der UI wieder anzeigen
+- Manuelle Testmail fuer die Wochenmail-Konfiguration
+- Bessere Import-/Export-Historie mit Zeitstempel und Dateigroesse
+- Mobile Feinschliffe fuer lange Modellnamen und kleine Displays
+- Optionaler Mehrbenutzer-Modus
+- Dashboard fuer Garmin-Sync-Status und letzte Fehler
+
+## Betriebshinweise
+
+- Keine `.env`-Dateien oder echten Secrets committen.
+- API-Keys und Garmin-Credentials werden verschluesselt im Datenvolume gespeichert.
+- Beim Wechsel des Datenvolumes gehen gespeicherte Zugangsdaten und Eintraege verloren.
+- Nach Deploys immer `/healthz` pruefen.
+- Bei Wochenmail-Problemen zuerst SMTP-Env, Zieladresse und KI-Key pruefen.
+- Bei Garmin-Problemen Credentials, MFA/Tokenstatus und Sync-Fehler in der UI pruefen.
+
+## Confluence
+
+Die generelle Produkt- und Betriebsdoku liegt in Confluence im Space `S6SDOC` unter `Food Tracker`.
+Ticketbezogene Aenderungen werden separat als OP-Seiten unter `Jira Tickets & Incidents` dokumentiert.

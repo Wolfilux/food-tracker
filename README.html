@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Food Tracker README</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211b;
+      --muted: #5c665f;
+      --line: #d7ddd8;
+      --panel: #f6f7f4;
+      --accent: #236245;
+      --accent-soft: #e4f0e8;
+      --warn: #9a6b16;
+      --white: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      color: var(--ink);
+      background: #eef1ec;
+    }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 40px 20px 56px;
+    }
+
+    .hero {
+      padding: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.18;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.4rem);
+    }
+
+    h2 {
+      margin-top: 34px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 1.55rem;
+    }
+
+    h3 {
+      margin-top: 22px;
+      font-size: 1.05rem;
+    }
+
+    p {
+      margin: 12px 0;
+    }
+
+    .stand {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-size: .78rem;
+    }
+
+    .lead {
+      max-width: 780px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+    }
+
+    .panel--soft {
+      background: var(--panel);
+    }
+
+    ul,
+    ol {
+      padding-left: 1.35rem;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e8ece8;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101915;
+      color: #eef8f0;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      background: var(--accent-soft);
+    }
+
+    .roadmap li::marker {
+      color: var(--warn);
+    }
+
+    @media (max-width: 760px) {
+      main {
+        padding: 20px 12px 40px;
+      }
+
+      .hero {
+        padding: 24px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <p class="stand">Stand: 2026-06-03</p>
+      <h1>Food Tracker</h1>
+      <p class="lead">React/Vite-App fuer ein taegliches Ernaehrungsprotokoll mit manuellen Eintraegen, Lebensmittelsuche, KI-Fotoanalyse, Wochenanalyse, optionalen Garmin-Werten und woechentlicher Analyse-Mail.</p>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Status</h2>
+        <ul>
+          <li>Branch: <code>dev</code></li>
+          <li>Container-Image: <code>ghcr.io/wolfilux/food-tracker:dev</code></li>
+          <li>Standard-Port im Container: <code>4173</code></li>
+          <li>Persistente Daten: Docker-Volume auf <code>/app/data</code></li>
+          <li>Live-Healthcheck: <code>/healthz</code></li>
+        </ul>
+      </article>
+      <article class="panel panel--soft">
+        <h2>Architektur</h2>
+        <ul>
+          <li>Frontend: React + Vite</li>
+          <li>Backend: Node/Vite-Middleware unter <code>server/</code></li>
+          <li>Storage: SQLite-Datei unter <code>/app/data</code></li>
+          <li>Secrets: serverseitig verschluesselt</li>
+          <li>SMTP: Env-Variablen plus Zieladresse aus der Weboberflaeche</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Features</h2>
+      <ul>
+        <li>Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros</li>
+        <li>Tagesziel mit Kalorien- und Makro-Fortschritt</li>
+        <li>Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts</li>
+        <li>Fotoanalyse fuer Beschreibung, geschaetztes Gewicht, Kalorien und Makros</li>
+        <li>Textanalyse fuer freie Essensbeschreibungen</li>
+        <li>Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate und Fett</li>
+        <li>Manuelle KI-Wochenanalyse mit Ampel, Text-Einschaetzung und Optimierungsvorschlaegen</li>
+        <li>Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse</li>
+        <li>Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input</li>
+        <li>Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche</li>
+        <li>Optionaler Garmin-Connect-Abruf fuer den echten Tagesverbrauch als dynamisches Kalorienziel</li>
+        <li>Backup-Import und -Export ueber die Weboberflaeche</li>
+        <li>Progressive Web App fuer iPhone Home-Screen-Nutzung</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Lokale Entwicklung</h2>
+      <pre><code>npm install
+npm run dev</code></pre>
+      <p>Wichtige Checks vor Aenderungen am Release-Branch:</p>
+      <pre><code>npm run lint
+npm run build
+npm run security:scan</code></pre>
+      <p>Der Security-Scan prueft unter anderem, dass keine <code>.env</code>-Dateien oder offensichtlichen Secrets ins Repository geraten.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Installation mit Docker</h2>
+      <pre><code>docker build -t food-tracker:local .
+docker volume create food-tracker-data
+docker run --rm \
+  -p 4173:4173 \
+  -v food-tracker-data:/app/data \
+  -e NODE_ENV=production \
+  -e HOST=0.0.0.0 \
+  -e PORT=4173 \
+  food-tracker:local</code></pre>
+      <div class="callout">Das Volume <code>food-tracker-data</code> speichert die SQLite-Datenbank und den lokalen Verschluesselungs-Key. Nur loeschen, wenn die App absichtlich zurueckgesetzt werden soll.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Installation mit Docker Compose</h2>
+      <pre><code>docker compose up -d
+docker compose logs -f food-tracker</code></pre>
+      <p>Die enthaltene <code>docker-compose.yml</code> nutzt das Image <code>ghcr.io/wolfilux/food-tracker:dev</code>, Port <code>4173:4173</code> und das Volume <code>food-tracker-data:/app/data</code>.</p>
+      <p>Optionale SMTP-Variablen:</p>
+      <pre><code>SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=Food Tracker &lt;food-tracker@example.com&gt;</code></pre>
+    </section>
+
+    <section class="panel">
+      <h2>Installation in Portainer</h2>
+      <ol>
+        <li>In Portainer <code>Stacks -> Add stack</code> oeffnen.</li>
+        <li><code>Repository</code> als Build-Methode waehlen.</li>
+        <li>Repository auf das Food-Tracker-Repo setzen.</li>
+        <li>Branch <code>dev</code> auswaehlen.</li>
+        <li>Compose-Pfad <code>docker-compose.yml</code> verwenden.</li>
+        <li>Env-Variablen fuer SMTP setzen, falls Wochenmails verschickt werden sollen.</li>
+        <li>Stack deployen.</li>
+        <li>Container-Status und <code>/healthz</code> pruefen.</li>
+      </ol>
+      <div class="callout">Bei Redeploys darauf achten, dass Portainer wirklich das neue GHCR-Image zieht.</div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Erste Einrichtung</h2>
+        <ol>
+          <li>App im Browser oeffnen.</li>
+          <li><code>Konfiguration -> Tagesziel</code> setzen.</li>
+          <li><code>Konfiguration -> KI-Konfiguration</code> setzen.</li>
+          <li>Optional <code>Konfiguration -> Garmin</code> setzen.</li>
+          <li>Optional <code>Konfiguration -> Wochenmail</code> setzen.</li>
+          <li>Optional als PWA installieren.</li>
+        </ol>
+      </article>
+      <article class="panel">
+        <h2>Kurze Nutzeranleitung</h2>
+        <h3>Tagesprotokoll</h3>
+        <p>Im Tab <code>Protokoll</code> Lebensmittel suchen, manuell erfassen, speichern oder per Foto/Text durch KI vorbereiten lassen.</p>
+        <h3>Analyse</h3>
+        <p>Im Tab <code>Analyse</code> Woche wechseln, Diagramme lesen, Garmin aktualisieren und bei Bedarf die KI-Wochenanalyse starten.</p>
+        <h3>Konfiguration</h3>
+        <p>Tagesziel, Garmin, KI-Modelle, Wochenmail und Backup werden im Tab <code>Konfiguration</code> gepflegt.</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>iPhone PWA</h2>
+      <ol>
+        <li>App-URL in Safari oeffnen.</li>
+        <li>Teilen-Menue oeffnen.</li>
+        <li><code>Zum Home-Bildschirm</code> auswaehlen.</li>
+        <li>App vom Home-Screen starten.</li>
+      </ol>
+      <p>Die PWA cached die App-Shell. API-Aufrufe bleiben online und werden nicht gecached.</p>
+    </section>
+
+    <section class="panel roadmap">
+      <h2>Roadmap</h2>
+      <p>Eine Roadmap in der README ist sinnvoll als leichter Feature-Parkplatz. Verbindliche Umsetzung gehoert aber in Jira, und abgeschlossene Tickets gehoeren zusaetzlich nach Confluence.</p>
+      <ul>
+        <li>Kosten-/Token-Auswertung der gespeicherten AI-Usage-Daten</li>
+        <li>Wochenanalyse als Verlauf speichern und in der UI wieder anzeigen</li>
+        <li>Manuelle Testmail fuer die Wochenmail-Konfiguration</li>
+        <li>Bessere Import-/Export-Historie mit Zeitstempel und Dateigroesse</li>
+        <li>Mobile Feinschliffe fuer lange Modellnamen und kleine Displays</li>
+        <li>Optionaler Mehrbenutzer-Modus</li>
+        <li>Dashboard fuer Garmin-Sync-Status und letzte Fehler</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Betriebshinweise</h2>
+      <ul>
+        <li>Keine <code>.env</code>-Dateien oder echten Secrets committen.</li>
+        <li>API-Keys und Garmin-Credentials werden verschluesselt im Datenvolume gespeichert.</li>
+        <li>Beim Wechsel des Datenvolumes gehen gespeicherte Zugangsdaten und Eintraege verloren.</li>
+        <li>Nach Deploys immer <code>/healthz</code> pruefen.</li>
+        <li>Bei Wochenmail-Problemen zuerst SMTP-Env, Zieladresse und KI-Key pruefen.</li>
+        <li>Bei Garmin-Problemen Credentials, MFA/Tokenstatus und Sync-Fehler in der UI pruefen.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Confluence</h2>
+      <p>Die generelle Produkt- und Betriebsdoku liegt in Confluence im Space <code>S6SDOC</code> unter <code>Food Tracker</code>. Ticketbezogene Aenderungen werden separat als OP-Seiten unter <code>Jira Tickets &amp; Incidents</code> dokumentiert.</p>
+    </section>
+  </main>
+</body>
+</html>
