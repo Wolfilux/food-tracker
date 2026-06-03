@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, ReactNode, Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -3383,11 +3383,51 @@ function macroTarget(calorieGoal: number, share: number, caloriesPerGram: number
   };
 }
 
-function NumberInput({ label, min, step, value, onChange, inputRef }: { label: string; min: number; step: number; value: number; onChange: (value: number) => void; inputRef?: Ref<HTMLInputElement> }) {
+function NumberInput({ label, min, step, value, onChange, inputRef }: { label: string; min: number; step: number; value: number; onChange: (value: number) => void; inputRef?: { current: HTMLInputElement | null } }) {
+  const internalInputRef = useRef<HTMLInputElement | null>(null);
+  const activeInputRef = inputRef ?? internalInputRef;
+  const [inputValue, setInputValue] = useState(() => String(value));
+
+  useEffect(() => {
+    if (document.activeElement !== activeInputRef.current) {
+      setInputValue(String(value));
+    }
+  }, [activeInputRef, value]);
+
+  function updateDraftValue(rawValue: string) {
+    setInputValue(rawValue);
+    const numericValue = Number(rawValue);
+    if (rawValue.trim() === "" || rawValue === "-" || !Number.isFinite(numericValue)) return;
+    onChange(numericValue);
+  }
+
+  function normalizeDraftValue() {
+    const numericValue = Number(inputValue);
+    if (inputValue.trim() === "" || inputValue === "-" || !Number.isFinite(numericValue)) {
+      setInputValue(String(value));
+      return;
+    }
+    setInputValue(String(numericValue));
+    onChange(numericValue);
+  }
+
   return (
     <label>
       {label}
-      <input ref={inputRef} min={min} step={step} type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input
+        ref={activeInputRef}
+        min={min}
+        step={step}
+        type="number"
+        value={inputValue}
+        onBlur={normalizeDraftValue}
+        onChange={(event) => updateDraftValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+      />
     </label>
   );
 }
