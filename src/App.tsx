@@ -104,6 +104,7 @@ type NutritionGoal = "fat-loss" | "muscle-gain" | "maintenance" | "recomposition
 
 type NutritionConfig = {
   calorieGoal: number;
+  calorieGoalOffset: number;
   goal: NutritionGoal;
 };
 
@@ -249,8 +250,10 @@ const createEmptyDraft = (): FoodDraft => ({
 
 const defaultNutritionConfig: NutritionConfig = {
   calorieGoal: 2200,
+  calorieGoalOffset: 0,
   goal: "maintenance",
 };
+const minimumCalorieGoal = 800;
 
 const defaultAiConfig: AiConfig = {
   provider: "openai",
@@ -681,21 +684,22 @@ function App() {
   const draftCalories = caloriesFor(draft);
   const usageMap = useMemo(() => buildUsageMap(entries), [entries]);
   const selectedPreset = macroPresets[nutritionConfig.goal];
-  const macroTargets = useMemo(
-    () => calculateMacroTargets(nutritionConfig.calorieGoal, selectedPreset),
-    [nutritionConfig.calorieGoal, selectedPreset],
-  );
   const hasGarminCredentials = Boolean(garminConfig.username && garminConfig.hasCredential);
   const garminCalorieGoal = garminSummary?.configured && garminSummary.totalKilocalories ? garminSummary.totalKilocalories : null;
-  const effectiveCalorieGoal = garminCalorieGoal ?? nutritionConfig.calorieGoal;
+  const calorieGoalDetails = buildCalorieGoalDetails(garminCalorieGoal, nutritionConfig);
+  const effectiveCalorieGoal = calorieGoalDetails.effectiveGoal;
+  const macroTargets = useMemo(
+    () => calculateMacroTargets(effectiveCalorieGoal, selectedPreset),
+    [effectiveCalorieGoal, selectedPreset],
+  );
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
   const calorieTimingPoints = useMemo(
     () => buildCalorieTimingPoints(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints),
     [dayEntries, effectiveCalorieGoal],
   );
   const weekAnalysis = useMemo(
-    () => buildWeekAnalysis(weekDates, entries, nutritionConfig.calorieGoal, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}),
-    [entries, hasGarminCredentials, nutritionConfig.calorieGoal, selectedPreset, weekDates, weekGarminSummaries],
+    () => buildWeekAnalysis(weekDates, entries, nutritionConfig, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}),
+    [entries, hasGarminCredentials, nutritionConfig, selectedPreset, weekDates, weekGarminSummaries],
   );
   const weekSummary = useMemo(
     () =>
@@ -1548,13 +1552,17 @@ function App() {
         <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
           <div className="goal-card__top">
             <Target size={22} aria-hidden="true" />
-            <span>{garminCalorieGoal ? "Garmin Verbrauch" : "Tagesziel"}</span>
+            <span>{calorieGoalDetails.usesGarminGoal ? "Garmin Verbrauch" : "Tagesziel"}</span>
           </div>
           <strong>{totals.calories.toLocaleString()} kcal</strong>
           <div className="progress-track">
             <span style={{ width: `${progress}%` }} />
           </div>
           <small>{progress}% von {effectiveCalorieGoal.toLocaleString()} kcal</small>
+          <small className="goal-card__note">
+            {calorieGoalDetails.usesGarminGoal ? "Basis Garmin" : "Basis Konfiguration"} {calorieGoalDetails.baseGoal.toLocaleString("de-DE")} kcal
+            {nutritionConfig.calorieGoalOffset !== 0 ? ` · ${formatCalorieGoalOffset(nutritionConfig.calorieGoalOffset)}` : " · kein Offset"}
+          </small>
           {garminSummary?.configured && (
             <small className={garminSummary.error ? "goal-card__note goal-card__note--error" : "goal-card__note"}>
               {garminSummary.error
@@ -1626,7 +1634,8 @@ function App() {
             calorieGoal={effectiveCalorieGoal}
             points={calorieTimingPoints}
             totalCalories={totals.calories}
-            usesGarminGoal={Boolean(garminCalorieGoal)}
+            usesGarminGoal={calorieGoalDetails.usesGarminGoal}
+            calorieGoalOffset={nutritionConfig.calorieGoalOffset}
           />
 
           <section className={displayedWeeklyAiAnalysis ? `weekly-ai-card weekly-ai-card--${displayedWeeklyAiAnalysis.signal.label}` : "weekly-ai-card"} aria-live="polite">
@@ -1713,10 +1722,17 @@ function App() {
             <div className="config-controls">
               <NumberInput
                 label="Zielkalorien"
-                min={800}
+                min={minimumCalorieGoal}
                 step={50}
                 value={nutritionConfig.calorieGoal}
                 onChange={(calorieGoal) => setNutritionConfig({ ...nutritionConfig, calorieGoal })}
+              />
+              <NumberInput
+                label="Defizit/Überschuss"
+                min={-5000}
+                step={50}
+                value={nutritionConfig.calorieGoalOffset}
+                onChange={(calorieGoalOffset) => setNutritionConfig({ ...nutritionConfig, calorieGoalOffset })}
               />
               <label>
                 Ziel
@@ -1729,6 +1745,10 @@ function App() {
                   ))}
                 </select>
               </label>
+              <p className="config-status config-status--wide">
+                Tagesziel: {effectiveCalorieGoal.toLocaleString("de-DE")} kcal aus {calorieGoalDetails.usesGarminGoal ? "Garmin" : "Konfiguration"}
+                {nutritionConfig.calorieGoalOffset !== 0 ? ` mit ${formatCalorieGoalOffset(nutritionConfig.calorieGoalOffset)}` : " ohne Offset"}.
+              </p>
             </div>
             <div className="macro-target-grid" aria-label="Calculated macro targets">
               <MacroTarget label="Kohlenhydrate" grams={macroTargets.carbs.grams} calories={macroTargets.carbs.calories} percent={selectedPreset.carbs} />
@@ -2427,12 +2447,14 @@ function CalorieTimingPlan({
   points,
   totalCalories,
   usesGarminGoal,
+  calorieGoalOffset,
 }: {
   date: string;
   calorieGoal: number;
   points: CalorieTimingPoint[];
   totalCalories: number;
   usesGarminGoal: boolean;
+  calorieGoalOffset: number;
 }) {
   const dayDelta = Math.round(totalCalories - calorieGoal);
   const fillWidth = calorieGoal > 0 ? Math.min(100, Math.round((totalCalories / calorieGoal) * 100)) : 0;
@@ -2447,7 +2469,7 @@ function CalorieTimingPlan({
           </span>
           <strong>{formatDateLabel(date)} · {calorieGoal.toLocaleString("de-DE")} kcal</strong>
         </div>
-        <small>{usesGarminGoal ? "Garmin-Ziel" : "Konfiguriertes Ziel"}</small>
+        <small>{usesGarminGoal ? "Garmin-Basis" : "Konfiguriertes Ziel"} · {calorieGoalOffset !== 0 ? formatCalorieGoalOffset(calorieGoalOffset) : "kein Offset"}</small>
       </div>
       <div className="calorie-timing-rail" aria-hidden="true">
         <span className="calorie-timing-rail__fill" style={{ width: `${fillWidth}%` }} />
@@ -2700,7 +2722,7 @@ type WeekAnalysisDay = {
 function buildWeekAnalysis(
   dates: string[],
   entries: FoodEntry[],
-  calorieGoal: number,
+  nutritionConfig: NutritionConfig,
   preset: MacroPreset,
   garminSummaries: Record<string, GarminDailySummary>,
 ): WeekAnalysisDay[] {
@@ -2708,9 +2730,10 @@ function buildWeekAnalysis(
     const dayEntriesForDate = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
     const totals = summarizeEntries(dayEntriesForDate);
     const garminSummaryForDate = garminSummaries[date];
-    const calorieTarget = garminSummaryForDate?.configured && garminSummaryForDate.totalKilocalories
+    const garminCalorieGoalForDate = garminSummaryForDate?.configured && garminSummaryForDate.totalKilocalories
       ? garminSummaryForDate.totalKilocalories
-      : calorieGoal;
+      : null;
+    const calorieTarget = buildCalorieGoalDetails(garminCalorieGoalForDate, nutritionConfig).effectiveGoal;
 
     return {
       date,
@@ -2741,6 +2764,23 @@ function buildCalorieTimingPoints(
       delta: Math.round(actualCalories - targetCalories),
     };
   });
+}
+
+function buildCalorieGoalDetails(garminCalorieGoal: number | null, nutritionConfig: NutritionConfig) {
+  const validGarminGoal = garminCalorieGoal !== null && Number.isFinite(garminCalorieGoal) ? garminCalorieGoal : null;
+  const usesGarminGoal = validGarminGoal !== null;
+  const baseGoal = validGarminGoal ?? nutritionConfig.calorieGoal;
+  const effectiveGoal = Math.max(minimumCalorieGoal, Math.round(baseGoal + nutritionConfig.calorieGoalOffset));
+
+  return {
+    baseGoal,
+    effectiveGoal,
+    usesGarminGoal,
+  };
+}
+
+function formatCalorieGoalOffset(offset: number) {
+  return offset > 0 ? `+${offset.toLocaleString("de-DE")} kcal Überschuss` : `${offset.toLocaleString("de-DE")} kcal Defizit`;
 }
 
 function summarizeEntries(entries: FoodEntry[]): DayTotals {
@@ -3192,8 +3232,10 @@ function isNutritionGoal(value: unknown): value is NutritionGoal {
 
 function normalizeNutritionConfig(config: Partial<NutritionConfig> | undefined): NutritionConfig {
   const calorieGoal = Number(config?.calorieGoal);
+  const calorieGoalOffset = Number(config?.calorieGoalOffset ?? defaultNutritionConfig.calorieGoalOffset);
   return {
-    calorieGoal: Number.isFinite(calorieGoal) && calorieGoal >= 800 ? calorieGoal : defaultNutritionConfig.calorieGoal,
+    calorieGoal: Number.isFinite(calorieGoal) && calorieGoal >= minimumCalorieGoal ? calorieGoal : defaultNutritionConfig.calorieGoal,
+    calorieGoalOffset: Number.isFinite(calorieGoalOffset) ? Math.min(5000, Math.max(-5000, Math.round(calorieGoalOffset))) : defaultNutritionConfig.calorieGoalOffset,
     goal: isNutritionGoal(config?.goal) ? config.goal : defaultNutritionConfig.goal,
   };
 }

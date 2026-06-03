@@ -12,8 +12,10 @@ const dbPath = join(here, "..", "data", "food-tracker.sqlite");
 const secretPath = join(here, "..", "data", "food-tracker.secret.key");
 const defaultNutritionConfig = {
   calorieGoal: 2200,
+  calorieGoalOffset: 0,
   goal: "maintenance",
 };
+const minimumCalorieGoal = 800;
 const defaultAiConfig = {
   provider: "openai",
   model: "gpt-5.5-mini",
@@ -510,23 +512,29 @@ export function createFoodApiMiddleware() {
 
 export function getNutritionConfig() {
   const row = getFoodDatabase()
-    .prepare("SELECT calorie_goal, goal FROM nutrition_config WHERE id = 'default'")
+    .prepare("SELECT calorie_goal, calorie_goal_offset, goal FROM nutrition_config WHERE id = 'default'")
     .get();
 
   if (!row) return defaultNutritionConfig;
 
   return {
     calorieGoal: row.calorie_goal,
+    calorieGoalOffset: row.calorie_goal_offset,
     goal: row.goal,
   };
 }
 
 export function saveNutritionConfig(input) {
   const calorieGoal = Number(input?.calorieGoal);
+  const calorieGoalOffset = Number(input?.calorieGoalOffset ?? defaultNutritionConfig.calorieGoalOffset);
   const goal = String(input?.goal ?? "");
 
-  if (!Number.isFinite(calorieGoal) || calorieGoal < 800 || calorieGoal > 10000) {
+  if (!Number.isFinite(calorieGoal) || calorieGoal < minimumCalorieGoal || calorieGoal > 10000) {
     throw new Error("Invalid calorie goal");
+  }
+
+  if (!Number.isFinite(calorieGoalOffset) || calorieGoalOffset < -5000 || calorieGoalOffset > 5000) {
+    throw new Error("Invalid calorie goal offset");
   }
 
   if (!nutritionGoals.has(goal)) {
@@ -535,14 +543,15 @@ export function saveNutritionConfig(input) {
 
   getFoodDatabase()
     .prepare([
-      "INSERT INTO nutrition_config (id, calorie_goal, goal, updated_at)",
-      "VALUES ('default', ?, ?, datetime('now'))",
+      "INSERT INTO nutrition_config (id, calorie_goal, calorie_goal_offset, goal, updated_at)",
+      "VALUES ('default', ?, ?, ?, datetime('now'))",
       "ON CONFLICT(id) DO UPDATE SET",
       "  calorie_goal = excluded.calorie_goal,",
+      "  calorie_goal_offset = excluded.calorie_goal_offset,",
       "  goal = excluded.goal,",
       "  updated_at = excluded.updated_at",
     ].join("\n"))
-    .run(Math.round(calorieGoal), goal);
+    .run(Math.round(calorieGoal), Math.round(calorieGoalOffset), goal);
 
   return getNutritionConfig();
 }
@@ -1080,6 +1089,7 @@ function initializeDatabase(database) {
     "CREATE TABLE IF NOT EXISTS nutrition_config (",
     "  id TEXT PRIMARY KEY,",
     "  calorie_goal INTEGER NOT NULL,",
+    "  calorie_goal_offset INTEGER NOT NULL DEFAULT 0,",
     "  goal TEXT NOT NULL,",
     "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
     ");",
@@ -1170,6 +1180,7 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "meal_id", "TEXT");
   addColumnIfMissing(database, "entries", "meal_name", "TEXT");
+  addColumnIfMissing(database, "nutrition_config", "calorie_goal_offset", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
@@ -1256,12 +1267,19 @@ function buildWeeklyAnalysis(weekStartInput) {
   const days = dates.map((date) => {
     const dayEntries = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
     const totals = summarizeEntryTotals(dayEntries);
-    const macroTargets = calculateMacroTargets(nutritionConfig.calorieGoal, preset);
+    const garminSummary = getGarminCachedSummary(date);
+    const calorieTarget = calculateEffectiveCalorieGoal(
+      garminSummary?.configured && garminSummary.totalKilocalories
+        ? garminSummary.totalKilocalories
+        : nutritionConfig.calorieGoal,
+      nutritionConfig.calorieGoalOffset,
+    );
+    const macroTargets = calculateMacroTargets(calorieTarget, preset);
     return {
       date,
       entryCount: dayEntries.length,
       totals,
-      calorieTarget: nutritionConfig.calorieGoal,
+      calorieTarget,
       macroTargets,
     };
   });
@@ -1573,6 +1591,10 @@ function calculateMacroTargets(calorieGoal, preset) {
     carbs: macroTarget(calorieGoal, preset.carbs, 4),
     fat: macroTarget(calorieGoal, preset.fat, 9),
   };
+}
+
+function calculateEffectiveCalorieGoal(baseCalorieGoal, calorieGoalOffset = 0) {
+  return Math.max(minimumCalorieGoal, Math.round(baseCalorieGoal + calorieGoalOffset));
 }
 
 function macroTarget(calorieGoal, share, caloriesPerGram) {

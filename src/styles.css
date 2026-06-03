@@ -319,6 +319,11 @@ h1 {
   font-weight: 750;
 }
 
+.config-status--wide {
+  margin-top: 8px;
+  line-height: 1.35;
+}
+
 .config-status--error {
   color: #a43d20;
 }
