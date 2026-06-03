@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, ReactNode, Ref, useCallback, useEffect, useMe
 import {
   Activity,
   BarChart3,
+  Barcode,
   Camera,
   CalendarDays,
   ChevronLeft,
@@ -32,7 +33,25 @@ import {
 
 type Unit = "g" | "kg";
 type AppView = "tracker" | "analysis" | "settings";
-type EntryMode = "search" | "photo" | "text" | "meal";
+type EntryMode = "search" | "barcode" | "photo" | "text" | "meal";
+
+type BarcodeDetection = {
+  rawValue: string;
+  format?: string;
+};
+
+type BarcodeDetectorInstance = {
+  detect(source: HTMLVideoElement): Promise<BarcodeDetection[]>;
+};
+
+type BarcodeDetectorConstructor = {
+  new (options?: { formats?: string[] }): BarcodeDetectorInstance;
+  getSupportedFormats?: () => Promise<string[]>;
+};
+
+type BarcodeWindow = Window & typeof globalThis & {
+  BarcodeDetector?: BarcodeDetectorConstructor;
+};
 
 type FoodEntry = {
   id: string;
@@ -334,6 +353,7 @@ const macroPresets: Record<NutritionGoal, MacroPreset> = {
 
 const entryModes: Array<{ id: EntryMode; label: string; icon: ReactNode }> = [
   { id: "search", label: "Suchen", icon: <Search size={17} aria-hidden="true" /> },
+  { id: "barcode", label: "Barcode", icon: <Barcode size={17} aria-hidden="true" /> },
   { id: "photo", label: "Foto", icon: <Camera size={17} aria-hidden="true" /> },
   { id: "text", label: "Beschreiben", icon: <MessageSquareText size={17} aria-hidden="true" /> },
   { id: "meal", label: "Vorlagen", icon: <Utensils size={17} aria-hidden="true" /> },
@@ -568,6 +588,10 @@ function App() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [results, setResults] = useState<FoodSearchResult[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [barcodeValue, setBarcodeValue] = useState("");
+  const [manualBarcode, setManualBarcode] = useState("");
+  const [barcodeState, setBarcodeState] = useState<"idle" | "scanning" | "loading" | "done" | "error" | "unsupported">("idle");
+  const [barcodeError, setBarcodeError] = useState("");
   const [photoPreview, setPhotoPreview] = useState("");
   const [photoAnalysis, setPhotoAnalysis] = useState<FoodImageAnalysis | null>(null);
   const [photoState, setPhotoState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -604,6 +628,10 @@ function App() {
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const entryFormRef = useRef<HTMLFormElement>(null);
+  const barcodeVideoRef = useRef<HTMLVideoElement>(null);
+  const barcodeStreamRef = useRef<MediaStream | null>(null);
+  const barcodeFrameRef = useRef<number | null>(null);
+  const barcodeScanActiveRef = useRef(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -670,6 +698,7 @@ function App() {
     [weekAnalysis],
   );
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
+  const supportsBarcodeScanner = Boolean((window as BarcodeWindow).BarcodeDetector && navigator.mediaDevices?.getUserMedia);
 
   useEffect(() => {
     let isMounted = true;
@@ -868,6 +897,114 @@ function App() {
       controller.abort();
     };
   }, [draft.foodName, isAutocompleteOpen, searchFoods]);
+
+  useEffect(() => () => stopBarcodeScanner(), []);
+
+  function stopBarcodeScanner() {
+    barcodeScanActiveRef.current = false;
+    if (barcodeFrameRef.current !== null) {
+      window.cancelAnimationFrame(barcodeFrameRef.current);
+      barcodeFrameRef.current = null;
+    }
+    barcodeStreamRef.current?.getTracks().forEach((track) => track.stop());
+    barcodeStreamRef.current = null;
+    if (barcodeVideoRef.current) barcodeVideoRef.current.srcObject = null;
+  }
+
+  async function startBarcodeScanner() {
+    if (!supportsBarcodeScanner) {
+      setBarcodeState("unsupported");
+      setBarcodeError("Scanner wird von diesem Browser nicht unterstützt. Barcode bitte manuell eingeben.");
+      return;
+    }
+
+    stopBarcodeScanner();
+    setBarcodeError("");
+    setBarcodeState("scanning");
+    setBarcodeValue("");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      barcodeStreamRef.current = stream;
+      const video = barcodeVideoRef.current;
+      if (!video) throw new Error("Scanner-Video ist nicht bereit.");
+      video.srcObject = stream;
+      await video.play();
+
+      const Detector = (window as BarcodeWindow).BarcodeDetector;
+      if (!Detector) throw new Error("BarcodeDetector fehlt.");
+      const formats = await Detector.getSupportedFormats?.().catch(() => []) ?? [];
+      const preferredFormats = ["ean_13", "ean_8", "upc_a", "upc_e"];
+      const supportedFormats = formats.length > 0 ? preferredFormats.filter((format) => formats.includes(format)) : preferredFormats;
+      if (formats.length > 0 && supportedFormats.length === 0) {
+        setBarcodeState("unsupported");
+        setBarcodeError("EAN/UPC-Barcodes werden von diesem Browser nicht unterstützt. Barcode bitte manuell eingeben.");
+        stopBarcodeScanner();
+        return;
+      }
+      const detector = new Detector({
+        formats: supportedFormats,
+      });
+
+      barcodeScanActiveRef.current = true;
+      const scanFrame = async () => {
+        if (!barcodeScanActiveRef.current || !barcodeVideoRef.current) return;
+
+        try {
+          const detections = await detector.detect(barcodeVideoRef.current);
+          const code = normalizeBarcodeInput(detections[0]?.rawValue ?? "");
+          if (code) {
+            stopBarcodeScanner();
+            await lookupBarcode(code);
+            return;
+          }
+        } catch {
+          // Individual frames may fail while the camera is still warming up.
+        }
+
+        if (barcodeScanActiveRef.current) {
+          barcodeFrameRef.current = window.requestAnimationFrame(scanFrame);
+        }
+      };
+
+      barcodeFrameRef.current = window.requestAnimationFrame(scanFrame);
+    } catch (error) {
+      stopBarcodeScanner();
+      setBarcodeState("error");
+      setBarcodeError(error instanceof Error ? error.message : "Kamera konnte nicht gestartet werden.");
+    }
+  }
+
+  async function lookupBarcode(rawBarcode: string) {
+    const code = normalizeBarcodeInput(rawBarcode);
+    if (!code) {
+      setBarcodeState("error");
+      setBarcodeError("Bitte 8 bis 14 Ziffern eingeben.");
+      return;
+    }
+
+    setBarcodeValue(code);
+    setBarcodeError("");
+    setBarcodeState("loading");
+
+    try {
+      const food = await fetchFoodByBarcode(code);
+      if (!food) {
+        setBarcodeState("error");
+        setBarcodeError("Kein Lebensmittel zu diesem Barcode gefunden.");
+        return;
+      }
+
+      selectFood(food);
+      setBarcodeState("done");
+    } catch (error) {
+      setBarcodeState("error");
+      setBarcodeError(error instanceof Error ? error.message : "Barcode konnte nicht gesucht werden.");
+    }
+  }
 
   async function saveEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1847,13 +1984,73 @@ function App() {
                 type="button"
                 key={mode.id}
                 aria-pressed={entryMode === mode.id}
-                onClick={() => setEntryMode(mode.id)}
+                onClick={() => {
+                  if (mode.id !== "barcode") stopBarcodeScanner();
+                  setEntryMode(mode.id);
+                }}
               >
                 {mode.icon}
                 {mode.label}
               </button>
             ))}
           </nav>
+          {entryMode === "barcode" && (
+          <section className="barcode-panel" aria-label="Barcode scannen">
+            <div className="search-panel__heading">
+              <Barcode size={18} aria-hidden="true" />
+              <span>1. Barcode scannen</span>
+              <small>{supportsBarcodeScanner ? "Kamera" : "Manuell"}</small>
+            </div>
+            <div className={barcodeState === "scanning" ? "barcode-preview barcode-preview--active" : "barcode-preview"}>
+              <video ref={barcodeVideoRef} muted playsInline aria-label="Barcode Kamera-Vorschau" />
+              {barcodeState !== "scanning" && (
+                <span>
+                  <Barcode size={28} aria-hidden="true" />
+                  Produktcode erfassen
+                </span>
+              )}
+            </div>
+            <div className="photo-actions">
+              <button className="secondary-button" type="button" disabled={!supportsBarcodeScanner || barcodeState === "scanning" || barcodeState === "loading"} onClick={() => void startBarcodeScanner()}>
+                {barcodeState === "scanning" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Camera size={18} aria-hidden="true" />}
+                Scannen
+              </button>
+              <button className="secondary-button" type="button" disabled={barcodeState !== "scanning"} onClick={() => {
+                stopBarcodeScanner();
+                setBarcodeState("idle");
+              }}>
+                <X size={18} aria-hidden="true" />
+                Stop
+              </button>
+            </div>
+            <div className="barcode-manual">
+              <label>
+                Barcode
+                <div className="search-input">
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={manualBarcode}
+                    onChange={(event) => setManualBarcode(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void lookupBarcode(manualBarcode);
+                      }
+                    }}
+                    placeholder="EAN oder UPC"
+                  />
+                  <button type="button" aria-label="Barcode suchen" disabled={barcodeState === "loading"} onClick={() => void lookupBarcode(manualBarcode)}>
+                    {barcodeState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Search size={18} aria-hidden="true" />}
+                  </button>
+                </div>
+              </label>
+            </div>
+            {barcodeValue && <p className="photo-note">Barcode {barcodeValue}</p>}
+            {barcodeState === "done" && <p className="photo-note">Lebensmittel übernommen. Nur noch Menge prüfen und speichern.</p>}
+            {barcodeError && <p className="photo-note photo-note--error">{barcodeError}</p>}
+          </section>
+          )}
           {entryMode === "photo" && (
           <section className="photo-panel" aria-label="Fotoanalyse">
             <div className="search-panel__heading">
@@ -2694,6 +2891,14 @@ async function fetchFoodHits(searchTerm: string, signal?: AbortSignal): Promise<
   return data.hits ?? [];
 }
 
+async function fetchFoodByBarcode(barcode: string): Promise<FoodSearchResult | null> {
+  const params = new URLSearchParams({ code: barcode });
+  const response = await fetch(`/api/foods/barcode?${params.toString()}`);
+  if (!response.ok) throw new Error("Barcode request failed");
+  const data = (await response.json()) as { food?: FoodSearchResult | null };
+  return data.food ?? null;
+}
+
 function draftFromAnalysis(analysis: FoodImageAnalysis): FoodDraft {
   const matchedFood = analysis.matchedFood;
   if (matchedFood) {
@@ -2824,6 +3029,11 @@ function normalizeFoodKey(value: unknown) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeBarcodeInput(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 14 ? digits : "";
 }
 
 function dedupeResults(results: FoodSearchResult[]) {

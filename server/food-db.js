@@ -165,6 +165,37 @@ export async function searchFoodsExpanded(query, limit = 12) {
   return storedHits;
 }
 
+export async function findFoodByBarcode(barcode) {
+  const normalizedBarcode = normalizeBarcode(barcode);
+  if (!normalizedBarcode) return null;
+
+  const storedFood = getStoredFoodById(`off:${normalizedBarcode}`);
+  if (storedFood) return storedFood;
+
+  const externalFood = await fetchOpenFoodFactsBarcode(normalizedBarcode);
+  if (!externalFood) return null;
+
+  upsertFoodRecords([externalFood], "OpenFoodFacts", 0);
+  return {
+    ...externalFood,
+    source: "OpenFoodFacts",
+  };
+}
+
+function getStoredFoodById(id) {
+  const row = getFoodDatabase()
+    .prepare([
+      "SELECT",
+      "  id, name, brand, calories_per_100g, protein_per_100g, carbs_per_100g,",
+      "  fat_per_100g, image_url, source",
+      "FROM foods",
+      "WHERE id = ?",
+    ].join("\n"))
+    .get(id);
+
+  return row ? foodRowToObject(row) : null;
+}
+
 function searchStoredFoods(normalizedQuery, limit = 12) {
   const database = getFoodDatabase();
   const startsWith = normalizedQuery + "%";
@@ -225,7 +256,11 @@ function searchStoredFoods(normalizedQuery, limit = 12) {
     limit,
   );
 
-  return dedupeFoodRows(rows).map((row) => ({
+  return dedupeFoodRows(rows).map(foodRowToObject);
+}
+
+function foodRowToObject(row) {
+  return {
     id: row.id,
     name: row.name,
     brand: row.brand,
@@ -235,7 +270,7 @@ function searchStoredFoods(normalizedQuery, limit = 12) {
     fatPer100g: row.fat_per_100g,
     imageUrl: row.image_url || undefined,
     source: row.source,
-  }));
+  };
 }
 
 export function createFoodApiMiddleware() {
@@ -246,6 +281,12 @@ export function createFoodApiMiddleware() {
       const query = url.searchParams.get("q") ?? "";
       const limit = Number(url.searchParams.get("limit") ?? 12);
       sendJson(response, { hits: await searchFoodsExpanded(query, Number.isFinite(limit) ? limit : 12) });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/foods/barcode") {
+      const barcode = url.searchParams.get("code") ?? "";
+      sendJson(response, { food: await findFoodByBarcode(barcode) });
       return;
     }
 
@@ -2237,6 +2278,41 @@ async function fetchOpenFoodFacts(query, limit) {
   }
 }
 
+async function fetchOpenFoodFactsBarcode(barcode) {
+  const url = new URL(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`);
+  url.searchParams.set("fields", [
+    "code",
+    "product_name",
+    "generic_name",
+    "brands",
+    "nutriments",
+    "image_front_small_url",
+    "image_url",
+  ].join(","));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "user-agent": "FoodTracker/0.1 (+https://local.food-tracker.invalid)",
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    if (Number(payload?.status) !== 1) return null;
+    return openFoodFactsProductToFood(payload?.product);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function openFoodFactsProductToFood(product) {
   const code = String(product?.code ?? "").trim();
   const name = String(product?.product_name || product?.generic_name || "").trim();
@@ -2274,6 +2350,11 @@ function openFoodFactsProductToFood(product) {
     imageUrl: String(product?.image_front_small_url || product?.image_url || "").trim(),
     aliases,
   };
+}
+
+function normalizeBarcode(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 14 ? digits : "";
 }
 
 function numberFromNutrition(value) {
