@@ -165,6 +165,12 @@ h1 {
   font-weight: 750;
 }
 
+.goal-card__timing {
+  display: block;
+  margin-top: 8px;
+  font-weight: 900;
+}
+
 .goal-card__note--error {
   color: var(--color-danger);
 }

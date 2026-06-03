@@ -1269,10 +1269,9 @@ function buildWeeklyAnalysis(weekStartInput) {
     const totals = summarizeEntryTotals(dayEntries);
     const garminSummary = getGarminCachedSummary(date);
     const calorieTarget = calculateEffectiveCalorieGoal(
-      garminSummary?.configured && garminSummary.totalKilocalories
-        ? garminSummary.totalKilocalories
-        : nutritionConfig.calorieGoal,
+      nutritionConfig.calorieGoal,
       nutritionConfig.calorieGoalOffset,
+      garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
     );
     const macroTargets = calculateMacroTargets(calorieTarget, preset);
     return {
@@ -1593,8 +1592,9 @@ function calculateMacroTargets(calorieGoal, preset) {
   };
 }
 
-function calculateEffectiveCalorieGoal(baseCalorieGoal, calorieGoalOffset = 0) {
-  return Math.max(minimumCalorieGoal, Math.round(baseCalorieGoal + calorieGoalOffset));
+function calculateEffectiveCalorieGoal(baseCalorieGoal, calorieGoalOffset = 0, activeKilocalories = 0) {
+  const activeCalories = Number.isFinite(activeKilocalories) ? activeKilocalories : 0;
+  return Math.max(minimumCalorieGoal, Math.round(baseCalorieGoal + activeCalories + calorieGoalOffset));
 }
 
 function macroTarget(calorieGoal, share, caloriesPerGram) {
