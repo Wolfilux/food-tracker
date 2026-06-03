@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Copy,
   Database,
   Download,
@@ -351,6 +352,18 @@ const macroPresets: Record<NutritionGoal, MacroPreset> = {
   },
 };
 
+type CalorieTimingCheckpoint = {
+  time: string;
+  percent: number;
+};
+
+const calorieTimingCheckpoints: CalorieTimingCheckpoint[] = [
+  { time: "10:00", percent: 0.25 },
+  { time: "14:00", percent: 0.55 },
+  { time: "18:00", percent: 0.8 },
+  { time: "21:00", percent: 1 },
+];
+
 const entryModes: Array<{ id: EntryMode; label: string; icon: ReactNode }> = [
   { id: "search", label: "Suchen", icon: <Search size={17} aria-hidden="true" /> },
   { id: "barcode", label: "Barcode", icon: <Barcode size={17} aria-hidden="true" /> },
@@ -676,6 +689,10 @@ function App() {
   const garminCalorieGoal = garminSummary?.configured && garminSummary.totalKilocalories ? garminSummary.totalKilocalories : null;
   const effectiveCalorieGoal = garminCalorieGoal ?? nutritionConfig.calorieGoal;
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
+  const calorieTimingPoints = useMemo(
+    () => buildCalorieTimingPoints(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints),
+    [dayEntries, effectiveCalorieGoal],
+  );
   const weekAnalysis = useMemo(
     () => buildWeekAnalysis(weekDates, entries, nutritionConfig.calorieGoal, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}),
     [entries, hasGarminCredentials, nutritionConfig.calorieGoal, selectedPreset, weekDates, weekGarminSummaries],
@@ -1604,6 +1621,14 @@ function App() {
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
           </section>
 
+          <CalorieTimingPlan
+            date={selectedDate}
+            calorieGoal={effectiveCalorieGoal}
+            points={calorieTimingPoints}
+            totalCalories={totals.calories}
+            usesGarminGoal={Boolean(garminCalorieGoal)}
+          />
+
           <section className={displayedWeeklyAiAnalysis ? `weekly-ai-card weekly-ai-card--${displayedWeeklyAiAnalysis.signal.label}` : "weekly-ai-card"} aria-live="polite">
             <div className="weekly-ai-card__head">
               <div>
@@ -2390,6 +2415,68 @@ type WeeklyChartPoint = {
   hasError?: boolean;
 };
 
+type CalorieTimingPoint = CalorieTimingCheckpoint & {
+  targetCalories: number;
+  actualCalories: number;
+  delta: number;
+};
+
+function CalorieTimingPlan({
+  date,
+  calorieGoal,
+  points,
+  totalCalories,
+  usesGarminGoal,
+}: {
+  date: string;
+  calorieGoal: number;
+  points: CalorieTimingPoint[];
+  totalCalories: number;
+  usesGarminGoal: boolean;
+}) {
+  const dayDelta = Math.round(totalCalories - calorieGoal);
+  const fillWidth = calorieGoal > 0 ? Math.min(100, Math.round((totalCalories / calorieGoal) * 100)) : 0;
+
+  return (
+    <article className="calorie-timing-card" aria-label="Kalorien-Tageslinie">
+      <div className="calorie-timing-card__head">
+        <div>
+          <span className="eyebrow eyebrow--dark">
+            <Clock3 size={16} aria-hidden="true" />
+            Tageslinie
+          </span>
+          <strong>{formatDateLabel(date)} · {calorieGoal.toLocaleString("de-DE")} kcal</strong>
+        </div>
+        <small>{usesGarminGoal ? "Garmin-Ziel" : "Konfiguriertes Ziel"}</small>
+      </div>
+      <div className="calorie-timing-rail" aria-hidden="true">
+        <span className="calorie-timing-rail__fill" style={{ width: `${fillWidth}%` }} />
+        {points.map((point) => (
+          <span
+            className="calorie-timing-rail__marker"
+            key={point.time}
+            style={{ left: `${Math.round(point.percent * 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="calorie-timing-grid" role="list">
+        {points.map((point) => (
+          <div className="calorie-timing-point" role="listitem" key={point.time}>
+            <span>bis {point.time}</span>
+            <strong>{point.targetCalories.toLocaleString("de-DE")} kcal</strong>
+            <small className={point.delta > 0 ? "delta delta--over" : point.delta < 0 ? "delta delta--under" : "delta"}>
+              {point.actualCalories.toLocaleString("de-DE")} gegessen · {formatSignedNumber(point.delta)}
+            </small>
+          </div>
+        ))}
+      </div>
+      <p className={dayDelta > 0 ? "calorie-timing-note delta--over" : dayDelta < 0 ? "calorie-timing-note delta--under" : "calorie-timing-note"}>
+        {totalCalories.toLocaleString("de-DE")} kcal erfasst · {formatSignedNumber(dayDelta)} kcal zum Tagesziel
+      </p>
+    </article>
+  );
+}
+
 function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: string; points: WeeklyChartPoint[] }) {
   const chartMax = Math.max(1, ...points.flatMap((point) => [point.actual, point.target])) * 1.12;
   const totalDelta = Math.round(points.reduce((sum, point) => sum + point.actual - point.target, 0));
@@ -2632,6 +2719,26 @@ function buildWeekAnalysis(
       calorieTarget,
       macroTargets: calculateMacroTargets(calorieTarget, preset),
       garminError: garminSummaryForDate?.error,
+    };
+  });
+}
+
+function buildCalorieTimingPoints(
+  entries: FoodEntry[],
+  calorieGoal: number,
+  checkpoints: CalorieTimingCheckpoint[],
+): CalorieTimingPoint[] {
+  return checkpoints.map((checkpoint) => {
+    const actualCalories = entries
+      .filter((entry) => entry.consumedAt.slice(11, 16) <= checkpoint.time)
+      .reduce((sum, entry) => sum + caloriesFor(entry), 0);
+    const targetCalories = Math.round(calorieGoal * checkpoint.percent);
+
+    return {
+      ...checkpoint,
+      actualCalories,
+      targetCalories,
+      delta: Math.round(actualCalories - targetCalories),
     };
   });
 }
