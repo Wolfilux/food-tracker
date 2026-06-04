@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarcodeFormat, BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import {
   Activity,
   BarChart3,
@@ -35,24 +36,6 @@ import {
 type Unit = "g" | "kg";
 type AppView = "tracker" | "analysis" | "settings";
 type EntryMode = "search" | "barcode" | "photo" | "text" | "meal";
-
-type BarcodeDetection = {
-  rawValue: string;
-  format?: string;
-};
-
-type BarcodeDetectorInstance = {
-  detect(source: HTMLVideoElement): Promise<BarcodeDetection[]>;
-};
-
-type BarcodeDetectorConstructor = {
-  new (options?: { formats?: string[] }): BarcodeDetectorInstance;
-  getSupportedFormats?: () => Promise<string[]>;
-};
-
-type BarcodeWindow = Window & typeof globalThis & {
-  BarcodeDetector?: BarcodeDetectorConstructor;
-};
 
 type FoodEntry = {
   id: string;
@@ -645,8 +628,7 @@ function App() {
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const entryFormRef = useRef<HTMLFormElement>(null);
   const barcodeVideoRef = useRef<HTMLVideoElement>(null);
-  const barcodeStreamRef = useRef<MediaStream | null>(null);
-  const barcodeFrameRef = useRef<number | null>(null);
+  const barcodeScannerControlsRef = useRef<IScannerControls | null>(null);
   const barcodeScanActiveRef = useRef(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -722,7 +704,7 @@ function App() {
     [weekAnalysis],
   );
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
-  const supportsBarcodeScanner = Boolean((window as BarcodeWindow).BarcodeDetector && navigator.mediaDevices?.getUserMedia);
+  const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
   useEffect(() => {
     let isMounted = true;
@@ -926,12 +908,8 @@ function App() {
 
   function stopBarcodeScanner() {
     barcodeScanActiveRef.current = false;
-    if (barcodeFrameRef.current !== null) {
-      window.cancelAnimationFrame(barcodeFrameRef.current);
-      barcodeFrameRef.current = null;
-    }
-    barcodeStreamRef.current?.getTracks().forEach((track) => track.stop());
-    barcodeStreamRef.current = null;
+    barcodeScannerControlsRef.current?.stop();
+    barcodeScannerControlsRef.current = null;
     if (barcodeVideoRef.current) barcodeVideoRef.current.srcObject = null;
   }
 
@@ -948,53 +926,29 @@ function App() {
     setBarcodeValue("");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
-      barcodeStreamRef.current = stream;
       const video = barcodeVideoRef.current;
       if (!video) throw new Error("Scanner-Video ist nicht bereit.");
-      video.srcObject = stream;
-      await video.play();
-
-      const Detector = (window as BarcodeWindow).BarcodeDetector;
-      if (!Detector) throw new Error("BarcodeDetector fehlt.");
-      const formats = await Detector.getSupportedFormats?.().catch(() => []) ?? [];
-      const preferredFormats = ["ean_13", "ean_8", "upc_a", "upc_e"];
-      const supportedFormats = formats.length > 0 ? preferredFormats.filter((format) => formats.includes(format)) : preferredFormats;
-      if (formats.length > 0 && supportedFormats.length === 0) {
-        setBarcodeState("unsupported");
-        setBarcodeError("EAN/UPC-Barcodes werden von diesem Browser nicht unterstützt. Barcode bitte manuell eingeben.");
-        stopBarcodeScanner();
-        return;
-      }
-      const detector = new Detector({
-        formats: supportedFormats,
-      });
 
       barcodeScanActiveRef.current = true;
-      const scanFrame = async () => {
-        if (!barcodeScanActiveRef.current || !barcodeVideoRef.current) return;
+      const reader = new BrowserMultiFormatReader();
+      reader.possibleFormats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E];
+      let resolved = false;
 
-        try {
-          const detections = await detector.detect(barcodeVideoRef.current);
-          const code = normalizeBarcodeInput(detections[0]?.rawValue ?? "");
-          if (code) {
-            stopBarcodeScanner();
-            await lookupBarcode(code);
-            return;
-          }
-        } catch {
-          // Individual frames may fail while the camera is still warming up.
-        }
+      barcodeScannerControlsRef.current = await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        video,
+        (result, _error, controls) => {
+          if (resolved || !barcodeScanActiveRef.current) return;
+          const code = normalizeBarcodeInput(result?.getText() ?? "");
+          if (!code) return;
 
-        if (barcodeScanActiveRef.current) {
-          barcodeFrameRef.current = window.requestAnimationFrame(scanFrame);
-        }
-      };
-
-      barcodeFrameRef.current = window.requestAnimationFrame(scanFrame);
+          resolved = true;
+          controls.stop();
+          barcodeScannerControlsRef.current = null;
+          barcodeScanActiveRef.current = false;
+          void lookupBarcode(code);
+        },
+      );
     } catch (error) {
       stopBarcodeScanner();
       setBarcodeState("error");
@@ -2056,16 +2010,7 @@ function App() {
               <span>1. Barcode scannen</span>
               <small>{supportsBarcodeScanner ? "Kamera" : "Manuell"}</small>
             </div>
-            <div className={barcodeState === "scanning" ? "barcode-preview barcode-preview--active" : "barcode-preview"}>
-              <video ref={barcodeVideoRef} muted playsInline aria-label="Barcode Kamera-Vorschau" />
-              {barcodeState !== "scanning" && (
-                <span>
-                  <Barcode size={28} aria-hidden="true" />
-                  Produktcode erfassen
-                </span>
-              )}
-            </div>
-            <div className="photo-actions">
+            <div className="barcode-actions">
               <button className="secondary-button" type="button" disabled={!supportsBarcodeScanner || barcodeState === "scanning" || barcodeState === "loading"} onClick={() => void startBarcodeScanner()}>
                 {barcodeState === "scanning" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Camera size={18} aria-hidden="true" />}
                 Scannen
@@ -2077,6 +2022,15 @@ function App() {
                 <X size={18} aria-hidden="true" />
                 Stop
               </button>
+            </div>
+            <div className={barcodeState === "scanning" ? "barcode-preview barcode-preview--active" : "barcode-preview"}>
+              <video ref={barcodeVideoRef} muted playsInline aria-label="Barcode Kamera-Vorschau" />
+              {barcodeState !== "scanning" && (
+                <span>
+                  <Barcode size={28} aria-hidden="true" />
+                  Produktcode erfassen
+                </span>
+              )}
             </div>
             <div className="barcode-manual">
               <label>
