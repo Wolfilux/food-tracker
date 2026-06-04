@@ -816,10 +816,12 @@ export function createEntries(input) {
   const mealId = entriesInput.length > 1 || mealName
     ? String(input?.mealId ?? randomUUID())
     : input?.mealId ? String(input.mealId) : undefined;
+  const mealImageDataUrl = normalizeEntryImageDataUrl(input?.imageDataUrl);
   const entries = entriesInput.map((entryInput) => validateEntry({
     ...entryInput,
     mealId,
     mealName,
+    imageDataUrl: mealImageDataUrl || entryInput?.imageDataUrl,
   }));
 
   const database = getFoodDatabase();

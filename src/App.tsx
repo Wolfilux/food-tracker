@@ -60,6 +60,20 @@ type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
 
 type MealTemplateItem = Omit<FoodDraft, "consumedAt" | "mealId" | "mealName" | "aiUsage">;
 
+type SingleEntryGroup = { kind: "single"; entry: FoodEntry };
+
+type MealEntryGroup = {
+  kind: "meal";
+  id: string;
+  name: string;
+  consumedAt: string;
+  calories: number;
+  entries: FoodEntry[];
+  imageDataUrl?: string;
+};
+
+type EntryGroup = SingleEntryGroup | MealEntryGroup;
+
 type MealTemplate = {
   id: string;
   name: string;
@@ -1259,11 +1273,10 @@ function App() {
     if (!photoAnalysis) return;
     setEntryError("");
     try {
-      const entriesToSave = draftsFromAnalysis(photoAnalysis, draft.consumedAt)
-        .map((entry, index) => ({ ...entry, imageDataUrl: index === 0 ? photoPreview : "" }));
+      const entriesToSave = draftsFromAnalysis(photoAnalysis, draft.consumedAt);
       const savedEntries = entriesToSave.length > 1
-        ? await createEntryGroup(photoAnalysis.description, entriesToSave)
-        : [await createEntry(entriesToSave[0])];
+        ? await createEntryGroup(photoAnalysis.description, entriesToSave, photoPreview)
+        : [await createEntry({ ...entriesToSave[0], imageDataUrl: photoPreview })];
       if (entriesToSave.length > 1) await saveAnalysisTemplate(photoAnalysis, entriesToSave);
       setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
       setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
@@ -1432,6 +1445,45 @@ function App() {
       setEntries((currentEntries) => currentEntries.map((currentEntry) => (
         currentEntry.id === updatedEntry.id ? updatedEntry : currentEntry
       )));
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Neu-Erkennung fehlgeschlagen.");
+    } finally {
+      setReanalyzingEntryId(null);
+    }
+  }
+
+  async function reanalyzeMealImage(group: MealEntryGroup) {
+    if (!group.imageDataUrl || reanalyzingEntryId) return;
+    setEntryError("");
+    setReanalyzingEntryId(group.id);
+    try {
+      const analysis = await analyzeFoodPhoto(group.imageDataUrl);
+      const mealName = analysis.description || group.name;
+      const nextDrafts = draftsFromAnalysis(analysis, group.consumedAt).map((nextDraft) => ({
+        ...nextDraft,
+        mealId: group.id,
+        mealName,
+        imageDataUrl: group.imageDataUrl,
+      }));
+      const savedEntries: FoodEntry[] = [];
+
+      for (let index = 0; index < nextDrafts.length; index += 1) {
+        const existingEntry = group.entries[index];
+        const savedEntry = existingEntry
+          ? await updateBackendEntry(existingEntry.id, nextDrafts[index])
+          : await createEntry(nextDrafts[index]);
+        savedEntries.push(savedEntry);
+      }
+
+      for (const staleEntry of group.entries.slice(nextDrafts.length)) {
+        await deleteBackendEntry(staleEntry.id);
+      }
+
+      setEntries((currentEntries) => [
+        ...savedEntries,
+        ...currentEntries.filter((currentEntry) => currentEntry.mealId !== group.id),
+      ]);
+      if (savedEntries[0]) setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Neu-Erkennung fehlgeschlagen.");
     } finally {
@@ -2388,6 +2440,21 @@ function App() {
                 <span className="time-tag">{formatDateTime(group.consumedAt)}</span>
                 <h3>{group.name}</h3>
                 <p>{group.entries.length} Lebensmittel · {group.calories.toLocaleString("de-DE")} kcal</p>
+                {group.imageDataUrl && (
+                  <div className="meal-row__image">
+                    <img src={group.imageDataUrl} alt="" />
+                    <button
+                      className="secondary-button secondary-button--compact"
+                      type="button"
+                      disabled={!aiConfig.hasApiKey || reanalyzingEntryId === group.id}
+                      onClick={() => void reanalyzeMealImage(group)}
+                      title={aiConfig.hasApiKey ? "Mahlzeitbild mit aktuellem Foto-Modell neu erkennen" : "API-Key zuerst in der Konfiguration speichern"}
+                    >
+                      {reanalyzingEntryId === group.id ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <RefreshCw size={16} aria-hidden="true" />}
+                      Neu erkennen
+                    </button>
+                  </div>
+                )}
               </div>
               <strong>{group.calories.toLocaleString("de-DE")} kcal</strong>
             </div>
@@ -2654,7 +2721,7 @@ function FoodEntryRow({
           <h3>{entry.foodName}</h3>
           <strong>{entryCalories.toLocaleString()} kcal</strong>
         </div>
-        {entry.imageDataUrl && (
+        {!compact && entry.imageDataUrl && (
           <div className="food-row__image">
             <img src={entry.imageDataUrl} alt="" />
             <button
@@ -2694,10 +2761,7 @@ function FoodEntryRow({
 }
 
 function buildEntryGroups(entries: FoodEntry[]) {
-  const groups: Array<
-    | { kind: "single"; entry: FoodEntry }
-    | { kind: "meal"; id: string; name: string; consumedAt: string; calories: number; entries: FoodEntry[] }
-  > = [];
+  const groups: EntryGroup[] = [];
   const mealMap = new Map<string, FoodEntry[]>();
 
   for (const entry of entries) {
@@ -2728,6 +2792,7 @@ function buildEntryGroups(entries: FoodEntry[]) {
       consumedAt: entriesForMeal[0]?.consumedAt ?? group.consumedAt,
       calories: entriesForMeal.reduce((sum, entry) => sum + caloriesFor(entry), 0),
       entries: entriesForMeal,
+      imageDataUrl: entriesForMeal.find((entry) => entry.imageDataUrl)?.imageDataUrl,
     };
   });
 }
@@ -2870,11 +2935,11 @@ async function createEntry(draft: FoodDraft): Promise<FoodEntry> {
   return normalizeBackendEntry(data.entry);
 }
 
-async function createEntryGroup(mealName: string, entries: FoodDraft[]): Promise<FoodEntry[]> {
+async function createEntryGroup(mealName: string, entries: FoodDraft[], imageDataUrl = ""): Promise<FoodEntry[]> {
   const response = await fetch("/api/entries", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ mealName, entries }),
+    body: JSON.stringify({ mealName, entries, imageDataUrl }),
   });
   const data = (await response.json()) as { entries?: FoodEntry[]; error?: string };
   if (!response.ok || !data.entries) throw new Error(data.error ?? "Mahlzeit konnte nicht gespeichert werden.");

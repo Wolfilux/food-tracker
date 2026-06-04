@@ -1543,6 +1543,26 @@ button:focus-visible {
   color: #627064;
 }
 
+.meal-row__image {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.meal-row__image img {
+  width: 88px;
+  height: 58px;
+  object-fit: cover;
+  border: 1px solid rgba(23, 33, 27, 0.14);
+  border-radius: 7px;
+}
+
+.meal-row__image .secondary-button {
+  min-height: 34px;
+}
+
 .meal-row__items {
   padding-left: 12px;
 }
