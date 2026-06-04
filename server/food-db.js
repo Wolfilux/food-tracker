@@ -429,7 +429,7 @@ export function createFoodApiMiddleware() {
 
     if (url.pathname === "/api/import" && request.method === "POST") {
       try {
-        sendJson(response, { result: importFoodTrackerData(await readJsonBody(request, 8_000_000)) });
+        sendJson(response, { result: importFoodTrackerData(await readJsonBody(request, 30_000_000)) });
       } catch (error) {
         sendJson(response, { error: error.message }, 400);
       }
@@ -468,7 +468,7 @@ export function createFoodApiMiddleware() {
 
       if (request.method === "POST") {
         try {
-          const input = await readJsonBody(request);
+          const input = await readJsonBody(request, 8_000_000);
           if (Array.isArray(input?.entries)) {
             const entries = createEntries(input);
             sendJson(response, { entries }, 201);
@@ -486,7 +486,7 @@ export function createFoodApiMiddleware() {
     if (url.pathname.startsWith("/api/entries/") && request.method === "PATCH") {
       const id = decodeURIComponent(url.pathname.replace("/api/entries/", ""));
       try {
-        const entry = updateEntry(id, await readJsonBody(request));
+        const entry = updateEntry(id, await readJsonBody(request, 8_000_000));
         sendJson(response, { entry });
       } catch (error) {
         sendJson(response, { error: error.message }, 400);
@@ -765,7 +765,7 @@ export function listEntries() {
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name",
+      "  meal_id, meal_name, image_data_url",
       "FROM entries",
       "ORDER BY consumed_at DESC, created_at DESC",
     ].join("\n"))
@@ -781,9 +781,9 @@ export function createEntry(input) {
       "INSERT INTO entries (",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name",
+      "  meal_id, meal_name, image_data_url",
       ")",
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ].join("\n"))
     .run(
       entry.id,
@@ -801,6 +801,7 @@ export function createEntry(input) {
       JSON.stringify(entry.aiUsage ?? null),
       entry.mealId ?? null,
       entry.mealName ?? null,
+      entry.imageDataUrl ?? "",
     );
 
   return entry;
@@ -838,7 +839,7 @@ export function createEntries(input) {
 
 export function updateEntry(id, input) {
   const existing = getFoodDatabase()
-    .prepare("SELECT created_at, meal_id, meal_name FROM entries WHERE id = ?")
+    .prepare("SELECT created_at, meal_id, meal_name, image_data_url FROM entries WHERE id = ?")
     .get(id);
   if (!existing) throw new Error("Entry not found");
 
@@ -848,6 +849,7 @@ export function updateEntry(id, input) {
     createdAt: existing.created_at,
     mealId: input?.mealId ?? existing.meal_id,
     mealName: input?.mealName ?? existing.meal_name,
+    imageDataUrl: input?.imageDataUrl ?? existing.image_data_url,
   });
 
   getFoodDatabase()
@@ -865,7 +867,8 @@ export function updateEntry(id, input) {
       "  source = ?,",
       "  ai_usage_json = ?,",
       "  meal_id = ?,",
-      "  meal_name = ?",
+      "  meal_name = ?,",
+      "  image_data_url = ?",
       "WHERE id = ?",
     ].join("\n"))
     .run(
@@ -882,6 +885,7 @@ export function updateEntry(id, input) {
       JSON.stringify(entry.aiUsage ?? null),
       entry.mealId ?? null,
       entry.mealName ?? null,
+      entry.imageDataUrl ?? "",
       id,
     );
 
@@ -1152,7 +1156,8 @@ function initializeDatabase(database) {
     "  source TEXT NOT NULL DEFAULT 'manual',",
     "  ai_usage_json TEXT NOT NULL DEFAULT '',",
     "  meal_id TEXT,",
-    "  meal_name TEXT",
+    "  meal_name TEXT,",
+    "  image_data_url TEXT NOT NULL DEFAULT ''",
     ");",
     "CREATE INDEX IF NOT EXISTS idx_entries_consumed_at ON entries(consumed_at DESC);",
     "CREATE TABLE IF NOT EXISTS meal_templates (",
@@ -1180,6 +1185,7 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "meal_id", "TEXT");
   addColumnIfMissing(database, "entries", "meal_name", "TEXT");
+  addColumnIfMissing(database, "entries", "image_data_url", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "nutrition_config", "calorie_goal_offset", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
@@ -1565,7 +1571,7 @@ function listEntriesForWeek(weekStart) {
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name",
+      "  meal_id, meal_name, image_data_url",
       "FROM entries",
       "WHERE substr(consumed_at, 1, 10) >= ? AND substr(consumed_at, 1, 10) < ?",
       "ORDER BY consumed_at ASC, created_at ASC",
@@ -2428,6 +2434,7 @@ function validateEntry(input) {
   const consumedAt = String(input?.consumedAt ?? "");
   const mealId = input?.mealId ? String(input.mealId).trim().slice(0, 80) : undefined;
   const mealName = input?.mealName ? String(input.mealName).trim().slice(0, 120) : undefined;
+  const imageDataUrl = normalizeEntryImageDataUrl(input?.imageDataUrl);
 
   if (!foodName) throw new Error("Food name is required");
   if (!Number.isFinite(quantityValue) || quantityValue <= 0) throw new Error("Invalid quantity");
@@ -2453,6 +2460,7 @@ function validateEntry(input) {
     aiUsage: normalizeAiUsage(input?.aiUsage),
     mealId,
     mealName,
+    imageDataUrl,
   };
 }
 
@@ -2473,7 +2481,16 @@ function entryFromRow(row) {
     aiUsage: parseStoredJson(row.ai_usage_json),
     mealId: row.meal_id ?? undefined,
     mealName: row.meal_name ?? undefined,
+    imageDataUrl: row.image_data_url || undefined,
   };
+}
+
+function normalizeEntryImageDataUrl(value) {
+  const imageDataUrl = String(value ?? "").trim();
+  if (!imageDataUrl) return "";
+  if (!imageDataUrl.startsWith("data:image/")) throw new Error("Invalid entry image");
+  if (imageDataUrl.length > 7_000_000) throw new Error("Entry image is too large");
+  return imageDataUrl;
 }
 
 function validateMealTemplate(input) {

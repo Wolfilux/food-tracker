@@ -53,6 +53,7 @@ type FoodEntry = {
   createdAt: string;
   source?: string;
   aiUsage?: AiUsageSnapshot;
+  imageDataUrl?: string;
 };
 
 type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
@@ -595,6 +596,7 @@ function App() {
   const [photoAnalysis, setPhotoAnalysis] = useState<FoodImageAnalysis | null>(null);
   const [photoState, setPhotoState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [photoError, setPhotoError] = useState("");
+  const [pendingEntryImageDataUrl, setPendingEntryImageDataUrl] = useState("");
   const [aiFoodText, setAiFoodText] = useState("");
   const [textAnalysis, setTextAnalysis] = useState<FoodImageAnalysis | null>(null);
   const [textAnalysisState, setTextAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -623,6 +625,7 @@ function App() {
   const [weekGarminState, setWeekGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [garminConfigState, setGarminConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [garminConfigError, setGarminConfigError] = useState("");
+  const [reanalyzingEntryId, setReanalyzingEntryId] = useState<string | null>(null);
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const quantityInputRef = useRef<HTMLInputElement>(null);
@@ -946,7 +949,9 @@ function App() {
           controls.stop();
           barcodeScannerControlsRef.current = null;
           barcodeScanActiveRef.current = false;
-          void lookupBarcode(code);
+          const frameDataUrl = captureVideoFrame(video);
+          if (frameDataUrl) setPendingEntryImageDataUrl(frameDataUrl);
+          void lookupBarcode(code, frameDataUrl);
         },
       );
     } catch (error) {
@@ -956,7 +961,7 @@ function App() {
     }
   }
 
-  async function lookupBarcode(rawBarcode: string) {
+  async function lookupBarcode(rawBarcode: string, imageDataUrl = "") {
     const code = normalizeBarcodeInput(rawBarcode);
     if (!code) {
       setBarcodeState("error");
@@ -977,6 +982,7 @@ function App() {
       }
 
       selectFood(food);
+      setPendingEntryImageDataUrl(imageDataUrl);
       setBarcodeState("done");
     } catch (error) {
       setBarcodeState("error");
@@ -994,6 +1000,7 @@ function App() {
       const payload = {
         ...draft,
         foodName,
+        imageDataUrl: draft.imageDataUrl || (!editingEntryId ? pendingEntryImageDataUrl : ""),
       };
       const entry = editingEntryId
         ? await updateBackendEntry(editingEntryId, payload)
@@ -1005,6 +1012,7 @@ function App() {
       );
       setSelectedDate(entry.consumedAt.slice(0, 10));
       setDraft(createEmptyDraft());
+      setPendingEntryImageDataUrl("");
       setEditingEntryId(null);
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Eintrag konnte nicht gespeichert werden.");
@@ -1187,7 +1195,7 @@ function App() {
       return;
     }
 
-    setPhotoPreview(await readFileAsDataUrl(file));
+    setPhotoPreview(await readImageAsCompressedDataUrl(file));
   }
 
   async function analyzePhoto() {
@@ -1251,7 +1259,8 @@ function App() {
     if (!photoAnalysis) return;
     setEntryError("");
     try {
-      const entriesToSave = draftsFromAnalysis(photoAnalysis, draft.consumedAt);
+      const entriesToSave = draftsFromAnalysis(photoAnalysis, draft.consumedAt)
+        .map((entry, index) => ({ ...entry, imageDataUrl: index === 0 ? photoPreview : "" }));
       const savedEntries = entriesToSave.length > 1
         ? await createEntryGroup(photoAnalysis.description, entriesToSave)
         : [await createEntry(entriesToSave[0])];
@@ -1259,6 +1268,7 @@ function App() {
       setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
       setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
       setPhotoPreview("");
+      setPendingEntryImageDataUrl("");
       setPhotoAnalysis(null);
       setPhotoState("idle");
       if (photoInputRef.current) photoInputRef.current.value = "";
@@ -1369,6 +1379,7 @@ function App() {
         consumedAt: nowLocal(),
         source: entry.source ?? "manual",
         aiUsage: entry.aiUsage,
+        imageDataUrl: entry.imageDataUrl,
       });
       setEntries((currentEntries) => [duplicatedEntry, ...currentEntries]);
       setSelectedDate(duplicatedEntry.consumedAt.slice(0, 10));
@@ -1390,7 +1401,9 @@ function App() {
       consumedAt: entry.consumedAt,
       source: entry.source ?? "manual",
       aiUsage: entry.aiUsage,
+      imageDataUrl: entry.imageDataUrl,
     });
+    setPendingEntryImageDataUrl("");
     setEditingEntryId(entry.id);
     setEntryError("");
     setAutocompleteOpen(false);
@@ -1401,7 +1414,29 @@ function App() {
   function cancelEdit() {
     setEditingEntryId(null);
     setDraft(createEmptyDraft());
+    setPendingEntryImageDataUrl("");
     setEntryError("");
+  }
+
+  async function reanalyzeEntryImage(entry: FoodEntry) {
+    if (!entry.imageDataUrl || reanalyzingEntryId) return;
+    setEntryError("");
+    setReanalyzingEntryId(entry.id);
+    try {
+      const analysis = await analyzeFoodPhoto(entry.imageDataUrl);
+      const updatedEntry = await updateBackendEntry(entry.id, {
+        ...draftFromAnalysis(analysis),
+        consumedAt: entry.consumedAt,
+        imageDataUrl: entry.imageDataUrl,
+      });
+      setEntries((currentEntries) => currentEntries.map((currentEntry) => (
+        currentEntry.id === updatedEntry.id ? updatedEntry : currentEntry
+      )));
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Neu-Erkennung fehlgeschlagen.");
+    } finally {
+      setReanalyzingEntryId(null);
+    }
   }
 
   async function exportData() {
@@ -2342,6 +2377,9 @@ function App() {
             onDuplicate={(entry) => void duplicateEntry(entry)}
             onEdit={editEntry}
             onDelete={(id) => void deleteEntry(id)}
+            onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
+            isReanalyzing={reanalyzingEntryId === group.entry.id}
+            canReanalyze={aiConfig.hasApiKey}
           />
         ) : (
           <article className="meal-row" key={group.id}>
@@ -2361,6 +2399,9 @@ function App() {
                   onDuplicate={(entry) => void duplicateEntry(entry)}
                   onEdit={editEntry}
                   onDelete={(id) => void deleteEntry(id)}
+                  onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
+                  isReanalyzing={reanalyzingEntryId === entry.id}
+                  canReanalyze={aiConfig.hasApiKey}
                   compact
                 />
               ))}
@@ -2584,12 +2625,18 @@ function FoodEntryRow({
   onDuplicate,
   onEdit,
   onDelete,
+  onReanalyze,
+  isReanalyzing,
+  canReanalyze,
   compact = false,
 }: {
   entry: FoodEntry;
   onDuplicate: (entry: FoodEntry) => void;
   onEdit: (entry: FoodEntry) => void;
   onDelete: (id: string) => void;
+  onReanalyze: (entry: FoodEntry) => void;
+  isReanalyzing: boolean;
+  canReanalyze: boolean;
   compact?: boolean;
 }) {
   const entryCalories = caloriesFor(entry);
@@ -2607,6 +2654,21 @@ function FoodEntryRow({
           <h3>{entry.foodName}</h3>
           <strong>{entryCalories.toLocaleString()} kcal</strong>
         </div>
+        {entry.imageDataUrl && (
+          <div className="food-row__image">
+            <img src={entry.imageDataUrl} alt="" />
+            <button
+              className="secondary-button secondary-button--compact"
+              type="button"
+              disabled={!canReanalyze || isReanalyzing}
+              onClick={() => onReanalyze(entry)}
+              title={canReanalyze ? "Gespeichertes Bild mit aktuellem Foto-Modell neu erkennen" : "API-Key zuerst in der Konfiguration speichern"}
+            >
+              {isReanalyzing ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <RefreshCw size={16} aria-hidden="true" />}
+              Neu erkennen
+            </button>
+          </div>
+        )}
         <p className="food-row__meta">
           {formatQuantity(entry)} · {entry.caloriesPer100g.toLocaleString()} kcal / 100g
         </p>
@@ -3358,6 +3420,7 @@ function normalizeBackendEntry(entry: FoodEntry): FoodEntry {
     fatPer100g: Number(entry.fatPer100g ?? 0),
     mealId: entry.mealId || undefined,
     mealName: entry.mealName || undefined,
+    imageDataUrl: entry.imageDataUrl || undefined,
   };
 }
 
@@ -3507,13 +3570,42 @@ function trafficLightLabel(value: WeeklyAiSignal["label"]) {
   return "Okay";
 }
 
-function readFileAsDataUrl(file: File) {
+function readImageAsCompressedDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("Bild konnte nicht verarbeitet werden."));
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      image.onerror = () => reject(new Error("Bild konnte nicht gelesen werden."));
+      image.src = String(reader.result ?? "");
+    };
     reader.onerror = () => reject(new Error("Bild konnte nicht gelesen werden."));
     reader.readAsDataURL(file);
   });
+}
+
+function captureVideoFrame(video: HTMLVideoElement) {
+  if (!video.videoWidth || !video.videoHeight) return "";
+  const scale = Math.min(1, 960 / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.72);
 }
 
 export default App;
