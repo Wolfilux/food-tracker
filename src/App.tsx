@@ -745,13 +745,27 @@ function App() {
   );
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
   const displayedMealTemplates = useMemo(
-    () => [...mealTemplates].sort((left, right) => {
-      const leftFavorite = mealTemplateFavorites.includes(left.id);
-      const rightFavorite = mealTemplateFavorites.includes(right.id);
-      if (leftFavorite !== rightFavorite) return leftFavorite ? -1 : 1;
-      return left.name.localeCompare(right.name, "de");
-    }),
-    [mealTemplateFavorites, mealTemplates],
+    () => {
+      const query = normalizeFoodKey(mealNameDraft);
+      const templates = query
+        ? mealTemplates.filter((meal) => {
+            const searchableText = [
+              meal.name,
+              ...meal.items.map((item) => item.foodName),
+            ].join(" ");
+
+            return normalizeFoodKey(searchableText).includes(query);
+          })
+        : mealTemplates;
+
+      return [...templates].sort((left, right) => {
+        const leftFavorite = mealTemplateFavorites.includes(left.id);
+        const rightFavorite = mealTemplateFavorites.includes(right.id);
+        if (leftFavorite !== rightFavorite) return leftFavorite ? -1 : 1;
+        return left.name.localeCompare(right.name, "de");
+      });
+    },
+    [mealNameDraft, mealTemplateFavorites, mealTemplates],
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
@@ -2433,11 +2447,11 @@ function App() {
             <div className="search-panel__heading">
               <Utensils size={18} aria-hidden="true" />
               <span>Mahlzeiten</span>
-              <small>{mealTemplates.length} Vorlagen</small>
+              <small>{displayedMealTemplates.length}/{mealTemplates.length} Vorlagen</small>
             </div>
             <label>
-              Name
-              <input value={mealNameDraft} onChange={(event) => setMealNameDraft(event.target.value)} placeholder="z.B. Standard-Fruehstueck" />
+              Name / Vorlage suchen
+              <input value={mealNameDraft} onChange={(event) => setMealNameDraft(event.target.value)} placeholder="z.B. Standard-Fruehstueck oder Haferflocken" />
             </label>
             <div className="photo-actions">
               <button className="secondary-button" type="button" disabled={!draft.foodName.trim()} onClick={addDraftToMeal}>
@@ -2468,6 +2482,9 @@ function App() {
             {mealError && <p className="photo-note photo-note--error">{mealError}</p>}
             {mealTemplateError && <p className="photo-note photo-note--error">{mealTemplateError}</p>}
             {mealState === "saved" && <p className="photo-note">Mahlzeit gespeichert.</p>}
+            {mealNameDraft.trim() && displayedMealTemplates.length === 0 && (
+              <p className="photo-note">Keine Vorlage passt zu "{mealNameDraft.trim()}".</p>
+            )}
             {displayedMealTemplates.length > 0 && (
               <div className="meal-template-list">
                 {displayedMealTemplates.map((meal) => {
