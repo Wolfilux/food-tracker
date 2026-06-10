@@ -1411,7 +1411,8 @@ function buildWeeklyAnalysis(weekStartInput) {
       macroTargets,
     };
   });
-  const totals = days.reduce((sum, day) => ({
+  const loggedDays = days.filter((day) => day.entryCount > 0);
+  const totals = loggedDays.reduce((sum, day) => ({
     calories: sum.calories + day.totals.calories,
     grams: sum.grams + day.totals.grams,
     protein: sum.protein + day.totals.protein,
@@ -1441,6 +1442,7 @@ function buildWeeklyAnalysis(weekStartInput) {
     weekEnd,
     goal: nutritionConfig.goal,
     goalLabel: preset.label,
+    loggedDayCount: loggedDays.length,
     days,
     totals,
     signal,
@@ -1536,6 +1538,7 @@ function buildWeeklyPromptPayload(summary) {
     weekEnd: summary.weekEnd,
     goal: summary.goalLabel,
     signal: summary.signal,
+    loggedDayCount: summary.loggedDayCount,
     totals: roundWeeklyNumbers(summary.totals),
     days: summary.days.map((day) => ({
       date: day.date,
@@ -1564,6 +1567,7 @@ function calculateTrafficLight(days, totals) {
   const proteinRatio = totals.proteinTarget > 0 ? totals.protein / totals.proteinTarget : 1;
   const filledDays = days.filter((day) => day.entryCount > 0).length;
   const severeOutliers = days.filter((day) => {
+    if (day.entryCount === 0) return false;
     const target = Math.max(1, day.calorieTarget);
     return Math.abs(day.totals.calories - target) / target > 0.35;
   }).length;

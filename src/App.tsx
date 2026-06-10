@@ -7,8 +7,10 @@ import {
   Camera,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock3,
   Copy,
   Database,
@@ -644,6 +646,7 @@ function App() {
   const [mealFavoriteKeys, setMealFavoriteKeys] = useState<string[]>([]);
   const legacyFavoritesMigratedRef = useRef(false);
   const [activeMealId, setActiveMealId] = useState<string | null>(null);
+  const [collapsedMealIds, setCollapsedMealIds] = useState<Record<string, boolean>>({});
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [mealEditNameDraft, setMealEditNameDraft] = useState("");
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
@@ -746,7 +749,7 @@ function App() {
   );
   const weekSummary = useMemo(
     () =>
-      weekAnalysis.reduce(
+      weekAnalysis.filter((day) => day.entryCount > 0).reduce(
         (sum, day) => ({
           calories: sum.calories + day.totals.calories,
           calorieTarget: sum.calorieTarget + day.calorieTarget,
@@ -761,6 +764,7 @@ function App() {
       ),
     [weekAnalysis],
   );
+  const loggedWeekDayCount = useMemo(() => weekAnalysis.filter((day) => day.entryCount > 0).length, [weekAnalysis]);
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
   const availableMealTemplates = useMemo(
     () => [
@@ -791,6 +795,13 @@ function App() {
     [availableMealTemplates, mealFavoriteKeys, mealNameDraft],
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
+
+  function toggleMealCollapsed(mealId: string) {
+    setCollapsedMealIds((currentIds) => ({
+      ...currentIds,
+      [mealId]: !currentIds[mealId],
+    }));
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -1901,7 +1912,9 @@ function App() {
                 Wochenansicht
               </p>
               <h2>{formatWeekRange(weekDates)}</h2>
-              <span>{weekAnalysis.reduce((sum, day) => sum + day.entryCount, 0)} Einträge · {formatSignedNumber(weekSummary.calories - weekSummary.calorieTarget)} kcal Woche</span>
+              <span>
+                {weekAnalysis.reduce((sum, day) => sum + day.entryCount, 0)} Einträge · {loggedWeekDayCount} erfasste Tage · {formatSignedNumber(weekSummary.calories - weekSummary.calorieTarget)} kcal erfasste Woche
+              </span>
             </div>
             <div className="week-actions">
               <button className="secondary-button" type="button" aria-label="Vorherige Woche" onClick={() => setSelectedDate(addDays(selectedWeekStart, -7))}>
@@ -1974,6 +1987,7 @@ function App() {
                 actual: day.totals.calories,
                 target: day.calorieTarget,
                 entryCount: day.entryCount,
+                countsInWeek: day.entryCount > 0,
                 hasError: Boolean(day.garminError),
               }))}
             />
@@ -1985,6 +1999,7 @@ function App() {
                 actual: day.totals.protein,
                 target: day.macroTargets.protein.grams,
                 entryCount: day.entryCount,
+                countsInWeek: day.entryCount > 0,
               }))}
             />
             <WeeklyBarChart
@@ -1995,6 +2010,7 @@ function App() {
                 actual: day.totals.carbs,
                 target: day.macroTargets.carbs.grams,
                 entryCount: day.entryCount,
+                countsInWeek: day.entryCount > 0,
               }))}
             />
             <WeeklyBarChart
@@ -2005,6 +2021,7 @@ function App() {
                 actual: day.totals.fat,
                 target: day.macroTargets.fat.grams,
                 entryCount: day.entryCount,
+                countsInWeek: day.entryCount > 0,
               }))}
             />
           </section>
@@ -2829,12 +2846,17 @@ function App() {
           />
         ) : (
           <article
-            className={activeMealId === group.id ? "meal-row meal-row--active" : "meal-row"}
+            className={[
+              "meal-row",
+              activeMealId === group.id ? "meal-row--active" : "",
+              collapsedMealIds[group.id] ? "meal-row--collapsed" : "",
+            ].filter(Boolean).join(" ")}
             key={group.id}
             ref={(element) => {
               mealRefs.current[group.id] = element;
             }}
             tabIndex={-1}
+            aria-labelledby={`meal-${group.id}-title`}
           >
             <div className="meal-row__heading">
               <div>
@@ -2876,7 +2898,7 @@ function App() {
                     </button>
                   </div>
                 ) : (
-                  <h3>{group.name}</h3>
+                  <h3 id={`meal-${group.id}-title`}>{group.name}</h3>
                 )}
                 <p>{group.entries.length} Lebensmittel · {group.calories.toLocaleString("de-DE")} kcal</p>
                 {group.imageDataUrl && (
@@ -2898,6 +2920,17 @@ function App() {
               <div className="meal-row__actions">
                 <button
                   type="button"
+                  className="meal-row__icon"
+                  onClick={() => toggleMealCollapsed(group.id)}
+                  aria-expanded={!collapsedMealIds[group.id]}
+                  aria-controls={`meal-${group.id}-items`}
+                  aria-label={`${group.name} ${collapsedMealIds[group.id] ? "aufklappen" : "einklappen"}`}
+                  title={collapsedMealIds[group.id] ? "Mahlzeit aufklappen" : "Mahlzeit einklappen"}
+                >
+                  {collapsedMealIds[group.id] ? <ChevronDown size={17} aria-hidden="true" /> : <ChevronUp size={17} aria-hidden="true" />}
+                </button>
+                <button
+                  type="button"
                   className={mealFavoriteKeys.includes(mealGroupFavoriteKey(group)) ? "meal-row__icon meal-row__icon--favorite" : "meal-row__icon"}
                   onClick={() => void toggleMealFavorite(group)}
                   aria-label={`${group.name} ${mealFavoriteKeys.includes(mealGroupFavoriteKey(group)) ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
@@ -2917,23 +2950,25 @@ function App() {
                 <strong>{group.calories.toLocaleString("de-DE")} kcal</strong>
               </div>
             </div>
-            <div className="meal-row__items">
-              {group.entries.map((entry) => (
-                <FoodEntryRow
-                  entry={entry}
-                  key={entry.id}
-                  onDuplicate={(entry) => void duplicateEntry(entry)}
-                  onEdit={editEntry}
-                  onDelete={(id) => void deleteEntry(id)}
-                  onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
-                  isReanalyzing={reanalyzingEntryId === entry.id}
-                  canReanalyze={aiConfig.hasApiKey}
-                  isSelected={selectedEntryIds.includes(entry.id)}
-                  onToggleSelected={toggleEntrySelection}
-                  compact
-                />
-              ))}
-            </div>
+            {!collapsedMealIds[group.id] && (
+              <div className="meal-row__items" id={`meal-${group.id}-items`}>
+                {group.entries.map((entry) => (
+                  <FoodEntryRow
+                    entry={entry}
+                    key={entry.id}
+                    onDuplicate={(entry) => void duplicateEntry(entry)}
+                    onEdit={editEntry}
+                    onDelete={(id) => void deleteEntry(id)}
+                    onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
+                    isReanalyzing={reanalyzingEntryId === entry.id}
+                    canReanalyze={aiConfig.hasApiKey}
+                    isSelected={selectedEntryIds.includes(entry.id)}
+                    onToggleSelected={toggleEntrySelection}
+                    compact
+                  />
+                ))}
+              </div>
+            )}
           </article>
         ))}
         </section>
@@ -2954,7 +2989,7 @@ function AnalysisSummaryMetric({ label, actual, target, suffix }: { label: strin
       <span>{label}</span>
       <strong>{roundedActual.toLocaleString("de-DE")} <small>{suffix}</small></strong>
       <p className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
-        {formatSignedNumber(delta)} {suffix} vs. Ziel
+        {formatSignedNumber(delta)} {suffix} vs. Ziel erfasster Tage
       </p>
     </article>
   );
@@ -2965,6 +3000,7 @@ type WeeklyChartPoint = {
   actual: number;
   target: number;
   entryCount: number;
+  countsInWeek: boolean;
   hasError?: boolean;
 };
 
@@ -3038,7 +3074,7 @@ function CalorieTimingPlan({
 
 function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: string; points: WeeklyChartPoint[] }) {
   const chartMax = Math.max(1, ...points.flatMap((point) => [point.actual, point.target])) * 1.12;
-  const totalDelta = Math.round(points.reduce((sum, point) => sum + point.actual - point.target, 0));
+  const totalDelta = Math.round(points.reduce((sum, point) => point.countsInWeek ? sum + point.actual - point.target : sum, 0));
 
   return (
     <article className="weekly-chart-card">
@@ -3056,12 +3092,15 @@ function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: stri
           const actualHeight = Math.max(3, Math.round((point.actual / chartMax) * 100));
           const targetPosition = Math.min(100, Math.max(0, Math.round((point.target / chartMax) * 100)));
           const isOver = delta > 0;
+          const dayDeltaLabel = point.countsInWeek ? formatSignedNumber(delta) : "leer";
 
           return (
             <div className="weekly-bar-day" role="listitem" key={`${title}-${point.date}`}>
               <div
-                className={isOver ? "weekly-bar weekly-bar--over" : "weekly-bar weekly-bar--under"}
-                aria-label={`${formatWeekdayShort(point.date)}: ${actual} von ${target} ${suffix}`}
+                className={`${isOver ? "weekly-bar weekly-bar--over" : "weekly-bar weekly-bar--under"}${point.countsInWeek ? "" : " weekly-bar--empty"}`}
+                aria-label={point.countsInWeek
+                  ? `${formatWeekdayShort(point.date)}: ${actual} von ${target} ${suffix}`
+                  : `${formatWeekdayShort(point.date)}: kein Eintrag`}
               >
                 <span className="weekly-bar__fill" style={{ height: `${actualHeight}%` }} />
                 <span className="weekly-bar__target" style={{ bottom: `${targetPosition}%` }} />
@@ -3073,7 +3112,7 @@ function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: stri
                   <small>Z {target.toLocaleString("de-DE")}</small>
                 </span>
                 <em className={isOver ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
-                  {formatSignedNumber(delta)}
+                  {dayDeltaLabel}
                 </em>
                 {point.hasError && <small className="weekly-bar-day__error">Garmin</small>}
               </div>
