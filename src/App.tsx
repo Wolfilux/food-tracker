@@ -99,6 +99,8 @@ type FoodSearchResult = {
   imageUrl?: string;
   usageCount?: number;
   source: string;
+  sourceVersion?: string;
+  sourceUpdatedAt?: string;
 };
 
 type CommonFood = Omit<FoodSearchResult, "usageCount"> & {

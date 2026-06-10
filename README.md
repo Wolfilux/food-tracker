@@ -17,6 +17,7 @@ Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
 - Tagesziel mit Kalorien- und Makro-Fortschritt
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
+- Versionierter BLS-Import fuer generische/rohe Lebensmittel und deutsche Naehrwerte
 - Fotoanalyse fuer Beschreibung, geschaetztes Gewicht, Kalorien und Makros
 - Textanalyse fuer freie Essensbeschreibungen
 - Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate und Fett
@@ -96,6 +97,22 @@ SMTP_FROM=Food Tracker <food-tracker@example.com>
 ```
 
 Wenn `SMTP_HOST`, Empfaengeradresse oder KI-Key fehlen, laeuft der Scheduler weiter und ueberspringt nur den Mailversand.
+
+## BLS-Datenimport
+
+OpenFoodFacts bleibt der Fallback fuer Barcode- und Packungsprodukte. Fuer rohe/generische Lebensmittel kann der Bundeslebensmittelschluessel (BLS) versioniert in die lokale SQLite-Datenbank importiert werden:
+
+```bash
+python3 scripts/import-bls.py
+```
+
+Ohne `--source` findet das Script den aktuellen ZIP-Download auf `https://blsdb.de/download`, importiert die `BLS_4_0_Daten_2025_DE.xlsx` und speichert die Eintraege als Quelle `BLS` mit `source_version`. Ein lokaler Download kann ebenfalls genutzt werden:
+
+```bash
+python3 scripts/import-bls.py --source ./BLS_4_0_2025_DE.zip --version 4.0 --source-updated-at 2025-12-11
+```
+
+BLS muss nicht live synchronisiert werden. Sinnvoll ist ein manueller oder geplanter Import nach neuen BLS-Releases bzw. Errata, z.B. quartalsweise oder halbjaehrlich pruefen.
 
 ## Installation in Portainer
 

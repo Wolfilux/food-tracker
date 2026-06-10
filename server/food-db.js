@@ -189,7 +189,7 @@ function getStoredFoodById(id) {
     .prepare([
       "SELECT",
       "  id, name, brand, calories_per_100g, protein_per_100g, carbs_per_100g,",
-      "  fat_per_100g, image_url, source",
+      "  fat_per_100g, image_url, source, source_version, source_updated_at",
       "FROM foods",
       "WHERE id = ?",
     ].join("\n"))
@@ -214,6 +214,8 @@ function searchStoredFoods(normalizedQuery, limit = 12) {
     "    foods.fat_per_100g,",
     "    foods.image_url,",
     "    foods.source,",
+    "    foods.source_version,",
+    "    foods.source_updated_at,",
     "    foods.priority,",
     "    CASE",
     "      WHEN foods.normalized_name = ? THEN 100",
@@ -240,6 +242,8 @@ function searchStoredFoods(normalizedQuery, limit = 12) {
     "  fat_per_100g,",
     "  image_url,",
     "  source,",
+    "  source_version,",
+    "  source_updated_at,",
     "  MAX(relevance) AS relevance,",
     "  MAX(priority) AS priority",
     "FROM scored_foods",
@@ -271,7 +275,9 @@ function foodRowToObject(row) {
     carbsPer100g: row.carbs_per_100g,
     fatPer100g: row.fat_per_100g,
     imageUrl: row.image_url || undefined,
-    source: row.source,
+    source: row.source_version ? `${row.source} ${row.source_version}` : row.source,
+    sourceVersion: row.source_version || undefined,
+    sourceUpdatedAt: row.source_updated_at || undefined,
   };
 }
 
@@ -1182,6 +1188,8 @@ function initializeDatabase(database) {
     "  fat_per_100g REAL NOT NULL,",
     "  image_url TEXT NOT NULL DEFAULT '',",
     "  source TEXT NOT NULL DEFAULT 'SQLite',",
+    "  source_version TEXT NOT NULL DEFAULT '',",
+    "  source_updated_at TEXT NOT NULL DEFAULT '',",
     "  priority INTEGER NOT NULL DEFAULT 0",
     ");",
     "CREATE TABLE IF NOT EXISTS food_aliases (",
@@ -1192,6 +1200,13 @@ function initializeDatabase(database) {
     ");",
     "CREATE INDEX IF NOT EXISTS idx_foods_normalized_name ON foods(normalized_name);",
     "CREATE INDEX IF NOT EXISTS idx_food_aliases_normalized_alias ON food_aliases(normalized_alias);",
+    "CREATE TABLE IF NOT EXISTS food_source_imports (",
+    "  source TEXT PRIMARY KEY,",
+    "  source_version TEXT NOT NULL DEFAULT '',",
+    "  source_url TEXT NOT NULL DEFAULT '',",
+    "  imported_at TEXT NOT NULL,",
+    "  record_count INTEGER NOT NULL DEFAULT 0",
+    ");",
     "CREATE TABLE IF NOT EXISTS nutrition_config (",
     "  id TEXT PRIMARY KEY,",
     "  calorie_goal INTEGER NOT NULL,",
@@ -1288,6 +1303,8 @@ function initializeDatabase(database) {
   ].join("\n"));
 
   addColumnIfMissing(database, "foods", "image_url", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "foods", "source_version", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "foods", "source_updated_at", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "ai_usage_json", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "entries", "meal_id", "TEXT");
   addColumnIfMissing(database, "entries", "meal_name", "TEXT");
@@ -2315,9 +2332,10 @@ function upsertFoodRecordsInto(database, foods, source, basePriority = 0) {
   const insertFood = database.prepare([
     "INSERT INTO foods (",
     "  id, name, normalized_name, brand, normalized_brand, calories_per_100g,",
-    "  protein_per_100g, carbs_per_100g, fat_per_100g, image_url, source, priority",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, image_url, source,",
+    "  source_version, source_updated_at, priority",
     ")",
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     "ON CONFLICT(id) DO UPDATE SET",
     "  name = excluded.name,",
     "  normalized_name = excluded.normalized_name,",
@@ -2329,6 +2347,8 @@ function upsertFoodRecordsInto(database, foods, source, basePriority = 0) {
     "  fat_per_100g = excluded.fat_per_100g,",
     "  image_url = excluded.image_url,",
     "  source = excluded.source,",
+    "  source_version = excluded.source_version,",
+    "  source_updated_at = excluded.source_updated_at,",
     "  priority = excluded.priority",
   ].join("\n"));
   const deleteAliases = database.prepare("DELETE FROM food_aliases WHERE food_id = ?");
@@ -2352,6 +2372,8 @@ function upsertFoodRecordsInto(database, foods, source, basePriority = 0) {
         food.fatPer100g,
         food.imageUrl ?? "",
         source,
+        food.sourceVersion ?? "",
+        food.sourceUpdatedAt ?? "",
         Math.max(0, basePriority - index),
       );
       deleteAliases.run(food.id);

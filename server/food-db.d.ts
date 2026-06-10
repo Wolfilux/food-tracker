@@ -10,6 +10,8 @@ export function searchFoods(query: string, limit?: number): Array<{
   carbsPer100g: number;
   fatPer100g: number;
   source: string;
+  sourceVersion?: string;
+  sourceUpdatedAt?: string;
 }>;
 export function searchFoodsExpanded(query: string, limit?: number): Promise<Array<{
   id: string;
@@ -21,6 +23,8 @@ export function searchFoodsExpanded(query: string, limit?: number): Promise<Arra
   fatPer100g: number;
   imageUrl?: string;
   source: string;
+  sourceVersion?: string;
+  sourceUpdatedAt?: string;
 }>>;
 export function findFoodByBarcode(barcode: string): Promise<{
   id: string;
@@ -32,6 +36,8 @@ export function findFoodByBarcode(barcode: string): Promise<{
   fatPer100g: number;
   imageUrl?: string;
   source: string;
+  sourceVersion?: string;
+  sourceUpdatedAt?: string;
 } | null>;
 export function getPublicAiConfig(): {
   provider: string;
