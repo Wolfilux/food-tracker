@@ -461,6 +461,17 @@ const COMMON_FOODS: CommonFood[] = [
     source: "Common food",
   },
   {
+    id: "common:pfirsich",
+    name: "Pfirsich",
+    brand: "Standard",
+    caloriesPer100g: 39,
+    proteinPer100g: 0.9,
+    carbsPer100g: 9.5,
+    fatPer100g: 0.3,
+    aliases: ["peach"],
+    source: "Common food",
+  },
+  {
     id: "common:paprika-gruen",
     name: "Paprika grün",
     brand: "Standard",
