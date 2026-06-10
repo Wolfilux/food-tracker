@@ -1480,10 +1480,69 @@ button:focus-visible {
 .date-filter {
   width: min(170px, 100%);
   margin: 0 0 0 auto;
+  min-width: 0;
 }
 
 .date-filter input {
+  display: block;
   min-height: 38px;
+  max-width: 100%;
+}
+
+.entry-grouping {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 12px;
+  background: rgba(238, 245, 240, 0.64);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: 8px;
+}
+
+.entry-grouping--active {
+  background: #f8f6e9;
+  border-color: rgba(121, 98, 49, 0.2);
+}
+
+.entry-grouping__summary,
+.entry-grouping__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.entry-grouping__summary {
+  color: #425045;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.entry-grouping__controls {
+  flex-wrap: wrap;
+}
+
+.entry-grouping__controls label {
+  flex: 1 1 190px;
+  margin-bottom: 0;
+}
+
+.entry-grouping__controls .secondary-button {
+  flex: 0 1 auto;
+  min-height: 44px;
+  margin-top: 24px;
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  padding: 0;
+  color: #d5512a;
+  background: transparent;
+  border: 0;
+  font-size: 0.82rem;
+  font-weight: 850;
 }
 
 .form-error,
@@ -1501,7 +1560,7 @@ button:focus-visible {
 
 .food-row {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 34px 48px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 10px 0;
@@ -1509,9 +1568,51 @@ button:focus-visible {
 }
 
 .food-row--compact {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 10px;
   padding: 7px 0;
+}
+
+.food-row--selected {
+  background: linear-gradient(90deg, rgba(238, 245, 240, 0.8), transparent);
+}
+
+.entry-select {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin: 0;
+}
+
+.entry-select input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  opacity: 0;
+}
+
+.entry-select span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: transparent;
+  background: rgba(255, 250, 240, 0.94);
+  border: 1px solid rgba(23, 33, 27, 0.22);
+  border-radius: 7px;
+}
+
+.entry-select input:checked + span {
+  color: #fff8eb;
+  background: #24403a;
+  border-color: #24403a;
+}
+
+.entry-select input:focus-visible + span {
+  outline: 2px solid #d5512a;
+  outline-offset: 2px;
 }
 
 .food-row--compact h3 {
@@ -1858,7 +1959,7 @@ button:focus-visible {
   }
 
   .food-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
     align-items: start;
   }
 
@@ -1874,6 +1975,16 @@ button:focus-visible {
   .date-filter {
     width: 100%;
     margin-left: 0;
+  }
+
+  .entry-grouping__controls {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .entry-grouping__controls .secondary-button {
+    width: 100%;
+    margin-top: 0;
   }
 
   .food-actions {

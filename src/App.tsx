@@ -6,6 +6,7 @@ import {
   Barcode,
   Camera,
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -616,6 +617,9 @@ function App() {
   const [textAnalysisState, setTextAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [textAnalysisError, setTextAnalysisError] = useState("");
   const [entryError, setEntryError] = useState("");
+  const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+  const [mealGroupNameDraft, setMealGroupNameDraft] = useState("");
+  const [mealGroupingState, setMealGroupingState] = useState<"idle" | "saving">("idle");
   const [mealNameDraft, setMealNameDraft] = useState("");
   const [mealBuilderItems, setMealBuilderItems] = useState<MealTemplateItem[]>([]);
   const [mealState, setMealState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -664,6 +668,10 @@ function App() {
   );
 
   const groupedEntries = useMemo(() => buildEntryGroups(sortedEntries), [sortedEntries]);
+  const selectedEntries = useMemo(
+    () => sortedEntries.filter((entry) => selectedEntryIds.includes(entry.id)),
+    [selectedEntryIds, sortedEntries],
+  );
 
   const totals = useMemo(
     () =>
@@ -1347,6 +1355,39 @@ function App() {
       setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
+    }
+  }
+
+  function toggleEntrySelection(entryId: string) {
+    setSelectedEntryIds((currentIds) => (
+      currentIds.includes(entryId)
+        ? currentIds.filter((id) => id !== entryId)
+        : [...currentIds, entryId]
+    ));
+    setEntryError("");
+  }
+
+  async function groupSelectedEntries() {
+    const mealName = mealGroupNameDraft.trim();
+    if (selectedEntries.length < 2 || !mealName || mealGroupingState === "saving") return;
+
+    const mealId = createClientId();
+    setEntryError("");
+    setMealGroupingState("saving");
+    try {
+      const updatedEntries = await Promise.all(selectedEntries.map((entry) => updateBackendEntry(entry.id, {
+        ...draftFromEntry(entry),
+        mealId,
+        mealName,
+      })));
+      const updatedEntriesById = new Map(updatedEntries.map((entry) => [entry.id, entry]));
+      setEntries((currentEntries) => currentEntries.map((entry) => updatedEntriesById.get(entry.id) ?? entry));
+      setSelectedEntryIds([]);
+      setMealGroupNameDraft("");
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Eintraege konnten nicht gruppiert werden.");
+    } finally {
+      setMealGroupingState("idle");
     }
   }
 
@@ -2418,9 +2459,48 @@ function App() {
           </div>
           <label className="date-filter">
             Tag
-            <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value || todayLocal())} />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(event) => {
+                setSelectedDate(event.target.value || todayLocal());
+                setSelectedEntryIds([]);
+              }}
+            />
           </label>
         </div>
+        {sortedEntries.length > 0 && (
+          <div className={selectedEntries.length > 0 ? "entry-grouping entry-grouping--active" : "entry-grouping"}>
+            <div className="entry-grouping__summary">
+              <Check size={16} aria-hidden="true" />
+              <span>{selectedEntries.length} ausgewählt</span>
+              {selectedEntries.length > 0 && (
+                <button className="link-button" type="button" onClick={() => setSelectedEntryIds([])}>
+                  Auswahl löschen
+                </button>
+              )}
+            </div>
+            <div className="entry-grouping__controls">
+              <label>
+                Mahlzeitname
+                <input
+                  value={mealGroupNameDraft}
+                  onChange={(event) => setMealGroupNameDraft(event.target.value)}
+                  placeholder="z.B. Mittagessen"
+                />
+              </label>
+              <button
+                className="secondary-button secondary-button--dark"
+                type="button"
+                disabled={selectedEntries.length < 2 || !mealGroupNameDraft.trim() || mealGroupingState === "saving"}
+                onClick={() => void groupSelectedEntries()}
+              >
+                {mealGroupingState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Utensils size={18} aria-hidden="true" />}
+                Zu Mahlzeit zusammenfassen
+              </button>
+            </div>
+          </div>
+        )}
         {sortedEntries.length === 0 && <p className="empty-state">Noch keine Einträge fuer diesen Tag.</p>}
         {groupedEntries.map((group) => group.kind === "single" ? (
           <FoodEntryRow
@@ -2432,6 +2512,8 @@ function App() {
             onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
             isReanalyzing={reanalyzingEntryId === group.entry.id}
             canReanalyze={aiConfig.hasApiKey}
+            isSelected={selectedEntryIds.includes(group.entry.id)}
+            onToggleSelected={toggleEntrySelection}
           />
         ) : (
           <article className="meal-row" key={group.id}>
@@ -2469,6 +2551,8 @@ function App() {
                   onReanalyze={(entry) => void reanalyzeEntryImage(entry)}
                   isReanalyzing={reanalyzingEntryId === entry.id}
                   canReanalyze={aiConfig.hasApiKey}
+                  isSelected={selectedEntryIds.includes(entry.id)}
+                  onToggleSelected={toggleEntrySelection}
                   compact
                 />
               ))}
@@ -2695,6 +2779,8 @@ function FoodEntryRow({
   onReanalyze,
   isReanalyzing,
   canReanalyze,
+  isSelected,
+  onToggleSelected,
   compact = false,
 }: {
   entry: FoodEntry;
@@ -2704,6 +2790,8 @@ function FoodEntryRow({
   onReanalyze: (entry: FoodEntry) => void;
   isReanalyzing: boolean;
   canReanalyze: boolean;
+  isSelected: boolean;
+  onToggleSelected: (id: string) => void;
   compact?: boolean;
 }) {
   const entryCalories = caloriesFor(entry);
@@ -2714,7 +2802,15 @@ function FoodEntryRow({
   ] as const;
 
   return (
-    <article className={compact ? "food-row food-row--compact" : "food-row"}>
+    <article className={`${compact ? "food-row food-row--compact" : "food-row"}${isSelected ? " food-row--selected" : ""}`}>
+      <label className="entry-select" aria-label={`${entry.foodName} auswählen`}>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelected(entry.id)}
+        />
+        <span aria-hidden="true"><Check size={14} /></span>
+      </label>
       {!compact && <time className="entry-time" dateTime={entry.consumedAt}>{formatTime(entry.consumedAt)}</time>}
       <div className="food-row__main">
         <div className="food-row__titleline">
@@ -3199,6 +3295,25 @@ function draftFromAnalysis(analysis: FoodImageAnalysis): FoodDraft {
   };
 }
 
+function draftFromEntry(entry: FoodEntry): FoodDraft {
+  return {
+    foodKey: entry.foodKey,
+    foodName: entry.foodName,
+    quantityValue: entry.quantityValue,
+    quantityUnit: entry.quantityUnit,
+    caloriesPer100g: entry.caloriesPer100g,
+    proteinPer100g: entry.proteinPer100g,
+    carbsPer100g: entry.carbsPer100g,
+    fatPer100g: entry.fatPer100g,
+    consumedAt: entry.consumedAt,
+    source: entry.source ?? "manual",
+    aiUsage: entry.aiUsage,
+    mealId: entry.mealId,
+    mealName: entry.mealName,
+    imageDataUrl: entry.imageDataUrl,
+  };
+}
+
 function draftsFromAnalysis(analysis: FoodImageAnalysis, consumedAt: string): FoodDraft[] {
   const itemDrafts = (analysis.items ?? []).map((item) => draftFromAnalysis({
     ...item,
@@ -3208,6 +3323,10 @@ function draftsFromAnalysis(analysis: FoodImageAnalysis, consumedAt: string): Fo
   }));
   const drafts = itemDrafts.length > 1 ? itemDrafts : [draftFromAnalysis(analysis)];
   return drafts.map((entry) => ({ ...entry, consumedAt }));
+}
+
+function createClientId() {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function templateItemFromDraft(draft: FoodDraft): MealTemplateItem {
