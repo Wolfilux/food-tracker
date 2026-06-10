@@ -27,6 +27,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Star,
   Target,
   Trash2,
   Upload,
@@ -253,6 +254,7 @@ const defaultNutritionConfig: NutritionConfig = {
   goal: "maintenance",
 };
 const minimumCalorieGoal = 800;
+const mealFavoritesStorageKey = "food-tracker:meal-favorites";
 
 const defaultAiConfig: AiConfig = {
   provider: "openai",
@@ -620,6 +622,11 @@ function App() {
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const [mealGroupNameDraft, setMealGroupNameDraft] = useState("");
   const [mealGroupingState, setMealGroupingState] = useState<"idle" | "saving">("idle");
+  const [mealFavorites, setMealFavorites] = useState<string[]>(() => loadMealFavorites());
+  const [activeMealId, setActiveMealId] = useState<string | null>(null);
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [mealEditNameDraft, setMealEditNameDraft] = useState("");
+  const [savingMealId, setSavingMealId] = useState<string | null>(null);
   const [mealNameDraft, setMealNameDraft] = useState("");
   const [mealBuilderItems, setMealBuilderItems] = useState<MealTemplateItem[]>([]);
   const [mealState, setMealState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -654,6 +661,7 @@ function App() {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const mealRefs = useRef<Record<string, HTMLElement | null>>({});
   const selectedWeekStart = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
   const weekDates = useMemo(() => buildWeekDates(selectedWeekStart), [selectedWeekStart]);
 
@@ -668,6 +676,7 @@ function App() {
   );
 
   const groupedEntries = useMemo(() => buildEntryGroups(sortedEntries), [sortedEntries]);
+  const mealGroups = useMemo(() => groupedEntries.filter((group): group is MealEntryGroup => group.kind === "meal"), [groupedEntries]);
   const selectedEntries = useMemo(
     () => sortedEntries.filter((entry) => selectedEntryIds.includes(entry.id)),
     [selectedEntryIds, sortedEntries],
@@ -785,6 +794,10 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [isConfigLoaded, nutritionConfig]);
+
+  useEffect(() => {
+    saveMealFavorites(mealFavorites);
+  }, [mealFavorites]);
 
   const refreshGarminSummary = useCallback(async () => {
     if (!hasGarminCredentials) {
@@ -1391,6 +1404,60 @@ function App() {
     }
   }
 
+  function scrollToMeal(mealId: string) {
+    setActiveMealId(mealId);
+    const mealElement = mealRefs.current[mealId];
+    if (!mealElement) return;
+    mealElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => mealElement.focus({ preventScroll: true }), 220);
+  }
+
+  function scrollMealByStep(step: number) {
+    if (mealGroups.length === 0) return;
+    const currentIndex = activeMealId ? mealGroups.findIndex((group) => group.id === activeMealId) : -1;
+    const fallbackIndex = step > 0 ? -1 : 0;
+    const nextIndex = (currentIndex >= 0 ? currentIndex : fallbackIndex) + step;
+    const boundedIndex = Math.min(Math.max(nextIndex, 0), mealGroups.length - 1);
+    scrollToMeal(mealGroups[boundedIndex].id);
+  }
+
+  function toggleMealFavorite(group: MealEntryGroup) {
+    const favoriteKey = mealFavoriteKey(group);
+    setMealFavorites((currentFavorites) => (
+      currentFavorites.includes(favoriteKey)
+        ? currentFavorites.filter((key) => key !== favoriteKey)
+        : [...currentFavorites, favoriteKey]
+    ));
+  }
+
+  function startMealEdit(group: MealEntryGroup) {
+    setEditingMealId(group.id);
+    setMealEditNameDraft(group.name);
+    setEntryError("");
+  }
+
+  async function saveMealName(group: MealEntryGroup) {
+    const mealName = mealEditNameDraft.trim();
+    if (!mealName || savingMealId) return;
+    setSavingMealId(group.id);
+    setEntryError("");
+    try {
+      const updatedEntries = await Promise.all(group.entries.map((entry) => updateBackendEntry(entry.id, {
+        ...draftFromEntry(entry),
+        mealId: group.id,
+        mealName,
+      })));
+      const updatedEntriesById = new Map(updatedEntries.map((entry) => [entry.id, entry]));
+      setEntries((currentEntries) => currentEntries.map((entry) => updatedEntriesById.get(entry.id) ?? entry));
+      setEditingMealId(null);
+      setMealEditNameDraft("");
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
+    } finally {
+      setSavingMealId(null);
+    }
+  }
+
   async function removeMealTemplate(id: string) {
     await deleteMealTemplate(id);
     setMealTemplates((templates) => templates.filter((template) => template.id !== id));
@@ -1445,6 +1512,8 @@ function App() {
   function editEntry(entry: FoodEntry) {
     setDraft({
       foodKey: entry.foodKey,
+      mealId: entry.mealId,
+      mealName: entry.mealName,
       foodName: entry.foodName,
       quantityValue: entry.quantityValue,
       quantityUnit: entry.quantityUnit,
@@ -2465,10 +2534,53 @@ function App() {
               onChange={(event) => {
                 setSelectedDate(event.target.value || todayLocal());
                 setSelectedEntryIds([]);
+                setActiveMealId(null);
+                setEditingMealId(null);
+                setMealEditNameDraft("");
               }}
             />
           </label>
         </div>
+        {mealGroups.length > 0 && (
+          <nav className="meal-navigation" aria-label="Mahlzeiten im Tagesprotokoll">
+            <button
+              className="meal-navigation__step"
+              type="button"
+              onClick={() => scrollMealByStep(-1)}
+              disabled={mealGroups.length < 2 || activeMealId === mealGroups[0]?.id}
+              aria-label="Vorherige Mahlzeit"
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+            </button>
+            <div className="meal-navigation__list">
+              {mealGroups.map((group, index) => {
+                const isActive = activeMealId === group.id;
+                return (
+                  <button
+                    className={isActive ? "meal-navigation__item meal-navigation__item--active" : "meal-navigation__item"}
+                    type="button"
+                    key={group.id}
+                    onClick={() => scrollToMeal(group.id)}
+                    aria-current={isActive ? "true" : undefined}
+                  >
+                    <span>{index + 1}</span>
+                    <strong>{group.name}</strong>
+                    <small>{group.calories.toLocaleString("de-DE")} kcal</small>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              className="meal-navigation__step"
+              type="button"
+              onClick={() => scrollMealByStep(1)}
+              disabled={mealGroups.length < 2 || activeMealId === mealGroups[mealGroups.length - 1]?.id}
+              aria-label="Nächste Mahlzeit"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </nav>
+        )}
         {sortedEntries.length > 0 && (
           <div className={selectedEntries.length > 0 ? "entry-grouping entry-grouping--active" : "entry-grouping"}>
             <div className="entry-grouping__summary">
@@ -2516,11 +2628,56 @@ function App() {
             onToggleSelected={toggleEntrySelection}
           />
         ) : (
-          <article className="meal-row" key={group.id}>
+          <article
+            className={activeMealId === group.id ? "meal-row meal-row--active" : "meal-row"}
+            key={group.id}
+            ref={(element) => {
+              mealRefs.current[group.id] = element;
+            }}
+            tabIndex={-1}
+          >
             <div className="meal-row__heading">
               <div>
                 <span className="time-tag">{formatDateTime(group.consumedAt)}</span>
-                <h3>{group.name}</h3>
+                {editingMealId === group.id ? (
+                  <div className="meal-row__edit">
+                    <label>
+                      Mahlzeitname
+                      <input
+                        value={mealEditNameDraft}
+                        onChange={(event) => setMealEditNameDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void saveMealName(group);
+                          if (event.key === "Escape") {
+                            setEditingMealId(null);
+                            setMealEditNameDraft("");
+                          }
+                        }}
+                        autoFocus
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void saveMealName(group)}
+                      disabled={!mealEditNameDraft.trim() || savingMealId === group.id}
+                      aria-label="Mahlzeitname speichern"
+                    >
+                      {savingMealId === group.id ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingMealId(null);
+                        setMealEditNameDraft("");
+                      }}
+                      aria-label="Bearbeitung abbrechen"
+                    >
+                      <X size={17} aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : (
+                  <h3>{group.name}</h3>
+                )}
                 <p>{group.entries.length} Lebensmittel · {group.calories.toLocaleString("de-DE")} kcal</p>
                 {group.imageDataUrl && (
                   <div className="meal-row__image">
@@ -2538,7 +2695,27 @@ function App() {
                   </div>
                 )}
               </div>
-              <strong>{group.calories.toLocaleString("de-DE")} kcal</strong>
+              <div className="meal-row__actions">
+                <button
+                  type="button"
+                  className={mealFavorites.includes(mealFavoriteKey(group)) ? "meal-row__icon meal-row__icon--favorite" : "meal-row__icon"}
+                  onClick={() => toggleMealFavorite(group)}
+                  aria-label={`${group.name} ${mealFavorites.includes(mealFavoriteKey(group)) ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
+                  title={mealFavorites.includes(mealFavoriteKey(group)) ? "Favorit" : "Als Favorit markieren"}
+                >
+                  <Star size={17} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="meal-row__icon"
+                  onClick={() => startMealEdit(group)}
+                  aria-label={`${group.name} bearbeiten`}
+                  title="Mahlzeit bearbeiten"
+                >
+                  <Pencil size={17} aria-hidden="true" />
+                </button>
+                <strong>{group.calories.toLocaleString("de-DE")} kcal</strong>
+              </div>
             </div>
             <div className="meal-row__items">
               {group.entries.map((entry) => (
@@ -2856,7 +3033,7 @@ function FoodEntryRow({
   );
 }
 
-function buildEntryGroups(entries: FoodEntry[]) {
+function buildEntryGroups(entries: FoodEntry[]): EntryGroup[] {
   const groups: EntryGroup[] = [];
   const mealMap = new Map<string, FoodEntry[]>();
 
@@ -2891,6 +3068,26 @@ function buildEntryGroups(entries: FoodEntry[]) {
       imageDataUrl: entriesForMeal.find((entry) => entry.imageDataUrl)?.imageDataUrl,
     };
   });
+}
+
+function loadMealFavorites() {
+  if (typeof window === "undefined") return [];
+  try {
+    const rawFavorites = window.localStorage.getItem(mealFavoritesStorageKey);
+    const parsedFavorites = rawFavorites ? JSON.parse(rawFavorites) : [];
+    return Array.isArray(parsedFavorites) ? parsedFavorites.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMealFavorites(favorites: string[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(mealFavoritesStorageKey, JSON.stringify([...new Set(favorites)]));
+}
+
+function mealFavoriteKey(group: MealEntryGroup) {
+  return `meal:${group.id}`;
 }
 
 type DayTotals = {
