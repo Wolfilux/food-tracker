@@ -1219,6 +1219,12 @@ button:focus-visible {
   gap: 8px;
 }
 
+.meal-template-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .analysis-items {
   padding-top: 6px;
 }
@@ -1261,7 +1267,64 @@ button:focus-visible {
   border-radius: 8px;
 }
 
-.meal-template-card strong,
+.meal-template-card__main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.meal-template-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meal-template-card__title-row strong {
+  min-width: 0;
+  color: #17211b;
+  cursor: text;
+}
+
+.meal-template-card__input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: #17211b;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.16);
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 800;
+}
+
+.meal-template-card__input:focus {
+  outline: 2px solid rgba(164, 103, 16, 0.32);
+  outline-offset: 1px;
+}
+
+.meal-template-card__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  color: #627064;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.16);
+  border-radius: 7px;
+}
+
+.meal-template-card__icon--favorite {
+  color: #a46710;
+  background: #fff7dc;
+  border-color: rgba(164, 103, 16, 0.32);
+}
+
+.meal-template-card__icon--favorite svg {
+  fill: currentColor;
+}
+
 .meal-template-card small {
   display: block;
 }

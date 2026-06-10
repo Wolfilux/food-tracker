@@ -453,6 +453,17 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname.startsWith("/api/meals/") && request.method === "PATCH") {
+      const id = decodeURIComponent(url.pathname.replace("/api/meals/", ""));
+      try {
+        const meal = updateMealTemplate(id, await readJsonBody(request));
+        sendJson(response, { meal });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname.startsWith("/api/meals/") && request.method === "DELETE") {
       const id = decodeURIComponent(url.pathname.replace("/api/meals/", ""));
       deleteMealTemplate(id);
@@ -1033,6 +1044,31 @@ export function createMealTemplate(input) {
   return meal;
 }
 
+function getMealTemplate(database, id) {
+  const meal = database.prepare([
+    "SELECT id, name, created_at",
+    "FROM meal_templates",
+    "WHERE id = ?",
+  ].join("\n")).get(id);
+  if (!meal) return null;
+
+  const items = database.prepare([
+    "SELECT",
+    "  meal_id, position, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, source",
+    "FROM meal_template_items",
+    "WHERE meal_id = ?",
+    "ORDER BY position ASC",
+  ].join("\n")).all(id);
+
+  return {
+    id: meal.id,
+    name: meal.name,
+    createdAt: meal.created_at,
+    items: items.map(mealTemplateItemFromRow),
+  };
+}
+
 function saveMealTemplateRows(database, meal) {
   database.prepare([
     "INSERT INTO meal_templates (id, name, created_at)",
@@ -1062,6 +1098,20 @@ function saveMealTemplateRows(database, meal) {
       item.source ?? "manual",
     );
   });
+}
+
+export function updateMealTemplate(id, input) {
+  const name = String(input?.name ?? "").trim().slice(0, 120);
+  if (!name) throw new Error("Meal name is required");
+
+  const database = getFoodDatabase();
+  const existing = database.prepare("SELECT id FROM meal_templates WHERE id = ?").get(id);
+  if (!existing) throw new Error("Meal not found");
+
+  database.prepare("UPDATE meal_templates SET name = ? WHERE id = ?").run(name, id);
+  const updatedMeal = getMealTemplate(database, id);
+  if (!updatedMeal) throw new Error("Meal not found");
+  return updatedMeal;
 }
 
 export function deleteMealTemplate(id) {

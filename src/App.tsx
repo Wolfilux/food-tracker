@@ -255,6 +255,7 @@ const defaultNutritionConfig: NutritionConfig = {
 };
 const minimumCalorieGoal = 800;
 const mealFavoritesStorageKey = "food-tracker:meal-favorites";
+const mealTemplateFavoritesStorageKey = "food-tracker-template-favorites";
 
 const defaultAiConfig: AiConfig = {
   provider: "openai",
@@ -623,14 +624,19 @@ function App() {
   const [mealGroupNameDraft, setMealGroupNameDraft] = useState("");
   const [mealGroupingState, setMealGroupingState] = useState<"idle" | "saving">("idle");
   const [mealFavorites, setMealFavorites] = useState<string[]>(() => loadMealFavorites());
+  const [mealTemplateFavorites, setMealTemplateFavorites] = useState<string[]>(() => loadMealTemplateFavorites());
   const [activeMealId, setActiveMealId] = useState<string | null>(null);
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [mealEditNameDraft, setMealEditNameDraft] = useState("");
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
+  const [editingMealTemplateId, setEditingMealTemplateId] = useState<string | null>(null);
+  const [mealTemplateEditNameDraft, setMealTemplateEditNameDraft] = useState("");
+  const [savingMealTemplateId, setSavingMealTemplateId] = useState<string | null>(null);
   const [mealNameDraft, setMealNameDraft] = useState("");
   const [mealBuilderItems, setMealBuilderItems] = useState<MealTemplateItem[]>([]);
   const [mealState, setMealState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [mealError, setMealError] = useState("");
+  const [mealTemplateError, setMealTemplateError] = useState("");
   const [aiConfigError, setAiConfigError] = useState("");
   const [aiConfigState, setAiConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [aiModelsState, setAiModelsState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -738,6 +744,15 @@ function App() {
     [weekAnalysis],
   );
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
+  const displayedMealTemplates = useMemo(
+    () => [...mealTemplates].sort((left, right) => {
+      const leftFavorite = mealTemplateFavorites.includes(left.id);
+      const rightFavorite = mealTemplateFavorites.includes(right.id);
+      if (leftFavorite !== rightFavorite) return leftFavorite ? -1 : 1;
+      return left.name.localeCompare(right.name, "de");
+    }),
+    [mealTemplateFavorites, mealTemplates],
+  );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
   useEffect(() => {
@@ -798,6 +813,10 @@ function App() {
   useEffect(() => {
     saveMealFavorites(mealFavorites);
   }, [mealFavorites]);
+
+  useEffect(() => {
+    saveMealTemplateFavorites(mealTemplateFavorites);
+  }, [mealTemplateFavorites]);
 
   const refreshGarminSummary = useCallback(async () => {
     if (!hasGarminCredentials) {
@@ -1430,6 +1449,50 @@ function App() {
     ));
   }
 
+  function toggleMealTemplateFavorite(meal: MealTemplate) {
+    setMealTemplateFavorites((currentFavorites) => (
+      currentFavorites.includes(meal.id)
+        ? currentFavorites.filter((id) => id !== meal.id)
+        : [...currentFavorites, meal.id]
+    ));
+  }
+
+  function startMealTemplateEdit(meal: MealTemplate) {
+    setEditingMealTemplateId(meal.id);
+    setMealTemplateEditNameDraft(meal.name);
+    setMealTemplateError("");
+  }
+
+  function cancelMealTemplateEdit() {
+    setEditingMealTemplateId(null);
+    setMealTemplateEditNameDraft("");
+  }
+
+  async function saveMealTemplateName(meal: MealTemplate) {
+    if (savingMealTemplateId === meal.id) return;
+    const mealName = mealTemplateEditNameDraft.trim();
+    if (!mealName) {
+      cancelMealTemplateEdit();
+      return;
+    }
+    if (mealName === meal.name) {
+      cancelMealTemplateEdit();
+      return;
+    }
+
+    setSavingMealTemplateId(meal.id);
+    setMealTemplateError("");
+    try {
+      const updatedMeal = await updateMealTemplateName(meal.id, mealName);
+      setMealTemplates((currentTemplates) => upsertMealTemplate(currentTemplates, updatedMeal));
+      cancelMealTemplateEdit();
+    } catch (error) {
+      setMealTemplateError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
+    } finally {
+      setSavingMealTemplateId(null);
+    }
+  }
+
   function startMealEdit(group: MealEntryGroup) {
     setEditingMealId(group.id);
     setMealEditNameDraft(group.name);
@@ -1459,8 +1522,14 @@ function App() {
   }
 
   async function removeMealTemplate(id: string) {
-    await deleteMealTemplate(id);
-    setMealTemplates((templates) => templates.filter((template) => template.id !== id));
+    try {
+      await deleteMealTemplate(id);
+      setMealTemplates((templates) => templates.filter((template) => template.id !== id));
+      setMealTemplateFavorites((favorites) => favorites.filter((favoriteId) => favoriteId !== id));
+      if (editingMealTemplateId === id) cancelMealTemplateEdit();
+    } catch (error) {
+      setMealTemplateError(error instanceof Error ? error.message : "Mahlzeit konnte nicht geloescht werden.");
+    }
   }
 
   function selectFood(result: FoodSearchResult) {
@@ -2397,13 +2466,58 @@ function App() {
               </div>
             )}
             {mealError && <p className="photo-note photo-note--error">{mealError}</p>}
+            {mealTemplateError && <p className="photo-note photo-note--error">{mealTemplateError}</p>}
             {mealState === "saved" && <p className="photo-note">Mahlzeit gespeichert.</p>}
-            {mealTemplates.length > 0 && (
+            {displayedMealTemplates.length > 0 && (
               <div className="meal-template-list">
-                {mealTemplates.slice(0, 6).map((meal) => (
+                {displayedMealTemplates.map((meal) => {
+                  const isFavorite = mealTemplateFavorites.includes(meal.id);
+                  const isEditing = editingMealTemplateId === meal.id;
+
+                  return (
                   <article className="meal-template-card" key={meal.id}>
-                    <div>
-                      <strong>{meal.name}</strong>
+                    <div className="meal-template-card__main">
+                      <div className="meal-template-card__title-row">
+                        <button
+                          type="button"
+                          className={isFavorite ? "meal-template-card__icon meal-template-card__icon--favorite" : "meal-template-card__icon"}
+                          onClick={() => toggleMealTemplateFavorite(meal)}
+                          aria-label={`${meal.name} ${isFavorite ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
+                          title={isFavorite ? "Favorit" : "Als Favorit markieren"}
+                        >
+                          <Star size={16} aria-hidden="true" />
+                        </button>
+                        {isEditing ? (
+                          <input
+                            className="meal-template-card__input"
+                            value={mealTemplateEditNameDraft}
+                            onChange={(event) => setMealTemplateEditNameDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void saveMealTemplateName(meal);
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelMealTemplateEdit();
+                              }
+                            }}
+                            onBlur={() => void saveMealTemplateName(meal)}
+                            autoFocus
+                          />
+                        ) : (
+                          <strong onDoubleClick={() => startMealTemplateEdit(meal)}>{meal.name}</strong>
+                        )}
+                        <button
+                          type="button"
+                          className="meal-template-card__icon"
+                          onClick={() => startMealTemplateEdit(meal)}
+                          aria-label={`${meal.name} bearbeiten`}
+                          title="Vorlage bearbeiten"
+                        >
+                          <Pencil size={15} aria-hidden="true" />
+                        </button>
+                      </div>
                       <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal</small>
                     </div>
                     <div className="food-actions">
@@ -2415,7 +2529,8 @@ function App() {
                       </button>
                     </div>
                   </article>
-                ))}
+                );
+                })}
               </div>
             )}
           </section>
@@ -3086,6 +3201,22 @@ function saveMealFavorites(favorites: string[]) {
   window.localStorage.setItem(mealFavoritesStorageKey, JSON.stringify([...new Set(favorites)]));
 }
 
+function loadMealTemplateFavorites() {
+  if (typeof window === "undefined") return [];
+  try {
+    const rawFavorites = window.localStorage.getItem(mealTemplateFavoritesStorageKey);
+    const parsedFavorites = rawFavorites ? JSON.parse(rawFavorites) : [];
+    return Array.isArray(parsedFavorites) ? parsedFavorites.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMealTemplateFavorites(favorites: string[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(mealTemplateFavoritesStorageKey, JSON.stringify([...new Set(favorites)]));
+}
+
 function mealFavoriteKey(group: MealEntryGroup) {
   return `meal:${group.id}`;
 }
@@ -3251,6 +3382,17 @@ async function createMealTemplate(input: { name: string; items: MealTemplateItem
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
+  });
+  const data = (await response.json()) as { meal?: MealTemplate; error?: string };
+  if (!response.ok || !data.meal) throw new Error(data.error ?? "Mahlzeit konnte nicht gespeichert werden.");
+  return normalizeMealTemplate(data.meal);
+}
+
+async function updateMealTemplateName(id: string, name: string): Promise<MealTemplate> {
+  const response = await fetch(`/api/meals/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
   });
   const data = (await response.json()) as { meal?: MealTemplate; error?: string };
   if (!response.ok || !data.meal) throw new Error(data.error ?? "Mahlzeit konnte nicht gespeichert werden.");
