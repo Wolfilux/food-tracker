@@ -85,6 +85,7 @@ type MealTemplate = {
 
 type DisplayMealTemplate = MealTemplate & {
   source: "template" | "history";
+  favoriteKey: string;
 };
 
 type FoodSearchResult = {
@@ -627,8 +628,8 @@ function App() {
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const [mealGroupNameDraft, setMealGroupNameDraft] = useState("");
   const [mealGroupingState, setMealGroupingState] = useState<"idle" | "saving">("idle");
-  const [mealFavorites, setMealFavorites] = useState<string[]>(() => loadMealFavorites());
-  const [mealTemplateFavorites, setMealTemplateFavorites] = useState<string[]>(() => loadMealTemplateFavorites());
+  const [mealFavoriteKeys, setMealFavoriteKeys] = useState<string[]>([]);
+  const legacyFavoritesMigratedRef = useRef(false);
   const [activeMealId, setActiveMealId] = useState<string | null>(null);
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [mealEditNameDraft, setMealEditNameDraft] = useState("");
@@ -750,7 +751,7 @@ function App() {
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
   const availableMealTemplates = useMemo(
     () => [
-      ...mealTemplates.map((meal): DisplayMealTemplate => ({ ...meal, source: "template" })),
+      ...mealTemplates.map((meal): DisplayMealTemplate => ({ ...meal, source: "template", favoriteKey: mealTemplateSignature(meal) })),
       ...buildHistoricalMealTemplates(entries, mealTemplates),
     ],
     [entries, mealTemplates],
@@ -758,8 +759,8 @@ function App() {
   const displayedMealTemplates = useMemo(
     () => {
       const query = normalizeFoodKey(mealNameDraft);
-      const favoriteTemplates = availableMealTemplates.filter((meal) => mealTemplateFavorites.includes(meal.id));
-      const remainingTemplates = availableMealTemplates.filter((meal) => !mealTemplateFavorites.includes(meal.id));
+      const favoriteTemplates = availableMealTemplates.filter((meal) => mealFavoriteKeys.includes(meal.favoriteKey));
+      const remainingTemplates = availableMealTemplates.filter((meal) => !mealFavoriteKeys.includes(meal.favoriteKey));
       const templates = query
         ? remainingTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
         : remainingTemplates;
@@ -774,7 +775,7 @@ function App() {
         ...templates.sort(sortTemplates),
       ];
     },
-    [availableMealTemplates, mealNameDraft, mealTemplateFavorites],
+    [availableMealTemplates, mealFavoriteKeys, mealNameDraft],
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
@@ -783,7 +784,7 @@ function App() {
 
     async function loadBackendState() {
       try {
-        const [entriesResponse, configResponse, aiConfigResponse, analysisAiConfigResponse, weeklyEmailConfigResponse, garminConfigResponse, mealsResponse] = await Promise.all([
+        const [entriesResponse, configResponse, aiConfigResponse, analysisAiConfigResponse, weeklyEmailConfigResponse, garminConfigResponse, mealsResponse, mealFavoriteKeysResponse] = await Promise.all([
           fetchEntries(),
           fetchNutritionConfig(),
           fetchAiConfig(),
@@ -791,10 +792,12 @@ function App() {
           fetchWeeklyEmailConfig(),
           fetchGarminConfig(),
           fetchMealTemplates(),
+          fetchMealFavoriteKeys(),
         ]);
         if (!isMounted) return;
         setEntries(entriesResponse);
         setMealTemplates(mealsResponse);
+        setMealFavoriteKeys(mealFavoriteKeysResponse);
         setNutritionConfig(configResponse);
         setAiConfig(aiConfigResponse);
         setAnalysisAiConfig(analysisAiConfigResponse);
@@ -834,12 +837,49 @@ function App() {
   }, [isConfigLoaded, nutritionConfig]);
 
   useEffect(() => {
-    saveMealFavorites(mealFavorites);
-  }, [mealFavorites]);
+    if (!isConfigLoaded || legacyFavoritesMigratedRef.current) return;
+    const legacyKeys = [
+      ...availableMealTemplates
+        .filter((meal) => loadMealTemplateFavorites().includes(meal.id))
+        .map((meal) => meal.favoriteKey),
+      ...mealGroups
+        .filter((group) => loadMealFavorites().includes(mealFavoriteKey(group)))
+        .map(mealGroupFavoriteKey),
+    ];
+    const missingKeys = [...new Set(legacyKeys)].filter((key) => !mealFavoriteKeys.includes(key));
 
-  useEffect(() => {
-    saveMealTemplateFavorites(mealTemplateFavorites);
-  }, [mealTemplateFavorites]);
+    legacyFavoritesMigratedRef.current = true;
+    if (missingKeys.length === 0) {
+      clearLegacyMealFavorites();
+      return;
+    }
+
+    Promise.all(missingKeys.map((signature) => updateMealFavorite(signature, true)))
+      .then(() => {
+        setMealFavoriteKeys((currentKeys) => [...new Set([...currentKeys, ...missingKeys])]);
+        clearLegacyMealFavorites();
+      })
+      .catch(() => undefined);
+  }, [availableMealTemplates, isConfigLoaded, mealFavoriteKeys, mealGroups]);
+
+  async function persistMealFavorite(signature: string, favorite: boolean) {
+    setMealFavoriteKeys((currentKeys) => (
+      favorite
+        ? [...new Set([...currentKeys, signature])]
+        : currentKeys.filter((key) => key !== signature)
+    ));
+
+    try {
+      await updateMealFavorite(signature, favorite);
+    } catch (error) {
+      setMealFavoriteKeys((currentKeys) => (
+        favorite
+          ? currentKeys.filter((key) => key !== signature)
+          : [...new Set([...currentKeys, signature])]
+      ));
+      throw error;
+    }
+  }
 
   const refreshGarminSummary = useCallback(async () => {
     if (!hasGarminCredentials) {
@@ -1463,21 +1503,21 @@ function App() {
     scrollToMeal(mealGroups[boundedIndex].id);
   }
 
-  function toggleMealFavorite(group: MealEntryGroup) {
-    const favoriteKey = mealFavoriteKey(group);
-    setMealFavorites((currentFavorites) => (
-      currentFavorites.includes(favoriteKey)
-        ? currentFavorites.filter((key) => key !== favoriteKey)
-        : [...currentFavorites, favoriteKey]
-    ));
+  async function toggleMealFavorite(group: MealEntryGroup) {
+    const favoriteKey = mealGroupFavoriteKey(group);
+    try {
+      await persistMealFavorite(favoriteKey, !mealFavoriteKeys.includes(favoriteKey));
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Favorit konnte nicht gespeichert werden.");
+    }
   }
 
-  function toggleMealTemplateFavorite(meal: MealTemplate) {
-    setMealTemplateFavorites((currentFavorites) => (
-      currentFavorites.includes(meal.id)
-        ? currentFavorites.filter((id) => id !== meal.id)
-        : [...currentFavorites, meal.id]
-    ));
+  async function toggleMealTemplateFavorite(meal: DisplayMealTemplate) {
+    try {
+      await persistMealFavorite(meal.favoriteKey, !mealFavoriteKeys.includes(meal.favoriteKey));
+    } catch (error) {
+      setMealTemplateError(error instanceof Error ? error.message : "Favorit konnte nicht gespeichert werden.");
+    }
   }
 
   function startMealTemplateEdit(meal: MealTemplate) {
@@ -1548,7 +1588,6 @@ function App() {
     try {
       await deleteMealTemplate(id);
       setMealTemplates((templates) => templates.filter((template) => template.id !== id));
-      setMealTemplateFavorites((favorites) => favorites.filter((favoriteId) => favoriteId !== id));
       if (editingMealTemplateId === id) cancelMealTemplateEdit();
     } catch (error) {
       setMealTemplateError(error instanceof Error ? error.message : "Mahlzeit konnte nicht geloescht werden.");
@@ -2497,7 +2536,7 @@ function App() {
             {displayedMealTemplates.length > 0 && (
               <div className="meal-template-list">
                 {displayedMealTemplates.map((meal) => {
-                  const isFavorite = mealTemplateFavorites.includes(meal.id);
+                  const isFavorite = mealFavoriteKeys.includes(meal.favoriteKey);
                   const isEditing = editingMealTemplateId === meal.id;
                   const isSavedTemplate = meal.source === "template";
 
@@ -2508,7 +2547,7 @@ function App() {
                         <button
                           type="button"
                           className={isFavorite ? "meal-template-card__icon meal-template-card__icon--favorite" : "meal-template-card__icon"}
-                          onClick={() => toggleMealTemplateFavorite(meal)}
+                          onClick={() => void toggleMealTemplateFavorite(meal)}
                           aria-label={`${meal.name} ${isFavorite ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
                           title={isFavorite ? "Favorit" : "Als Favorit markieren"}
                         >
@@ -2846,10 +2885,10 @@ function App() {
               <div className="meal-row__actions">
                 <button
                   type="button"
-                  className={mealFavorites.includes(mealFavoriteKey(group)) ? "meal-row__icon meal-row__icon--favorite" : "meal-row__icon"}
-                  onClick={() => toggleMealFavorite(group)}
-                  aria-label={`${group.name} ${mealFavorites.includes(mealFavoriteKey(group)) ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
-                  title={mealFavorites.includes(mealFavoriteKey(group)) ? "Favorit" : "Als Favorit markieren"}
+                  className={mealFavoriteKeys.includes(mealGroupFavoriteKey(group)) ? "meal-row__icon meal-row__icon--favorite" : "meal-row__icon"}
+                  onClick={() => void toggleMealFavorite(group)}
+                  aria-label={`${group.name} ${mealFavoriteKeys.includes(mealGroupFavoriteKey(group)) ? "aus Favoriten entfernen" : "als Favorit markieren"}`}
+                  title={mealFavoriteKeys.includes(mealGroupFavoriteKey(group)) ? "Favorit" : "Als Favorit markieren"}
                 >
                   <Star size={17} aria-hidden="true" />
                 </button>
@@ -3229,11 +3268,6 @@ function loadMealFavorites() {
   }
 }
 
-function saveMealFavorites(favorites: string[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(mealFavoritesStorageKey, JSON.stringify([...new Set(favorites)]));
-}
-
 function loadMealTemplateFavorites() {
   if (typeof window === "undefined") return [];
   try {
@@ -3245,13 +3279,21 @@ function loadMealTemplateFavorites() {
   }
 }
 
-function saveMealTemplateFavorites(favorites: string[]) {
+function clearLegacyMealFavorites() {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(mealTemplateFavoritesStorageKey, JSON.stringify([...new Set(favorites)]));
+  window.localStorage.removeItem(mealFavoritesStorageKey);
+  window.localStorage.removeItem(mealTemplateFavoritesStorageKey);
 }
 
 function mealFavoriteKey(group: MealEntryGroup) {
   return `meal:${group.id}`;
+}
+
+function mealGroupFavoriteKey(group: MealEntryGroup) {
+  return mealTemplateSignature({
+    name: group.name,
+    items: group.entries.map((entry) => templateItemFromDraft(draftFromEntry(entry))),
+  });
 }
 
 type DayTotals = {
@@ -3408,6 +3450,23 @@ async function fetchMealTemplates(): Promise<MealTemplate[]> {
   if (!response.ok) throw new Error("Meals request failed");
   const data = (await response.json()) as { meals?: MealTemplate[] };
   return (data.meals ?? []).map(normalizeMealTemplate);
+}
+
+async function fetchMealFavoriteKeys(): Promise<string[]> {
+  const response = await fetch("/api/meal-favorites");
+  if (!response.ok) throw new Error("Meal favorites request failed");
+  const data = (await response.json()) as { favorites?: string[] };
+  return Array.isArray(data.favorites) ? data.favorites.filter((value): value is string => typeof value === "string") : [];
+}
+
+async function updateMealFavorite(signature: string, favorite: boolean) {
+  const response = await fetch("/api/meal-favorites", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ signature, favorite }),
+  });
+  const data = (await response.json()) as { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Favorit konnte nicht gespeichert werden.");
 }
 
 async function createMealTemplate(input: { name: string; items: MealTemplateItem[] }): Promise<MealTemplate> {
@@ -3741,7 +3800,9 @@ function buildHistoricalMealTemplates(entries: FoodEntry[], savedTemplates: Meal
         createdAt: sortedGroupEntries.reduce((latest, entry) => entry.createdAt > latest ? entry.createdAt : latest, sortedGroupEntries[0]?.createdAt ?? new Date().toISOString()),
         items: sortedGroupEntries.map((entry) => templateItemFromDraft(draftFromEntry(entry))),
         source: "history",
+        favoriteKey: "",
       };
+      meal.favoriteKey = mealTemplateSignature(meal);
       return meal;
     })
     .filter((meal) => meal.items.length > 0 && !savedSignatures.has(mealTemplateSignature(meal)))

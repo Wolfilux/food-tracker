@@ -453,6 +453,23 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname === "/api/meal-favorites") {
+      if (request.method === "GET") {
+        sendJson(response, { favorites: listMealFavoriteKeys() });
+        return;
+      }
+
+      if (request.method === "PUT") {
+        try {
+          const favorite = setMealFavorite(await readJsonBody(request));
+          sendJson(response, { favorite });
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
+    }
+
     if (url.pathname.startsWith("/api/meals/") && request.method === "PATCH") {
       const id = decodeURIComponent(url.pathname.replace("/api/meals/", ""));
       try {
@@ -909,6 +926,29 @@ export function deleteEntry(id) {
   getFoodDatabase().prepare("DELETE FROM entries WHERE id = ?").run(id);
 }
 
+export function listMealFavoriteKeys() {
+  return getFoodDatabase()
+    .prepare("SELECT signature FROM meal_favorites ORDER BY created_at ASC")
+    .all()
+    .map((row) => row.signature);
+}
+
+export function setMealFavorite(input) {
+  const signature = validateMealFavoriteSignature(input?.signature);
+  const favorite = Boolean(input?.favorite);
+  const database = getFoodDatabase();
+
+  if (favorite) {
+    database
+      .prepare("INSERT OR IGNORE INTO meal_favorites (signature, created_at) VALUES (?, ?)")
+      .run(signature, new Date().toISOString());
+  } else {
+    database.prepare("DELETE FROM meal_favorites WHERE signature = ?").run(signature);
+  }
+
+  return { signature, favorite };
+}
+
 export function buildExportPayload() {
   const aiConfig = getPublicAiConfig();
   return {
@@ -920,6 +960,7 @@ export function buildExportPayload() {
       provider: aiConfig.provider,
       model: aiConfig.model,
     },
+    mealFavorites: listMealFavoriteKeys(),
     mealTemplates: listMealTemplates(),
     entries: listEntries(),
   };
@@ -956,6 +997,15 @@ export function importFoodTrackerData(input) {
       database.prepare("DELETE FROM meal_templates").run();
       for (const meal of input.mealTemplates.slice(0, 500)) {
         saveMealTemplateRows(database, validateMealTemplate(meal));
+      }
+    }
+
+    if (Array.isArray(input.mealFavorites)) {
+      database.prepare("DELETE FROM meal_favorites").run();
+      const insertFavorite = database.prepare("INSERT OR IGNORE INTO meal_favorites (signature, created_at) VALUES (?, ?)");
+      const importedAt = new Date().toISOString();
+      for (const favorite of input.mealFavorites.slice(0, 1000)) {
+        insertFavorite.run(validateMealFavoriteSignature(favorite), importedAt);
       }
     }
 
@@ -1215,6 +1265,10 @@ function initializeDatabase(database) {
     "CREATE TABLE IF NOT EXISTS meal_templates (",
     "  id TEXT PRIMARY KEY,",
     "  name TEXT NOT NULL,",
+    "  created_at TEXT NOT NULL",
+    ");",
+    "CREATE TABLE IF NOT EXISTS meal_favorites (",
+    "  signature TEXT PRIMARY KEY,",
     "  created_at TEXT NOT NULL",
     ");",
     "CREATE TABLE IF NOT EXISTS meal_template_items (",
@@ -2588,6 +2642,12 @@ function mealTemplateItemFromRow(row) {
     fatPer100g: row.fat_per_100g,
     source: row.source,
   };
+}
+
+function validateMealFavoriteSignature(value) {
+  const signature = String(value ?? "").trim().slice(0, 500);
+  if (!signature || !signature.includes("::")) throw new Error("Invalid meal favorite");
+  return signature;
 }
 
 function normalizeAnalysisItems(items) {
