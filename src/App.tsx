@@ -748,14 +748,7 @@ function App() {
     () => {
       const query = normalizeFoodKey(mealNameDraft);
       const templates = query
-        ? mealTemplates.filter((meal) => {
-            const searchableText = [
-              meal.name,
-              ...meal.items.map((item) => item.foodName),
-            ].join(" ");
-
-            return normalizeFoodKey(searchableText).includes(query);
-          })
+        ? mealTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
         : mealTemplates;
 
       return [...templates].sort((left, right) => {
@@ -3708,6 +3701,24 @@ function mealCalories(items: Array<Pick<FoodEntry, "quantityUnit" | "quantityVal
   return items.reduce((sum, item) => sum + caloriesFor(item), 0);
 }
 
+function mealTemplateMatchesSearch(meal: MealTemplate, normalizedQuery: string) {
+  const searchableText = [
+    meal.name,
+    ...meal.items.map((item) => item.foodName),
+    ...meal.items.map((item) => item.foodKey),
+  ].join(" ");
+  const normalizedText = normalizeFoodKey(searchableText);
+  if (normalizedText.includes(normalizedQuery)) return true;
+
+  const compactText = compactSearchKey(normalizedText);
+  const compactQuery = compactSearchKey(normalizedQuery);
+  if (compactQuery && compactText.includes(compactQuery)) return true;
+  if (compactSearchVariants(compactQuery).some((variant) => compactText.includes(variant))) return true;
+
+  const queryTokens = normalizedQuery.split(" ").filter(Boolean);
+  return queryTokens.length > 1 && queryTokens.every((token) => normalizedText.includes(token));
+}
+
 function findCommonFoodCompletion(searchTerm: string) {
   const normalized = normalizeFoodKey(searchTerm);
   if (normalized.length < 2) return null;
@@ -3770,8 +3781,24 @@ function normalizeFoodKey(value: unknown) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function compactSearchKey(value: string) {
+  return value.replace(/\s+/g, "");
+}
+
+function compactSearchVariants(value: string) {
+  const variants = new Set([value]);
+  for (const suffix of ["en", "er", "es", "e", "n", "s"]) {
+    if (value.length > suffix.length + 3 && value.endsWith(suffix)) {
+      variants.add(value.slice(0, -suffix.length));
+    }
+  }
+  return [...variants].filter((variant) => variant.length >= 3);
 }
 
 function normalizeBarcodeInput(value: unknown) {
