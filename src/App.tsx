@@ -758,17 +758,21 @@ function App() {
   const displayedMealTemplates = useMemo(
     () => {
       const query = normalizeFoodKey(mealNameDraft);
+      const favoriteTemplates = availableMealTemplates.filter((meal) => mealTemplateFavorites.includes(meal.id));
+      const remainingTemplates = availableMealTemplates.filter((meal) => !mealTemplateFavorites.includes(meal.id));
       const templates = query
-        ? availableMealTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
-        : availableMealTemplates;
+        ? remainingTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
+        : remainingTemplates;
 
-      return [...templates].sort((left, right) => {
-        const leftFavorite = mealTemplateFavorites.includes(left.id);
-        const rightFavorite = mealTemplateFavorites.includes(right.id);
-        if (leftFavorite !== rightFavorite) return leftFavorite ? -1 : 1;
+      const sortTemplates = (left: DisplayMealTemplate, right: DisplayMealTemplate) => {
         if (left.source !== right.source) return left.source === "template" ? -1 : 1;
         return left.name.localeCompare(right.name, "de");
-      });
+      };
+
+      return [
+        ...favoriteTemplates.sort(sortTemplates),
+        ...templates.sort(sortTemplates),
+      ];
     },
     [availableMealTemplates, mealNameDraft, mealTemplateFavorites],
   );
