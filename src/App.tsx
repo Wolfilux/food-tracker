@@ -83,6 +83,10 @@ type MealTemplate = {
   items: MealTemplateItem[];
 };
 
+type DisplayMealTemplate = MealTemplate & {
+  source: "template" | "history";
+};
+
 type FoodSearchResult = {
   id: string;
   name: string;
@@ -744,21 +748,29 @@ function App() {
     [weekAnalysis],
   );
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
+  const availableMealTemplates = useMemo(
+    () => [
+      ...mealTemplates.map((meal): DisplayMealTemplate => ({ ...meal, source: "template" })),
+      ...buildHistoricalMealTemplates(entries, mealTemplates),
+    ],
+    [entries, mealTemplates],
+  );
   const displayedMealTemplates = useMemo(
     () => {
       const query = normalizeFoodKey(mealNameDraft);
       const templates = query
-        ? mealTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
-        : mealTemplates;
+        ? availableMealTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
+        : availableMealTemplates;
 
       return [...templates].sort((left, right) => {
         const leftFavorite = mealTemplateFavorites.includes(left.id);
         const rightFavorite = mealTemplateFavorites.includes(right.id);
         if (leftFavorite !== rightFavorite) return leftFavorite ? -1 : 1;
+        if (left.source !== right.source) return left.source === "template" ? -1 : 1;
         return left.name.localeCompare(right.name, "de");
       });
     },
-    [mealNameDraft, mealTemplateFavorites, mealTemplates],
+    [availableMealTemplates, mealNameDraft, mealTemplateFavorites],
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
@@ -2440,7 +2452,7 @@ function App() {
             <div className="search-panel__heading">
               <Utensils size={18} aria-hidden="true" />
               <span>Mahlzeiten</span>
-              <small>{displayedMealTemplates.length}/{mealTemplates.length} Vorlagen</small>
+              <small>{displayedMealTemplates.length}/{availableMealTemplates.length} Vorlagen</small>
             </div>
             <label>
               Name / Vorlage suchen
@@ -2483,6 +2495,7 @@ function App() {
                 {displayedMealTemplates.map((meal) => {
                   const isFavorite = mealTemplateFavorites.includes(meal.id);
                   const isEditing = editingMealTemplateId === meal.id;
+                  const isSavedTemplate = meal.source === "template";
 
                   return (
                   <article className="meal-template-card" key={meal.id}>
@@ -2516,27 +2529,33 @@ function App() {
                             autoFocus
                           />
                         ) : (
-                          <strong onDoubleClick={() => startMealTemplateEdit(meal)}>{meal.name}</strong>
+                          <strong onDoubleClick={() => {
+                            if (isSavedTemplate) startMealTemplateEdit(meal);
+                          }}>{meal.name}</strong>
                         )}
-                        <button
-                          type="button"
-                          className="meal-template-card__icon"
-                          onClick={() => startMealTemplateEdit(meal)}
-                          aria-label={`${meal.name} bearbeiten`}
-                          title="Vorlage bearbeiten"
-                        >
-                          <Pencil size={15} aria-hidden="true" />
-                        </button>
+                        {isSavedTemplate && (
+                          <button
+                            type="button"
+                            className="meal-template-card__icon"
+                            onClick={() => startMealTemplateEdit(meal)}
+                            aria-label={`${meal.name} bearbeiten`}
+                            title="Vorlage bearbeiten"
+                          >
+                            <Pencil size={15} aria-hidden="true" />
+                          </button>
+                        )}
                       </div>
-                      <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal</small>
+                      <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal{meal.source === "history" ? " · Verlauf" : ""}</small>
                     </div>
                     <div className="food-actions">
                       <button type="button" aria-label={`${meal.name} eintragen`} onClick={() => void applyMealTemplate(meal)}>
                         <Plus size={16} aria-hidden="true" />
                       </button>
-                      <button type="button" aria-label={`${meal.name} loeschen`} onClick={() => void removeMealTemplate(meal.id)}>
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
+                      {isSavedTemplate && (
+                        <button type="button" aria-label={`${meal.name} loeschen`} onClick={() => void removeMealTemplate(meal.id)}>
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
                   </article>
                 );
@@ -3695,6 +3714,42 @@ function templateItemFromDraft(draft: FoodDraft): MealTemplateItem {
 function upsertMealTemplate(templates: MealTemplate[], meal: MealTemplate) {
   const nextTemplates = templates.filter((template) => template.id !== meal.id);
   return [...nextTemplates, meal].sort((left, right) => left.name.localeCompare(right.name, "de"));
+}
+
+function buildHistoricalMealTemplates(entries: FoodEntry[], savedTemplates: MealTemplate[]): DisplayMealTemplate[] {
+  const savedSignatures = new Set(savedTemplates.map(mealTemplateSignature));
+  const groups = new Map<string, FoodEntry[]>();
+
+  for (const entry of entries) {
+    if (!entry.mealId || !entry.mealName) continue;
+    const groupEntries = groups.get(entry.mealId) ?? [];
+    groupEntries.push(entry);
+    groups.set(entry.mealId, groupEntries);
+  }
+
+  return [...groups.entries()]
+    .map(([mealId, groupEntries]) => {
+      const sortedGroupEntries = [...groupEntries].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      const name = sortedGroupEntries.find((entry) => entry.mealName)?.mealName ?? "Mahlzeit";
+      const meal: DisplayMealTemplate = {
+        id: `history:${mealId}`,
+        name,
+        createdAt: sortedGroupEntries.reduce((latest, entry) => entry.createdAt > latest ? entry.createdAt : latest, sortedGroupEntries[0]?.createdAt ?? new Date().toISOString()),
+        items: sortedGroupEntries.map((entry) => templateItemFromDraft(draftFromEntry(entry))),
+        source: "history",
+      };
+      return meal;
+    })
+    .filter((meal) => meal.items.length > 0 && !savedSignatures.has(mealTemplateSignature(meal)))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function mealTemplateSignature(meal: Pick<MealTemplate, "name" | "items">) {
+  const items = meal.items
+    .map((item) => normalizeFoodKey(item.foodName))
+    .sort((left, right) => left.localeCompare(right, "de"))
+    .join("|");
+  return `${normalizeFoodKey(meal.name)}::${items}`;
 }
 
 function mealCalories(items: Array<Pick<FoodEntry, "quantityUnit" | "quantityValue" | "caloriesPer100g">>) {
