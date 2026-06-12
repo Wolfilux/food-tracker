@@ -1134,7 +1134,10 @@ function App() {
   async function saveEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const foodName = draft.foodName.trim();
-    if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0 || !draft.consumedAt) return;
+    if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0 || !draft.consumedAt) {
+      setEntryError("Bitte Lebensmittel, Gewicht, Nährwerte und Zeitpunkt prüfen.");
+      return;
+    }
 
     setEntryError("");
     try {
@@ -2719,11 +2722,11 @@ function App() {
               Zeitpunkt
               <input type="datetime-local" value={draft.consumedAt} onChange={(event) => setDraft({ ...draft, consumedAt: event.target.value })} />
             </label>
-            <NumberInput label="Kalorien / 100g" min={0} step={1} value={draft.caloriesPer100g} onChange={(caloriesPer100g) => setDraft({ ...draft, caloriesPer100g })} />
+            <NumberInput label="Kalorien / 100g" min={0} step="any" value={draft.caloriesPer100g} onChange={(caloriesPer100g) => setDraft({ ...draft, caloriesPer100g })} />
             <div className="macro-grid">
-              <NumberInput label="Protein / 100g" min={0} step={0.1} value={draft.proteinPer100g} onChange={(proteinPer100g) => setDraft({ ...draft, proteinPer100g })} />
-              <NumberInput label="Kohlenhydrate / 100g" min={0} step={0.1} value={draft.carbsPer100g} onChange={(carbsPer100g) => setDraft({ ...draft, carbsPer100g })} />
-              <NumberInput label="Fett / 100g" min={0} step={0.1} value={draft.fatPer100g} onChange={(fatPer100g) => setDraft({ ...draft, fatPer100g })} />
+              <NumberInput label="Protein / 100g" min={0} step="any" value={draft.proteinPer100g} onChange={(proteinPer100g) => setDraft({ ...draft, proteinPer100g })} />
+              <NumberInput label="Kohlenhydrate / 100g" min={0} step="any" value={draft.carbsPer100g} onChange={(carbsPer100g) => setDraft({ ...draft, carbsPer100g })} />
+              <NumberInput label="Fett / 100g" min={0} step="any" value={draft.fatPer100g} onChange={(fatPer100g) => setDraft({ ...draft, fatPer100g })} />
             </div>
           </details>
           <div className="calculation-strip">
@@ -4186,7 +4189,7 @@ function macroTarget(calorieGoal: number, share: number, caloriesPerGram: number
   };
 }
 
-function NumberInput({ label, min, step, value, onChange, inputRef }: { label: string; min: number; step: number; value: number; onChange: (value: number) => void; inputRef?: { current: HTMLInputElement | null } }) {
+function NumberInput({ label, min, step, value, onChange, inputRef }: { label: string; min: number; step: number | "any"; value: number; onChange: (value: number) => void; inputRef?: { current: HTMLInputElement | null } }) {
   const internalInputRef = useRef<HTMLInputElement | null>(null);
   const activeInputRef = inputRef ?? internalInputRef;
   const [inputValue, setInputValue] = useState(() => String(value));
