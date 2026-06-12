@@ -3833,6 +3833,7 @@ function upsertMealTemplate(templates: MealTemplate[], meal: MealTemplate) {
 
 function buildHistoricalMealTemplates(entries: FoodEntry[], savedTemplates: MealTemplate[]): DisplayMealTemplate[] {
   const savedSignatures = new Set(savedTemplates.map(mealTemplateSignature));
+  const historicalSignatures = new Set<string>();
   const groups = new Map<string, FoodEntry[]>();
 
   for (const entry of entries) {
@@ -3857,8 +3858,14 @@ function buildHistoricalMealTemplates(entries: FoodEntry[], savedTemplates: Meal
       meal.favoriteKey = mealTemplateSignature(meal);
       return meal;
     })
-    .filter((meal) => meal.items.length > 0 && !savedSignatures.has(mealTemplateSignature(meal)))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .filter((meal) => {
+      if (meal.items.length === 0) return false;
+      const signature = mealTemplateSignature(meal);
+      if (savedSignatures.has(signature) || historicalSignatures.has(signature)) return false;
+      historicalSignatures.add(signature);
+      return true;
+    });
 }
 
 function mealTemplateSignature(meal: Pick<MealTemplate, "name" | "items">) {
