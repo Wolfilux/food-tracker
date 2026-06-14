@@ -954,12 +954,7 @@ function App() {
     let isMounted = true;
     const timeoutId = window.setTimeout(() => {
       setWeekGarminState("loading");
-      void Promise.all(weekDates.map((date) => fetchGarminDailySummary(date).catch((error) => ({
-        configured: true,
-        date,
-        source: "garmin-connect",
-        error: error instanceof Error ? error.message : "Garmin konnte nicht abgefragt werden.",
-      } satisfies GarminDailySummary))))
+      void fetchWeekGarminSummaries(weekDates)
         .then((summaries) => {
           if (!isMounted) return;
           setWeekGarminSummaries((currentSummaries) => ({
@@ -983,12 +978,7 @@ function App() {
     if (!hasGarminCredentials) return;
     setWeekGarminState("loading");
     try {
-      const summaries = await Promise.all(weekDates.map((date) => fetchGarminDailySummary(date, true).catch((error) => ({
-        configured: true,
-        date,
-        source: "garmin-connect",
-        error: error instanceof Error ? error.message : "Garmin konnte nicht abgefragt werden.",
-      } satisfies GarminDailySummary))));
+      const summaries = await fetchWeekGarminSummaries(weekDates, true);
       setWeekGarminSummaries((currentSummaries) => ({
         ...currentSummaries,
         ...Object.fromEntries(summaries.map((summary) => [summary.date, summary])),
@@ -3682,6 +3672,25 @@ async function fetchGarminDailySummary(date: string, refresh = false): Promise<G
   const data = (await response.json()) as { summary?: GarminDailySummary };
   if (!response.ok || !data.summary) throw new Error("Garmin konnte nicht abgefragt werden.");
   return normalizeGarminDailySummary(data.summary);
+}
+
+async function fetchWeekGarminSummaries(dates: string[], refresh = false): Promise<GarminDailySummary[]> {
+  const summaries: GarminDailySummary[] = [];
+
+  for (const date of dates) {
+    try {
+      summaries.push(await fetchGarminDailySummary(date, refresh));
+    } catch (error) {
+      summaries.push({
+        configured: true,
+        date,
+        source: "garmin-connect",
+        error: error instanceof Error ? error.message : "Garmin konnte nicht abgefragt werden.",
+      });
+    }
+  }
+
+  return summaries;
 }
 
 async function fetchExportData(): Promise<unknown> {
