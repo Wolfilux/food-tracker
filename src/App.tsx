@@ -776,11 +776,11 @@ function App() {
   const displayedMealTemplates = useMemo(
     () => {
       const query = normalizeFoodKey(mealNameDraft);
-      const favoriteTemplates = availableMealTemplates.filter((meal) => mealFavoriteKeys.includes(meal.favoriteKey));
-      const remainingTemplates = availableMealTemplates.filter((meal) => !mealFavoriteKeys.includes(meal.favoriteKey));
-      const templates = query
-        ? remainingTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
-        : remainingTemplates;
+      const matchingTemplates = query
+        ? availableMealTemplates.filter((meal) => mealTemplateMatchesSearch(meal, query))
+        : availableMealTemplates;
+      const favoriteTemplates = matchingTemplates.filter((meal) => mealFavoriteKeys.includes(meal.favoriteKey));
+      const remainingTemplates = matchingTemplates.filter((meal) => !mealFavoriteKeys.includes(meal.favoriteKey));
 
       const sortTemplates = (left: DisplayMealTemplate, right: DisplayMealTemplate) => {
         if (left.source !== right.source) return left.source === "template" ? -1 : 1;
@@ -789,7 +789,7 @@ function App() {
 
       return [
         ...favoriteTemplates.sort(sortTemplates),
-        ...templates.sort(sortTemplates),
+        ...remainingTemplates.sort(sortTemplates),
       ];
     },
     [availableMealTemplates, mealFavoriteKeys, mealNameDraft],
