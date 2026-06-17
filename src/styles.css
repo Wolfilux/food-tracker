@@ -151,13 +151,6 @@ h1 {
   justify-content: space-between;
 }
 
-.goal-card strong {
-  display: block;
-  margin: 12px 0 10px;
-  font-size: 2rem;
-  line-height: 1;
-}
-
 .goal-card__note {
   display: block;
   margin-top: 8px;
@@ -172,6 +165,50 @@ h1 {
 }
 
 .goal-card__note--error {
+  color: var(--color-danger);
+}
+
+.goal-card__remaining {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0 12px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, rgba(35, 98, 69, 0.16), rgba(255, 250, 240, 0.72)),
+    #eef5f0;
+  border: 1px solid rgba(35, 98, 69, 0.22);
+  border-radius: var(--radius);
+}
+
+.goal-card__remaining span {
+  color: #236245;
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.goal-card__remaining strong {
+  display: block;
+  color: #17211b;
+  font-size: clamp(2.15rem, 4vw, 3rem);
+  line-height: 0.95;
+}
+
+.goal-card__remaining small {
+  color: #425045;
+  font-weight: 900;
+}
+
+.goal-card__remaining--over {
+  background:
+    linear-gradient(135deg, rgba(164, 61, 32, 0.18), rgba(255, 250, 240, 0.78)),
+    #fff3df;
+  border-color: rgba(164, 61, 32, 0.24);
+}
+
+.goal-card__remaining--over span,
+.goal-card__remaining--over strong {
   color: var(--color-danger);
 }
 
@@ -2189,7 +2226,7 @@ button:focus-visible {
     padding: 14px;
   }
 
-  .goal-card strong {
+  .goal-card__remaining strong {
     margin: 8px 0;
     font-size: 1.65rem;
   }

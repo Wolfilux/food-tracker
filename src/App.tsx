@@ -762,6 +762,7 @@ function App() {
     [effectiveCalorieGoal, selectedPreset],
   );
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
+  const dailyRemainingCalories = effectiveCalorieGoal - totals.calories;
   const calorieTimingPoints = useMemo(
     () => buildCalorieTimingPoints(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints),
     [dayEntries, effectiveCalorieGoal],
@@ -1912,11 +1913,20 @@ function App() {
             <Target size={22} aria-hidden="true" />
             <span>{calorieGoalDetails.usesGarminActiveCalories ? "Ziel + Garmin aktiv" : "Tagesziel"}</span>
           </div>
-          <strong>{totals.calories.toLocaleString()} kcal</strong>
+          <div className={dailyRemainingCalories < 0 ? "goal-card__remaining goal-card__remaining--over" : "goal-card__remaining"}>
+            <span>Heute noch offen</span>
+            <strong>
+              {dailyRemainingCalories >= 0
+                ? dailyRemainingCalories.toLocaleString("de-DE")
+                : Math.abs(dailyRemainingCalories).toLocaleString("de-DE")}
+              {" "}kcal
+            </strong>
+            <small>{dailyRemainingCalories >= 0 ? "frei bis Tagesziel" : "ueber Tagesziel"}</small>
+          </div>
           <div className="progress-track">
             <span style={{ width: `${progress}%` }} />
           </div>
-          <small>{progress}% von {effectiveCalorieGoal.toLocaleString()} kcal</small>
+          <small>{totals.calories.toLocaleString("de-DE")} kcal gegessen · {progress}% von {effectiveCalorieGoal.toLocaleString("de-DE")} kcal</small>
           <small className={heroCalorieBudget.remainingCalories < 0 ? "goal-card__timing delta--over" : "goal-card__timing delta--under"}>
             Bis {heroCalorieBudget.time}: {heroCalorieBudget.remainingCalories >= 0
               ? `${heroCalorieBudget.remainingCalories.toLocaleString("de-DE")} kcal frei`
