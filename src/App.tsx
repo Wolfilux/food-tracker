@@ -78,6 +78,18 @@ type MealEntryGroup = {
 
 type EntryGroup = SingleEntryGroup | MealEntryGroup;
 
+type EntryEditDialogState = {
+  entryId: string;
+  foodName: string;
+  draft: FoodDraft;
+};
+
+type MealEditDialogState = {
+  mealId: string;
+  name: string;
+  consumedAt: string;
+};
+
 type MealTemplate = {
   id: string;
   name: string;
@@ -623,7 +635,8 @@ function App() {
   });
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [draft, setDraft] = useState<FoodDraft>(createEmptyDraft);
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [entryEditDialog, setEntryEditDialog] = useState<EntryEditDialogState | null>(null);
+  const [savingEntryEditId, setSavingEntryEditId] = useState<string | null>(null);
   const [results, setResults] = useState<FoodSearchResult[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [barcodeValue, setBarcodeValue] = useState("");
@@ -647,8 +660,7 @@ function App() {
   const legacyFavoritesMigratedRef = useRef(false);
   const [activeMealId, setActiveMealId] = useState<string | null>(null);
   const [collapsedMealIds, setCollapsedMealIds] = useState<Record<string, boolean>>({});
-  const [editingMealId, setEditingMealId] = useState<string | null>(null);
-  const [mealEditNameDraft, setMealEditNameDraft] = useState("");
+  const [mealEditDialog, setMealEditDialog] = useState<MealEditDialogState | null>(null);
   const [savingMealId, setSavingMealId] = useState<string | null>(null);
   const [editingMealTemplateId, setEditingMealTemplateId] = useState<string | null>(null);
   const [mealTemplateEditNameDraft, setMealTemplateEditNameDraft] = useState("");
@@ -691,6 +703,21 @@ function App() {
   const mealRefs = useRef<Record<string, HTMLElement | null>>({});
   const selectedWeekStart = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
   const weekDates = useMemo(() => buildWeekDates(selectedWeekStart), [selectedWeekStart]);
+
+  useEffect(() => {
+    if (!entryEditDialog && !mealEditDialog) return undefined;
+
+    function handleDialogKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (savingEntryEditId || savingMealId) return;
+      setEntryEditDialog(null);
+      setMealEditDialog(null);
+      setEntryError("");
+    }
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => document.removeEventListener("keydown", handleDialogKeyDown);
+  }, [entryEditDialog, mealEditDialog, savingEntryEditId, savingMealId]);
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.consumedAt.slice(0, 10) === selectedDate),
@@ -1134,20 +1161,13 @@ function App() {
       const payload = {
         ...draft,
         foodName,
-        imageDataUrl: draft.imageDataUrl || (!editingEntryId ? pendingEntryImageDataUrl : ""),
+        imageDataUrl: draft.imageDataUrl || pendingEntryImageDataUrl,
       };
-      const entry = editingEntryId
-        ? await updateBackendEntry(editingEntryId, payload)
-        : await createEntry(payload);
-      setEntries((currentEntries) =>
-        editingEntryId
-          ? currentEntries.map((currentEntry) => (currentEntry.id === entry.id ? entry : currentEntry))
-          : [entry, ...currentEntries],
-      );
+      const entry = await createEntry(payload);
+      setEntries((currentEntries) => [entry, ...currentEntries]);
       setSelectedDate(entry.consumedAt.slice(0, 10));
       setDraft(createEmptyDraft());
       setPendingEntryImageDataUrl("");
-      setEditingEntryId(null);
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Eintrag konnte nicht gespeichert werden.");
     }
@@ -1574,14 +1594,27 @@ function App() {
   }
 
   function startMealEdit(group: MealEntryGroup) {
-    setEditingMealId(group.id);
-    setMealEditNameDraft(group.name);
+    setMealEditDialog({
+      mealId: group.id,
+      name: group.name,
+      consumedAt: group.consumedAt,
+    });
     setEntryError("");
   }
 
-  async function saveMealName(group: MealEntryGroup) {
-    const mealName = mealEditNameDraft.trim();
-    if (!mealName || savingMealId) return;
+  function closeMealEditDialog() {
+    if (savingMealId) return;
+    setMealEditDialog(null);
+    setEntryError("");
+  }
+
+  async function saveMealEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!mealEditDialog || savingMealId) return;
+    const mealName = mealEditDialog.name.trim();
+    const group = mealGroups.find((mealGroup) => mealGroup.id === mealEditDialog.mealId);
+    if (!mealName || !mealEditDialog.consumedAt || !group) return;
+
     setSavingMealId(group.id);
     setEntryError("");
     try {
@@ -1589,11 +1622,12 @@ function App() {
         ...draftFromEntry(entry),
         mealId: group.id,
         mealName,
+        consumedAt: mealEditDialog.consumedAt,
       })));
       const updatedEntriesById = new Map(updatedEntries.map((entry) => [entry.id, entry]));
       setEntries((currentEntries) => currentEntries.map((entry) => updatedEntriesById.get(entry.id) ?? entry));
-      setEditingMealId(null);
-      setMealEditNameDraft("");
+      setSelectedDate(mealEditDialog.consumedAt.slice(0, 10));
+      setMealEditDialog(null);
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
     } finally {
@@ -1630,7 +1664,7 @@ function App() {
   async function deleteEntry(id: string) {
     await deleteBackendEntry(id);
     setEntries(entries.filter((entry) => entry.id !== id));
-    if (editingEntryId === id) cancelEdit();
+    if (entryEditDialog?.entryId === id) closeEntryEditDialog();
   }
 
   async function duplicateEntry(entry: FoodEntry) {
@@ -1658,35 +1692,53 @@ function App() {
   }
 
   function editEntry(entry: FoodEntry) {
-    setDraft({
-      foodKey: entry.foodKey,
-      mealId: entry.mealId,
-      mealName: entry.mealName,
+    setEntryEditDialog({
+      entryId: entry.id,
       foodName: entry.foodName,
-      quantityValue: entry.quantityValue,
-      quantityUnit: entry.quantityUnit,
-      caloriesPer100g: entry.caloriesPer100g,
-      proteinPer100g: entry.proteinPer100g,
-      carbsPer100g: entry.carbsPer100g,
-      fatPer100g: entry.fatPer100g,
-      consumedAt: entry.consumedAt,
-      source: entry.source ?? "manual",
-      aiUsage: entry.aiUsage,
-      imageDataUrl: entry.imageDataUrl,
+      draft: draftFromEntry(entry),
     });
-    setPendingEntryImageDataUrl("");
-    setEditingEntryId(entry.id);
     setEntryError("");
     setAutocompleteOpen(false);
-    entryFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    window.setTimeout(() => quantityInputRef.current?.select(), 220);
   }
 
-  function cancelEdit() {
-    setEditingEntryId(null);
-    setDraft(createEmptyDraft());
-    setPendingEntryImageDataUrl("");
+  function closeEntryEditDialog() {
+    if (savingEntryEditId) return;
+    setEntryEditDialog(null);
     setEntryError("");
+  }
+
+  function updateEntryEditDraft(nextDraft: Partial<FoodDraft>) {
+    setEntryEditDialog((currentDialog) => currentDialog
+      ? { ...currentDialog, draft: { ...currentDialog.draft, ...nextDraft } }
+      : currentDialog);
+  }
+
+  async function saveEntryEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!entryEditDialog || savingEntryEditId) return;
+    const foodName = entryEditDialog.draft.foodName.trim();
+    if (!foodName || entryEditDialog.draft.quantityValue <= 0 || !entryEditDialog.draft.consumedAt) {
+      setEntryError("Bitte Gewicht und Zeitpunkt prüfen.");
+      return;
+    }
+
+    setSavingEntryEditId(entryEditDialog.entryId);
+    setEntryError("");
+    try {
+      const updatedEntry = await updateBackendEntry(entryEditDialog.entryId, {
+        ...entryEditDialog.draft,
+        foodName,
+      });
+      setEntries((currentEntries) => currentEntries.map((entry) => (
+        entry.id === updatedEntry.id ? updatedEntry : entry
+      )));
+      setSelectedDate(updatedEntry.consumedAt.slice(0, 10));
+      setEntryEditDialog(null);
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Eintrag konnte nicht gespeichert werden.");
+    } finally {
+      setSavingEntryEditId(null);
+    }
   }
 
   async function reanalyzeEntryImage(entry: FoodEntry) {
@@ -1840,6 +1892,10 @@ function App() {
       setAutocompleteOpen(false);
     }
   }
+
+  const activeMealEditGroup = mealEditDialog
+    ? mealGroups.find((group) => group.id === mealEditDialog.mealId) ?? null
+    : null;
 
   return (
     <main className="app-shell">
@@ -2327,15 +2383,9 @@ function App() {
       </section>
 
       <section className="workspace-grid">
-        <form ref={entryFormRef} className={editingEntryId ? "entry-form entry-form--editing" : "entry-form"} onSubmit={saveEntry}>
+        <form ref={entryFormRef} className="entry-form" onSubmit={saveEntry}>
           <div className="entry-form__heading">
-            <h2>{editingEntryId ? "Eintrag bearbeiten" : "Neuer Eintrag"}</h2>
-            {editingEntryId && (
-              <button className="secondary-button secondary-button--compact" type="button" onClick={cancelEdit}>
-                <X size={17} aria-hidden="true" />
-                Abbrechen
-              </button>
-            )}
+            <h2>Neuer Eintrag</h2>
           </div>
           <nav className="entry-mode-tabs" aria-label="Erfassungsart">
             {entryModes.map((mode) => (
@@ -2724,8 +2774,8 @@ function App() {
             <strong>{draftCalories.toLocaleString()} kcal</strong>
           </div>
           <button className="primary-button" type="submit">
-            {editingEntryId ? <Pencil size={18} aria-hidden="true" /> : <Plus size={18} aria-hidden="true" />}
-            {editingEntryId ? "Änderungen speichern" : "4. Speichern"}
+            <Plus size={18} aria-hidden="true" />
+            4. Speichern
           </button>
           {entryError && <p className="form-error">{entryError}</p>}
         </form>
@@ -2745,8 +2795,7 @@ function App() {
                 setSelectedDate(event.target.value || todayLocal());
                 setSelectedEntryIds([]);
                 setActiveMealId(null);
-                setEditingMealId(null);
-                setMealEditNameDraft("");
+                setMealEditDialog(null);
               }}
             />
           </label>
@@ -2854,45 +2903,7 @@ function App() {
             <div className="meal-row__heading">
               <div>
                 <span className="time-tag">{formatDateTime(group.consumedAt)}</span>
-                {editingMealId === group.id ? (
-                  <div className="meal-row__edit">
-                    <label>
-                      Mahlzeitname
-                      <input
-                        value={mealEditNameDraft}
-                        onChange={(event) => setMealEditNameDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") void saveMealName(group);
-                          if (event.key === "Escape") {
-                            setEditingMealId(null);
-                            setMealEditNameDraft("");
-                          }
-                        }}
-                        autoFocus
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void saveMealName(group)}
-                      disabled={!mealEditNameDraft.trim() || savingMealId === group.id}
-                      aria-label="Mahlzeitname speichern"
-                    >
-                      {savingMealId === group.id ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingMealId(null);
-                        setMealEditNameDraft("");
-                      }}
-                      aria-label="Bearbeitung abbrechen"
-                    >
-                      <X size={17} aria-hidden="true" />
-                    </button>
-                  </div>
-                ) : (
-                  <h3 id={`meal-${group.id}-title`}>{group.name}</h3>
-                )}
+                <h3 id={`meal-${group.id}-title`}>{group.name}</h3>
                 <p>{group.entries.length} Lebensmittel · {group.calories.toLocaleString("de-DE")} kcal</p>
                 {group.imageDataUrl && (
                   <div className="meal-row__image">
@@ -2968,7 +2979,156 @@ function App() {
       </section>
         </>
       )}
+      {entryEditDialog && (
+        <EditDialogShell
+          title="Lebensmittel bearbeiten"
+          subtitle={entryEditDialog.foodName}
+          icon={<Pencil size={19} aria-hidden="true" />}
+          onClose={closeEntryEditDialog}
+        >
+          <form className="edit-dialog__form" onSubmit={saveEntryEdit}>
+            <div className="quantity-grid">
+              <NumberInput
+                label="Gewicht"
+                min={0.001}
+                step={0.001}
+                value={entryEditDialog.draft.quantityValue}
+                onChange={(quantityValue) => updateEntryEditDraft({ quantityValue })}
+              />
+              <label>
+                Einheit
+                <select
+                  value={entryEditDialog.draft.quantityUnit}
+                  onChange={(event) => updateEntryEditDraft({ quantityUnit: event.target.value as Unit })}
+                >
+                  <option value="g">g</option>
+                  <option value="kg">kg</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              Uhrzeit
+              <input
+                type="datetime-local"
+                value={entryEditDialog.draft.consumedAt}
+                onChange={(event) => updateEntryEditDraft({ consumedAt: event.target.value })}
+              />
+            </label>
+            <div className="edit-dialog__summary">
+              <span>Berechnet</span>
+              <strong>{caloriesFor(entryEditDialog.draft).toLocaleString("de-DE")} kcal</strong>
+            </div>
+            {entryError && <p className="form-error">{entryError}</p>}
+            <div className="edit-dialog__actions">
+              <button className="secondary-button" type="button" onClick={closeEntryEditDialog}>
+                <X size={18} aria-hidden="true" />
+                Abbrechen
+              </button>
+              <button
+                className="secondary-button secondary-button--dark"
+                type="submit"
+                disabled={savingEntryEditId === entryEditDialog.entryId || entryEditDialog.draft.quantityValue <= 0 || !entryEditDialog.draft.consumedAt}
+              >
+                {savingEntryEditId === entryEditDialog.entryId ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
+                Speichern
+              </button>
+            </div>
+          </form>
+        </EditDialogShell>
+      )}
+      {mealEditDialog && activeMealEditGroup && (
+        <EditDialogShell
+          title="Mahlzeit bearbeiten"
+          subtitle={`${activeMealEditGroup.entries.length} Lebensmittel · ${activeMealEditGroup.calories.toLocaleString("de-DE")} kcal`}
+          icon={<Utensils size={19} aria-hidden="true" />}
+          onClose={closeMealEditDialog}
+        >
+          <form className="edit-dialog__form" onSubmit={saveMealEdit}>
+            <label>
+              Mahlzeitname
+              <input
+                value={mealEditDialog.name}
+                onChange={(event) => setMealEditDialog({ ...mealEditDialog, name: event.target.value })}
+                autoFocus
+              />
+            </label>
+            <label>
+              Uhrzeit fuer alle Lebensmittel
+              <input
+                type="datetime-local"
+                value={mealEditDialog.consumedAt}
+                onChange={(event) => setMealEditDialog({ ...mealEditDialog, consumedAt: event.target.value })}
+              />
+            </label>
+            <div className="edit-dialog__summary">
+              <span>Gesamtgewicht</span>
+              <strong>{Math.round(activeMealEditGroup.entries.reduce((sum, entry) => sum + gramsFor(entry), 0)).toLocaleString("de-DE")} g</strong>
+            </div>
+            <div className="edit-dialog__entry-list" aria-label="Lebensmittel in dieser Mahlzeit">
+              {activeMealEditGroup.entries.map((entry) => (
+                <div key={entry.id}>
+                  <span>{entry.foodName}</span>
+                  <strong>{formatQuantity(entry)}</strong>
+                </div>
+              ))}
+            </div>
+            {entryError && <p className="form-error">{entryError}</p>}
+            <div className="edit-dialog__actions">
+              <button className="secondary-button" type="button" onClick={closeMealEditDialog}>
+                <X size={18} aria-hidden="true" />
+                Abbrechen
+              </button>
+              <button
+                className="secondary-button secondary-button--dark"
+                type="submit"
+                disabled={savingMealId === mealEditDialog.mealId || !mealEditDialog.name.trim() || !mealEditDialog.consumedAt}
+              >
+                {savingMealId === mealEditDialog.mealId ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
+                Speichern
+              </button>
+            </div>
+          </form>
+        </EditDialogShell>
+      )}
     </main>
+  );
+}
+
+function EditDialogShell({
+  title,
+  subtitle,
+  icon,
+  children,
+  onClose,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="edit-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="edit-dialog" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="edit-dialog__header">
+          <span className="edit-dialog__icon">{icon}</span>
+          <div>
+            <h2>{title}</h2>
+            <p>{subtitle}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Dialog schließen">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
   );
 }
 
