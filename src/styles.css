@@ -273,6 +273,107 @@ h1 {
   margin: 12px 0 18px;
 }
 
+.calorie-ideas-card {
+  display: grid;
+  gap: 12px;
+  margin: -4px 0 18px;
+  padding: 16px;
+  background:
+    linear-gradient(135deg, rgba(36, 64, 58, 0.1), transparent 44%),
+    #fffaf0;
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: var(--radius);
+}
+
+.calorie-ideas-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.calorie-ideas-card__head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.calorie-ideas-card__head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #24403a;
+  font-size: 0.8rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.calorie-ideas-card__head strong {
+  color: #17211b;
+  font-size: 1.1rem;
+}
+
+.calorie-ideas-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.calorie-idea {
+  display: grid;
+  grid-template-rows: minmax(74px, 1fr) auto auto;
+  gap: 8px;
+  min-width: 0;
+  min-height: 148px;
+  padding: 12px;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+}
+
+.calorie-idea strong,
+.calorie-idea small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.calorie-idea strong {
+  color: #17211b;
+  font-size: 0.96rem;
+  line-height: 1.16;
+}
+
+.calorie-idea small {
+  margin-top: 5px;
+  color: #627064;
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.calorie-idea span,
+.calorie-idea em {
+  width: fit-content;
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.calorie-idea span {
+  padding: 6px 8px;
+  color: #fff8eb;
+  background: #24403a;
+  border-radius: 999px;
+}
+
+.calorie-idea em {
+  color: #627064;
+  text-transform: uppercase;
+}
+
 .config-panel {
   display: grid;
   grid-template-columns: minmax(230px, 0.8fr) minmax(240px, 0.7fr) minmax(320px, 1.2fr);
@@ -2180,6 +2281,10 @@ button:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .calorie-ideas-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .analysis-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2249,6 +2354,7 @@ button:focus-visible {
   }
 
   .metric-grid,
+  .calorie-ideas-list,
   .analysis-summary-grid,
   .calorie-timing-grid,
   .weekly-chart-grid,
@@ -2257,6 +2363,19 @@ button:focus-visible {
   .quantity-grid,
   .photo-actions {
     grid-template-columns: 1fr;
+  }
+
+  .calorie-ideas-card__head {
+    display: grid;
+  }
+
+  .calorie-ideas-card__head .secondary-button {
+    width: 100%;
+  }
+
+  .calorie-idea {
+    min-height: 118px;
+    grid-template-rows: auto auto auto;
   }
 
   .barcode-actions {

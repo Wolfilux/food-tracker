@@ -378,6 +378,16 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/ai/calorie-ideas" && request.method === "POST") {
+      try {
+        const ideas = await suggestCalorieIdeas(await readJsonBody(request));
+        sendJson(response, { ideas });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/ai/models" && request.method === "GET") {
       try {
         const provider = url.searchParams.get("provider") ?? getAiConfigRecord().provider;
@@ -1552,6 +1562,231 @@ function buildWeeklyPromptPayload(summary) {
       },
     })),
   };
+}
+
+async function suggestCalorieIdeas(input) {
+  const remainingCalories = clampNumber(input?.remainingCalories, -2000, 3000);
+  const date = normalizeGarminDate(input?.date ?? todayInBerlin());
+  if (!Number.isFinite(remainingCalories)) throw new Error("Invalid remaining calories");
+
+  const fallbackIdeas = buildCalorieIdeaFallbacks(remainingCalories, date);
+  const config = getAnalysisAiConfigRecord();
+  const provider = aiProviders.get(config.provider);
+
+  if (!provider || !config.apiKey || remainingCalories <= 80) {
+    return fallbackIdeas;
+  }
+
+  try {
+    validateProviderKeyPair(config.provider, config.apiKey);
+    return await generateCalorieIdeasWithAi(provider, config, {
+      date,
+      remainingCalories: Math.round(remainingCalories),
+      nutritionGoal: getNutritionConfig().goal,
+      candidates: fallbackIdeas,
+      recentFoods: buildRecentFoodIdeas(remainingCalories, 8),
+      mealTemplates: buildMealTemplateIdeas(remainingCalories, 8),
+    }, fallbackIdeas);
+  } catch {
+    return fallbackIdeas;
+  }
+}
+
+async function generateCalorieIdeasWithAi(provider, config, promptPayload, fallbackIdeas) {
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? {
+        "HTTP-Referer": "http://localhost:5173",
+        "X-Title": "Food Tracker",
+      } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.25,
+      response_format: { type: "json_object" },
+      ...(config.provider === "openrouter" ? { usage: { include: true } } : {}),
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Du bist ein pragmatischer deutschsprachiger Nutrition-Coach.",
+            "Antworte ausschliesslich als JSON ohne Markdown.",
+            "Schlage kurze, schnelle Ideen vor, um Restkalorien sinnvoll aufzufuellen.",
+            "Bevorzuge vorhandene Gewohnheiten, Mahlzeiten und Lebensmittel aus den Kandidaten.",
+            "Ergaenze nur einfache alltagstaugliche Alternativen. Keine medizinischen Aussagen.",
+            "Schema: {ideas:[{title:string, subtitle:string, calories:number, source:'habit'|'meal'|'quick'|'ai'}]}.",
+            "Maximal 5 Ideen. title maximal 48 Zeichen, subtitle maximal 90 Zeichen.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: "Erstelle Restkalorien-Ideen: " + JSON.stringify(promptPayload),
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "AI ideas failed"));
+
+  const parsed = parseJsonObject(payload?.choices?.[0]?.message?.content);
+  const ideas = normalizeCalorieIdeas(parsed?.ideas, fallbackIdeas);
+  return ideas.length > 0 ? ideas : fallbackIdeas;
+}
+
+function buildCalorieIdeaFallbacks(remainingCalories, date) {
+  if (remainingCalories <= 0) {
+    return [{
+      title: "Ziel erreicht",
+      subtitle: "Heute lieber leicht bleiben: Tee, Wasser oder Gemuese-Snack.",
+      calories: 0,
+      source: "quick",
+    }];
+  }
+
+  if (remainingCalories <= 80) {
+    return [{
+      title: "Kleine Luecke",
+      subtitle: "Obst, Rohkost oder einfach offen lassen.",
+      calories: Math.max(0, Math.round(remainingCalories)),
+      source: "quick",
+    }];
+  }
+
+  const mealIdeas = buildMealTemplateIdeas(remainingCalories, 3);
+  const recentIdeas = buildRecentFoodIdeas(remainingCalories, 4);
+  const quickIdeas = buildQuickCalorieIdeas(remainingCalories, date);
+
+  return dedupeCalorieIdeas([...mealIdeas, ...recentIdeas, ...quickIdeas]).slice(0, 5);
+}
+
+function buildMealTemplateIdeas(remainingCalories, limit = 5) {
+  const favoriteKeys = new Set(listMealFavoriteKeys());
+  return listMealTemplates()
+    .map((meal) => {
+      const calories = mealTemplateCalories(meal.items);
+      const score = calorieFitScore(remainingCalories, calories) + (favoriteKeys.has(serverMealTemplateSignature(meal)) ? 24 : 0);
+      return {
+        idea: {
+          title: meal.name,
+          subtitle: `${meal.items.length} Lebensmittel aus deinen Vorlagen`,
+          calories,
+          source: "meal",
+        },
+        score,
+      };
+    })
+    .filter(({ idea }) => idea.calories > 0 && idea.calories <= remainingCalories + 220)
+    .sort((left, right) => right.score - left.score)
+    .map(({ idea }) => idea)
+    .slice(0, limit);
+}
+
+function buildRecentFoodIdeas(remainingCalories, limit = 5) {
+  const usage = new Map();
+  for (const entry of listEntries().slice(0, 500)) {
+    if (entry.mealId) continue;
+    const key = normalizeFoodKey(entry.foodKey || entry.foodName);
+    if (!key || entry.caloriesPer100g <= 0) continue;
+    const current = usage.get(key) ?? {
+      entry,
+      count: 0,
+      latest: "",
+    };
+    current.count += 1;
+    if (entry.consumedAt > current.latest) {
+      current.entry = entry;
+      current.latest = entry.consumedAt;
+    }
+    usage.set(key, current);
+  }
+
+  return [...usage.values()]
+    .map(({ entry, count, latest }) => {
+      const targetCalories = Math.min(Math.max(remainingCalories * 0.72, 140), remainingCalories);
+      const grams = Math.round((targetCalories / entry.caloriesPer100g) * 100);
+      const boundedGrams = Math.min(450, Math.max(40, grams));
+      const calories = Math.round((boundedGrams / 100) * entry.caloriesPer100g);
+      return {
+        idea: {
+          title: entry.foodName,
+          subtitle: `${boundedGrams.toLocaleString("de-DE")} g · haeufig genutzt`,
+          calories,
+          source: "habit",
+        },
+        score: calorieFitScore(remainingCalories, calories) + Math.min(30, count * 5) + (latest ? 8 : 0),
+      };
+    })
+    .filter(({ idea }) => idea.calories >= 80 && idea.calories <= remainingCalories + 160)
+    .sort((left, right) => right.score - left.score)
+    .map(({ idea }) => idea)
+    .slice(0, limit);
+}
+
+function buildQuickCalorieIdeas(remainingCalories) {
+  const quickIdeas = [
+    { title: "Skyr, Banane, Haferflocken", subtitle: "Schnell, proteinreich, gut planbar", calories: 420 },
+    { title: "Magerquark mit Beeren", subtitle: "Leicht, proteinreich, in 3 Minuten fertig", calories: 320 },
+    { title: "Vollkornbrot mit Huettenkaese", subtitle: "Satt, salzig, ohne Kochen", calories: 360 },
+    { title: "Omelette mit Gemuese", subtitle: "Warm, proteinreich, flexibel", calories: 430 },
+    { title: "Joghurt, Apfel, Nuesse", subtitle: "Kleiner Snack mit Fett und Ballaststoffen", calories: 300 },
+    { title: "Reis, Ei, TK-Gemuese", subtitle: "Einfache Bowl aus Vorrat", calories: 520 },
+    { title: "Proteinshake und Obst", subtitle: "Sehr schnell nach Training oder spaet abends", calories: 260 },
+  ];
+
+  return quickIdeas
+    .filter((idea) => idea.calories <= remainingCalories + 180)
+    .sort((left, right) => calorieFitScore(remainingCalories, right.calories) - calorieFitScore(remainingCalories, left.calories))
+    .map((idea) => ({ ...idea, source: "quick" }));
+}
+
+function normalizeCalorieIdeas(rawIdeas, fallbackIdeas) {
+  if (!Array.isArray(rawIdeas)) return fallbackIdeas;
+  return dedupeCalorieIdeas(rawIdeas.map((idea) => ({
+    title: String(idea?.title ?? "").trim().slice(0, 60),
+    subtitle: String(idea?.subtitle ?? "").trim().slice(0, 110),
+    calories: Math.round(clampNumber(idea?.calories, 0, 3000)),
+    source: ["habit", "meal", "quick", "ai"].includes(idea?.source) ? idea.source : "ai",
+  })).filter((idea) => idea.title && idea.subtitle)).slice(0, 5);
+}
+
+function dedupeCalorieIdeas(ideas) {
+  const seen = new Set();
+  return ideas.filter((idea) => {
+    const key = normalizeFoodKey(idea.title);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function calorieFitScore(remainingCalories, calories) {
+  const distance = Math.abs(remainingCalories - calories);
+  return Math.max(0, 100 - Math.round((distance / Math.max(remainingCalories, 1)) * 100));
+}
+
+function mealTemplateCalories(items) {
+  return Math.round(items.reduce((sum, item) => sum + entryCalories(item), 0));
+}
+
+function entryCalories(entry) {
+  return (entryGrams(entry) / 100) * Number(entry.caloriesPer100g ?? 0);
+}
+
+function entryGrams(entry) {
+  const value = Number(entry.quantityValue ?? 0);
+  return entry.quantityUnit === "kg" ? value * 1000 : value;
+}
+
+function serverMealTemplateSignature(meal) {
+  const items = meal.items
+    .map((item) => normalizeFoodKey(item.foodName))
+    .sort((left, right) => left.localeCompare(right, "de"))
+    .join("|");
+  return `${normalizeFoodKey(meal.name)}::${items}`;
 }
 
 function roundWeeklyNumbers(value) {

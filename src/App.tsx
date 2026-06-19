@@ -249,6 +249,13 @@ type FoodImageAnalysisItem = Omit<FoodImageAnalysis, "provider" | "model" | "aiU
   matchedFood?: FoodSearchResult;
 };
 
+type CalorieIdea = {
+  title: string;
+  subtitle: string;
+  calories: number;
+  source: "habit" | "meal" | "quick" | "ai";
+};
+
 type MacroPreset = {
   label: string;
   protein: number;
@@ -681,6 +688,9 @@ function App() {
   const [weeklyAiAnalysis, setWeeklyAiAnalysis] = useState<WeeklyAiAnalysis | null>(null);
   const [weeklyAiState, setWeeklyAiState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [weeklyAiError, setWeeklyAiError] = useState("");
+  const [calorieIdeas, setCalorieIdeas] = useState<CalorieIdea[]>([]);
+  const [calorieIdeasState, setCalorieIdeasState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [calorieIdeasError, setCalorieIdeasError] = useState("");
   const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
@@ -824,11 +834,49 @@ function App() {
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
+  useEffect(() => {
+    if (!isConfigLoaded || activeView !== "tracker") return undefined;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      setCalorieIdeasState("loading");
+      setCalorieIdeasError("");
+      fetchCalorieIdeas(dailyRemainingCalories, selectedDate, controller.signal)
+        .then((ideas) => {
+          setCalorieIdeas(ideas);
+          setCalorieIdeasState("done");
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          setCalorieIdeasError(error instanceof Error ? error.message : "Ideen konnten nicht geladen werden.");
+          setCalorieIdeasState("error");
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [activeView, dailyRemainingCalories, isConfigLoaded, mealTemplates.length, selectedDate]);
+
   function toggleMealCollapsed(mealId: string) {
     setCollapsedMealIds((currentIds) => ({
       ...currentIds,
       [mealId]: !currentIds[mealId],
     }));
+  }
+
+  async function refreshCalorieIdeas() {
+    setCalorieIdeasState("loading");
+    setCalorieIdeasError("");
+    try {
+      const ideas = await fetchCalorieIdeas(dailyRemainingCalories, selectedDate);
+      setCalorieIdeas(ideas);
+      setCalorieIdeasState("done");
+    } catch (error) {
+      setCalorieIdeasError(error instanceof Error ? error.message : "Ideen konnten nicht geladen werden.");
+      setCalorieIdeasState("error");
+    }
   }
 
   useEffect(() => {
@@ -2392,6 +2440,14 @@ function App() {
         <MacroMetric label="Fett" target={macroTargets.fat.grams} actual={totals.fat} />
       </section>
 
+      <CalorieIdeasCard
+        ideas={calorieIdeas}
+        remainingCalories={dailyRemainingCalories}
+        state={calorieIdeasState}
+        error={calorieIdeasError}
+        onRefresh={() => void refreshCalorieIdeas()}
+      />
+
       <section className="workspace-grid">
         <form ref={entryFormRef} className="entry-form" onSubmit={saveEntry}>
           <div className="entry-form__heading">
@@ -3292,6 +3348,53 @@ function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: stri
   );
 }
 
+function CalorieIdeasCard({
+  ideas,
+  remainingCalories,
+  state,
+  error,
+  onRefresh,
+}: {
+  ideas: CalorieIdea[];
+  remainingCalories: number;
+  state: "idle" | "loading" | "done" | "error";
+  error: string;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="calorie-ideas-card" aria-label="Restkalorien Ideen" aria-live="polite">
+      <div className="calorie-ideas-card__head">
+        <div>
+          <span>
+            <Sparkles size={16} aria-hidden="true" />
+            Restkalorien-Ideen
+          </span>
+          <strong>{remainingCalories > 0 ? `${remainingCalories.toLocaleString("de-DE")} kcal offen` : "Tagesziel erreicht"}</strong>
+        </div>
+        <button className="secondary-button secondary-button--compact" type="button" disabled={state === "loading"} onClick={onRefresh}>
+          {state === "loading" ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <RefreshCw size={16} aria-hidden="true" />}
+          Ideen
+        </button>
+      </div>
+      {state === "error" && <p className="photo-note photo-note--error">{error}</p>}
+      <div className="calorie-ideas-list">
+        {(ideas.length > 0 ? ideas : [{ title: "Ideen laden", subtitle: "Nutzt Vorlagen, Verlauf und schnelle Basics.", calories: 0, source: "quick" as const }]).map((idea) => (
+          <article className="calorie-idea" key={`${idea.source}-${idea.title}`}>
+            <div>
+              <strong>{idea.title}</strong>
+              <small>{idea.subtitle}</small>
+            </div>
+            <span>
+              {idea.calories > 0 ? `${idea.calories.toLocaleString("de-DE")} kcal` : sourceLabel(idea.source)}
+            </span>
+            <em>{sourceLabel(idea.source)}</em>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Metric({ icon, label, value, suffix }: { icon: ReactNode; label: string; value: number | string; suffix: string }) {
   return (
     <article className="metric-card">
@@ -3835,6 +3938,18 @@ async function fetchWeeklyAiAnalysis(weekStart: string): Promise<WeeklyAiAnalysi
   return normalizeWeeklyAiAnalysis(data.analysis);
 }
 
+async function fetchCalorieIdeas(remainingCalories: number, date: string, signal?: AbortSignal): Promise<CalorieIdea[]> {
+  const response = await fetch("/api/ai/calorie-ideas", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ remainingCalories, date }),
+    signal,
+  });
+  const data = (await response.json()) as { ideas?: CalorieIdea[]; error?: string };
+  if (!response.ok || !data.ideas) throw new Error(data.error ?? "Ideen konnten nicht geladen werden.");
+  return data.ideas.map(normalizeCalorieIdea).filter((idea) => idea.title);
+}
+
 async function fetchGarminDailySummary(date: string, refresh = false): Promise<GarminDailySummary> {
   const params = new URLSearchParams({ date });
   if (refresh) params.set("refresh", "1");
@@ -4283,6 +4398,16 @@ function normalizeWeeklyAiAnalysis(analysis: WeeklyAiAnalysis): WeeklyAiAnalysis
   };
 }
 
+function normalizeCalorieIdea(idea: CalorieIdea): CalorieIdea {
+  const source = ["habit", "meal", "quick", "ai"].includes(idea.source) ? idea.source : "quick";
+  return {
+    title: String(idea.title ?? "").trim(),
+    subtitle: String(idea.subtitle ?? "").trim(),
+    calories: Math.max(0, Math.round(Number(idea.calories ?? 0))),
+    source: source as CalorieIdea["source"],
+  };
+}
+
 function selectedFallbackWeekStart() {
   return getWeekStart(todayLocal());
 }
@@ -4496,6 +4621,13 @@ function trafficLightLabel(value: WeeklyAiSignal["label"]) {
   if (value === "gut") return "Gut";
   if (value === "schlecht") return "Schlecht";
   return "Okay";
+}
+
+function sourceLabel(value: CalorieIdea["source"]) {
+  if (value === "habit") return "Gewohnheit";
+  if (value === "meal") return "Vorlage";
+  if (value === "ai") return "KI";
+  return "Schnell";
 }
 
 function readImageAsCompressedDataUrl(file: File) {
