@@ -34,12 +34,13 @@ import {
   Trash2,
   Upload,
   Utensils,
+  Wine,
   X,
 } from "lucide-react";
 
-type Unit = "g" | "kg";
+type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
-type EntryMode = "search" | "barcode" | "photo" | "text" | "meal";
+type EntryMode = "search" | "barcode" | "photo" | "text" | "meal" | "alcohol";
 
 type FoodEntry = {
   id: string;
@@ -58,6 +59,9 @@ type FoodEntry = {
   source?: string;
   aiUsage?: AiUsageSnapshot;
   imageDataUrl?: string;
+  alcoholVolPercent?: number;
+  alcoholGrams?: number;
+  alcoholCalories?: number;
 };
 
 type FoodDraft = Omit<FoodEntry, "id" | "createdAt">;
@@ -264,6 +268,9 @@ type MacroPreset = {
   note: string;
 };
 
+type CalorieEntryLike = Pick<FoodEntry, "quantityUnit" | "quantityValue" | "caloriesPer100g"> & Partial<Pick<FoodEntry, "alcoholVolPercent" | "alcoholCalories" | "alcoholGrams">>;
+type AlcoholEntryLike = Pick<FoodEntry, "quantityUnit"> & Partial<Pick<FoodEntry, "quantityValue" | "alcoholVolPercent" | "alcoholCalories" | "alcoholGrams">>;
+
 const createEmptyDraft = (): FoodDraft => ({
   foodName: "",
   quantityValue: 100,
@@ -274,6 +281,19 @@ const createEmptyDraft = (): FoodDraft => ({
   fatPer100g: 0,
   consumedAt: nowLocal(),
   source: "manual",
+});
+
+const createAlcoholDraft = (foodName: string, quantityMl: number, volPercent: number): FoodDraft => ({
+  foodName,
+  quantityValue: quantityMl,
+  quantityUnit: "ml",
+  caloriesPer100g: 0,
+  proteinPer100g: 0,
+  carbsPer100g: 0,
+  fatPer100g: 0,
+  consumedAt: nowLocal(),
+  source: "alcohol",
+  alcoholVolPercent: volPercent,
 });
 
 const defaultNutritionConfig: NutritionConfig = {
@@ -403,6 +423,7 @@ const entryModes: Array<{ id: EntryMode; label: string; icon: ReactNode }> = [
   { id: "photo", label: "Foto", icon: <Camera size={17} aria-hidden="true" /> },
   { id: "text", label: "Beschreiben", icon: <MessageSquareText size={17} aria-hidden="true" /> },
   { id: "meal", label: "Vorlagen", icon: <Utensils size={17} aria-hidden="true" /> },
+  { id: "alcohol", label: "Alkohol", icon: <Wine size={17} aria-hidden="true" /> },
 ];
 
 const COMMON_FOODS: CommonFood[] = [
@@ -597,13 +618,38 @@ const COMMON_FOODS: CommonFood[] = [
 
 const nowLocal = () => new Date().toISOString().slice(0, 16);
 const todayLocal = () => nowLocal().slice(0, 10);
+const ethanolDensityGPerMl = 0.789;
+const ethanolCaloriesPerGram = 7;
 
 function gramsFor(entry: Pick<FoodEntry, "quantityUnit" | "quantityValue">) {
   return entry.quantityUnit === "kg" ? entry.quantityValue * 1000 : entry.quantityValue;
 }
 
-function caloriesFor(entry: Pick<FoodEntry, "quantityUnit" | "quantityValue" | "caloriesPer100g">) {
+function caloriesFor(entry: CalorieEntryLike) {
+  if (isAlcoholEntry(entry)) return alcoholCaloriesFor(entry);
   return Math.round((gramsFor(entry) / 100) * entry.caloriesPer100g);
+}
+
+function isAlcoholEntry(entry: AlcoholEntryLike) {
+  return entry.quantityUnit === "ml" && Number(entry.alcoholVolPercent ?? 0) > 0;
+}
+
+function alcoholGramsFor(entry: AlcoholEntryLike) {
+  if (!isAlcoholEntry(entry)) return 0;
+  const storedGrams = Number(entry.alcoholGrams ?? 0);
+  if (Number.isFinite(storedGrams) && storedGrams > 0) return storedGrams;
+  return calculateAlcoholGrams(Number(entry.quantityValue ?? 0), Number(entry.alcoholVolPercent));
+}
+
+function alcoholCaloriesFor(entry: AlcoholEntryLike) {
+  if (!isAlcoholEntry(entry)) return 0;
+  const storedCalories = Number(entry.alcoholCalories ?? 0);
+  if (Number.isFinite(storedCalories) && storedCalories > 0) return Math.round(storedCalories);
+  return Math.round(alcoholGramsFor(entry) * ethanolCaloriesPerGram);
+}
+
+function calculateAlcoholGrams(quantityMl: number, volPercent: number) {
+  return Math.round(quantityMl * (volPercent / 100) * ethanolDensityGPerMl * 10) / 10;
 }
 
 function macroFor(
@@ -757,8 +803,9 @@ function App() {
           protein: sum.protein + macroFor(entry, entry.proteinPer100g),
           carbs: sum.carbs + macroFor(entry, entry.carbsPer100g),
           fat: sum.fat + macroFor(entry, entry.fatPer100g),
+          alcoholCalories: sum.alcoholCalories + alcoholCaloriesFor(entry),
         }),
-        { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 },
+        { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0, alcoholCalories: 0 },
       ),
     [dayEntries],
   );
@@ -801,8 +848,9 @@ function App() {
           carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
           fat: sum.fat + day.totals.fat,
           fatTarget: sum.fatTarget + day.macroTargets.fat.grams,
+          alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
         }),
-        { calories: 0, calorieTarget: 0, protein: 0, proteinTarget: 0, carbs: 0, carbsTarget: 0, fat: 0, fatTarget: 0 },
+        { calories: 0, calorieTarget: 0, protein: 0, proteinTarget: 0, carbs: 0, carbsTarget: 0, fat: 0, fatTarget: 0, alcoholCalories: 0 },
       ),
     [weekAnalysis],
   );
@@ -1186,7 +1234,7 @@ function App() {
   async function saveEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const foodName = draft.foodName.trim();
-    if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0 || !draft.consumedAt) {
+    if (!foodName || draft.quantityValue <= 0 || draft.caloriesPer100g < 0 || !draft.consumedAt || (entryMode === "alcohol" && !isAlcoholEntry(draft))) {
       setEntryError("Bitte Lebensmittel, Gewicht, Nährwerte und Zeitpunkt prüfen.");
       return;
     }
@@ -1690,6 +1738,10 @@ function App() {
       carbsPer100g: result.carbsPer100g,
       fatPer100g: result.fatPer100g,
       source: result.source,
+      alcoholVolPercent: undefined,
+      alcoholGrams: undefined,
+      alcoholCalories: undefined,
+      quantityUnit: draft.quantityUnit === "ml" ? "g" : draft.quantityUnit,
     });
     setAutocompleteOpen(false);
     setActiveResultIndex(0);
@@ -1718,6 +1770,9 @@ function App() {
         source: entry.source ?? "manual",
         aiUsage: entry.aiUsage,
         imageDataUrl: entry.imageDataUrl,
+        alcoholVolPercent: entry.alcoholVolPercent,
+        alcoholGrams: entry.alcoholGrams,
+        alcoholCalories: entry.alcoholCalories,
       });
       setEntries((currentEntries) => [duplicatedEntry, ...currentEntries]);
       setSelectedDate(duplicatedEntry.consumedAt.slice(0, 10));
@@ -1752,7 +1807,7 @@ function App() {
     event.preventDefault();
     if (!entryEditDialog || savingEntryEditId) return;
     const foodName = entryEditDialog.draft.foodName.trim();
-    if (!foodName || entryEditDialog.draft.quantityValue <= 0 || !entryEditDialog.draft.consumedAt) {
+    if (!foodName || entryEditDialog.draft.quantityValue <= 0 || !entryEditDialog.draft.consumedAt || (entryEditDialog.draft.quantityUnit === "ml" && !isAlcoholEntry(entryEditDialog.draft))) {
       setEntryError("Bitte Gewicht und Zeitpunkt prüfen.");
       return;
     }
@@ -2034,6 +2089,7 @@ function App() {
 
           <section className="analysis-summary-grid" aria-label="Wochensummen">
             <AnalysisSummaryMetric label="Kalorien" actual={weekSummary.calories} target={weekSummary.calorieTarget} suffix="kcal" />
+            <AnalysisSummaryMetric label="Alkohol" actual={weekSummary.alcoholCalories} target={0} suffix="kcal" />
             <AnalysisSummaryMetric label="Protein" actual={weekSummary.protein} target={weekSummary.proteinTarget} suffix="g" />
             <AnalysisSummaryMetric label="Kohlenhydrate" actual={weekSummary.carbs} target={weekSummary.carbsTarget} suffix="g" />
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
@@ -2420,6 +2476,7 @@ function App() {
         <>
       <section className="metric-grid" aria-label="Tagessummen">
         <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
+        <Metric icon={<Wine />} label="Alkohol" value={totals.alcoholCalories} suffix="kcal" />
         <Metric icon={<Scale />} label="Menge" value={Math.round(totals.grams)} suffix="g" />
         <MacroMetric label="Protein" target={macroTargets.protein.grams} actual={totals.protein} />
         <MacroMetric label="Kohlenhydrate" target={macroTargets.carbs.grams} actual={totals.carbs} />
@@ -2449,6 +2506,9 @@ function App() {
                 onClick={() => {
                   if (mode.id !== "barcode") stopBarcodeScanner();
                   setEntryMode(mode.id);
+                  if (mode.id === "alcohol") {
+                    setDraft((currentDraft) => isAlcoholEntry(currentDraft) ? currentDraft : createAlcoholDraft("Bier", 500, 5));
+                  }
                 }}
               >
                 {mode.icon}
@@ -2732,6 +2792,32 @@ function App() {
             )}
           </section>
           )}
+          {entryMode === "alcohol" && (
+          <section className="alcohol-panel" aria-label="Alkohol erfassen">
+            <div className="search-panel__heading">
+              <Wine size={18} aria-hidden="true" />
+              <span>Alkohol erfassen</span>
+              <small>ml und Vol-%</small>
+            </div>
+            <label>
+              Getränk
+              <input value={draft.foodName} onChange={(event) => setDraft({ ...draft, foodName: event.target.value, foodKey: undefined, source: "alcohol" })} placeholder="Bier, Wein oder Spirituose" />
+            </label>
+            <div className="quantity-grid">
+              <NumberInput inputRef={quantityInputRef} label="Menge" min={1} step={1} value={draft.quantityValue} onChange={(quantityValue) => setDraft({ ...draft, quantityValue, quantityUnit: "ml", source: "alcohol" })} />
+              <NumberInput label="Vol-%" min={0.1} step={0.1} value={draft.alcoholVolPercent ?? 5} onChange={(alcoholVolPercent) => setDraft({ ...draft, alcoholVolPercent, quantityUnit: "ml", source: "alcohol" })} />
+            </div>
+            <div className="alcohol-presets" aria-label="Alkohol-Beispiele">
+              <button type="button" onClick={() => setDraft(createAlcoholDraft("Bier", 500, 5))}>Bier 0,5l 5%</button>
+              <button type="button" onClick={() => setDraft(createAlcoholDraft("Wein", 200, 12))}>Wein 0,2l 12%</button>
+              <button type="button" onClick={() => setDraft(createAlcoholDraft("Spirituose", 40, 40))}>Spirituose 4cl 40%</button>
+            </div>
+            <label>
+              Zeitpunkt
+              <input type="datetime-local" value={draft.consumedAt} onChange={(event) => setDraft({ ...draft, consumedAt: event.target.value })} />
+            </label>
+          </section>
+          )}
           {entryMode === "search" && (
           <section className="search-panel search-panel--embedded" aria-label="Lebensmittelsuche">
             <div className="search-panel__heading">
@@ -2793,6 +2879,8 @@ function App() {
             </div>
           </section>
           )}
+          {entryMode !== "alcohol" && (
+          <>
           <div className={draft.foodKey ? "selection-card selection-card--active" : "selection-card"} aria-live="polite">
             <span>2. Auswahl</span>
             <strong>{draft.foodName || "Noch kein Lebensmittel gewählt"}</strong>
@@ -2821,8 +2909,10 @@ function App() {
               <NumberInput label="Fett / 100g" min={0} step="any" value={draft.fatPer100g} onChange={(fatPer100g) => setDraft({ ...draft, fatPer100g })} />
             </div>
           </details>
+          </>
+          )}
           <div className="calculation-strip">
-            <span>{draft.source && draft.source !== "manual" ? "Datenbankwerte" : "Berechnet"}</span>
+            <span>{isAlcoholEntry(draft) ? `${formatMacro(alcoholGramsFor(draft))} g Ethanol` : draft.source && draft.source !== "manual" ? "Datenbankwerte" : "Berechnet"}</span>
             <strong>{draftCalories.toLocaleString()} kcal</strong>
           </div>
           <button className="primary-button" type="submit">
@@ -3051,13 +3141,28 @@ function App() {
                 Einheit
                 <select
                   value={entryEditDialog.draft.quantityUnit}
-                  onChange={(event) => updateEntryEditDraft({ quantityUnit: event.target.value as Unit })}
+                  onChange={(event) => {
+                    const quantityUnit = event.target.value as Unit;
+                    updateEntryEditDraft(quantityUnit === "ml"
+                      ? { quantityUnit, source: "alcohol", alcoholVolPercent: entryEditDialog.draft.alcoholVolPercent ?? 5 }
+                      : { quantityUnit, alcoholVolPercent: undefined, alcoholGrams: undefined, alcoholCalories: undefined });
+                  }}
                 >
                   <option value="g">g</option>
                   <option value="kg">kg</option>
+                  <option value="ml">ml</option>
                 </select>
               </label>
             </div>
+            {entryEditDialog.draft.quantityUnit === "ml" && (
+              <NumberInput
+                label="Vol-%"
+                min={0.1}
+                step={0.1}
+                value={entryEditDialog.draft.alcoholVolPercent ?? 5}
+                onChange={(alcoholVolPercent) => updateEntryEditDraft({ alcoholVolPercent, source: "alcohol" })}
+              />
+            )}
             <label>
               Uhrzeit
               <input
@@ -3188,14 +3293,19 @@ function AnalysisSummaryMetric({ label, actual, target, suffix }: { label: strin
   const roundedActual = Math.round(actual);
   const roundedTarget = Math.round(target);
   const delta = roundedActual - roundedTarget;
+  const hasTarget = roundedTarget > 0;
 
   return (
     <article className="analysis-summary-card">
       <span>{label}</span>
       <strong>{roundedActual.toLocaleString("de-DE")} <small>{suffix}</small></strong>
-      <p className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
-        {formatSignedNumber(delta)} {suffix} vs. Ziel erfasster Tage
-      </p>
+      {hasTarget ? (
+        <p className={delta > 0 ? "delta delta--over" : delta < 0 ? "delta delta--under" : "delta"}>
+          {formatSignedNumber(delta)} {suffix} vs. Ziel erfasster Tage
+        </p>
+      ) : (
+        <p className="delta">separat erfasst</p>
+      )}
     </article>
   );
 }
@@ -3528,7 +3638,9 @@ function FoodEntryRow({
           </div>
         )}
         <p className="food-row__meta">
-          {formatQuantity(entry)} · {entry.caloriesPer100g.toLocaleString()} kcal / 100g
+          {isAlcoholEntry(entry)
+            ? `${formatQuantity(entry)} · ${formatMacro(alcoholGramsFor(entry))} g Ethanol · ${entry.alcoholVolPercent?.toLocaleString("de-DE")}% Vol.`
+            : `${formatQuantity(entry)} · ${entry.caloriesPer100g.toLocaleString()} kcal / 100g`}
         </p>
         <p className="macro-line">
           {rowMacros.map(([label, value]) => (
@@ -3633,6 +3745,7 @@ type DayTotals = {
   protein: number;
   carbs: number;
   fat: number;
+  alcoholCalories: number;
 };
 
 type WeekAnalysisDay = {
@@ -3742,8 +3855,9 @@ function summarizeEntries(entries: FoodEntry[]): DayTotals {
       protein: sum.protein + macroFor(entry, entry.proteinPer100g),
       carbs: sum.carbs + macroFor(entry, entry.carbsPer100g),
       fat: sum.fat + macroFor(entry, entry.fatPer100g),
+      alcoholCalories: sum.alcoholCalories + alcoholCaloriesFor(entry),
     }),
-    { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 },
+    { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0, alcoholCalories: 0 },
   );
 }
 
@@ -4104,6 +4218,9 @@ function draftFromEntry(entry: FoodEntry): FoodDraft {
     mealId: entry.mealId,
     mealName: entry.mealName,
     imageDataUrl: entry.imageDataUrl,
+    alcoholVolPercent: entry.alcoholVolPercent,
+    alcoholGrams: entry.alcoholGrams,
+    alcoholCalories: entry.alcoholCalories,
   };
 }
 
@@ -4186,7 +4303,7 @@ function mealTemplateSignature(meal: Pick<MealTemplate, "name" | "items">) {
   return `${normalizeFoodKey(meal.name)}::${items}`;
 }
 
-function mealCalories(items: Array<Pick<FoodEntry, "quantityUnit" | "quantityValue" | "caloriesPer100g">>) {
+function mealCalories(items: CalorieEntryLike[]) {
   return items.reduce((sum, item) => sum + caloriesFor(item), 0);
 }
 
@@ -4469,7 +4586,7 @@ function normalizeMealTemplateItem(item: MealTemplateItem): MealTemplateItem {
     foodKey: item.foodKey ? String(item.foodKey) : undefined,
     foodName: String(item.foodName ?? "Lebensmittel"),
     quantityValue: Number(item.quantityValue ?? 100),
-    quantityUnit: item.quantityUnit === "kg" ? "kg" : "g",
+    quantityUnit: item.quantityUnit === "kg" || item.quantityUnit === "ml" ? item.quantityUnit : "g",
     caloriesPer100g: Number(item.caloriesPer100g ?? 0),
     proteinPer100g: Number(item.proteinPer100g ?? 0),
     carbsPer100g: Number(item.carbsPer100g ?? 0),
@@ -4481,12 +4598,16 @@ function normalizeMealTemplateItem(item: MealTemplateItem): MealTemplateItem {
 function normalizeBackendEntry(entry: FoodEntry): FoodEntry {
   return {
     ...entry,
+    quantityUnit: entry.quantityUnit === "kg" || entry.quantityUnit === "ml" ? entry.quantityUnit : "g",
     proteinPer100g: Number(entry.proteinPer100g ?? 0),
     carbsPer100g: Number(entry.carbsPer100g ?? 0),
     fatPer100g: Number(entry.fatPer100g ?? 0),
     mealId: entry.mealId || undefined,
     mealName: entry.mealName || undefined,
     imageDataUrl: entry.imageDataUrl || undefined,
+    alcoholVolPercent: entry.alcoholVolPercent === undefined ? undefined : Number(entry.alcoholVolPercent),
+    alcoholGrams: Number(entry.alcoholGrams ?? 0),
+    alcoholCalories: Number(entry.alcoholCalories ?? 0),
   };
 }
 

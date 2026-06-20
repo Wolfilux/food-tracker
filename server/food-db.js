@@ -27,6 +27,8 @@ const defaultAnalysisAiConfig = {
 const defaultWeeklyEmailConfig = {
   targetEmail: "",
 };
+const ethanolDensityGPerMl = 0.789;
+const ethanolCaloriesPerGram = 7;
 const nutritionGoals = new Set(["fat-loss", "muscle-gain", "maintenance", "recomposition", "weight-gain"]);
 const nutritionGoalPresets = {
   "fat-loss": { label: "Fettabbau", protein: 0.35, carbs: 0.35, fat: 0.3 },
@@ -809,7 +811,7 @@ export function listEntries() {
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name, image_data_url",
+      "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
       "FROM entries",
       "ORDER BY consumed_at DESC, created_at DESC",
     ].join("\n"))
@@ -825,9 +827,9 @@ export function createEntry(input) {
       "INSERT INTO entries (",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name, image_data_url",
+      "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
       ")",
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ].join("\n"))
     .run(
       entry.id,
@@ -846,6 +848,9 @@ export function createEntry(input) {
       entry.mealId ?? null,
       entry.mealName ?? null,
       entry.imageDataUrl ?? "",
+      entry.alcoholVolPercent ?? null,
+      entry.alcoholGrams ?? 0,
+      entry.alcoholCalories ?? 0,
     );
 
   return entry;
@@ -914,7 +919,10 @@ export function updateEntry(id, input) {
       "  ai_usage_json = ?,",
       "  meal_id = ?,",
       "  meal_name = ?,",
-      "  image_data_url = ?",
+      "  image_data_url = ?,",
+      "  alcohol_vol_percent = ?,",
+      "  alcohol_grams = ?,",
+      "  alcohol_calories = ?",
       "WHERE id = ?",
     ].join("\n"))
     .run(
@@ -932,6 +940,9 @@ export function updateEntry(id, input) {
       entry.mealId ?? null,
       entry.mealName ?? null,
       entry.imageDataUrl ?? "",
+      entry.alcoholVolPercent ?? null,
+      entry.alcoholGrams ?? 0,
+      entry.alcoholCalories ?? 0,
       id,
     );
 
@@ -1273,7 +1284,7 @@ function initializeDatabase(database) {
     "  food_key TEXT,",
     "  food_name TEXT NOT NULL,",
     "  quantity_value REAL NOT NULL,",
-    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg')),",
+    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg', 'ml')),",
     "  calories_per_100g REAL NOT NULL,",
     "  protein_per_100g REAL NOT NULL DEFAULT 0,",
     "  carbs_per_100g REAL NOT NULL DEFAULT 0,",
@@ -1284,7 +1295,10 @@ function initializeDatabase(database) {
     "  ai_usage_json TEXT NOT NULL DEFAULT '',",
     "  meal_id TEXT,",
     "  meal_name TEXT,",
-    "  image_data_url TEXT NOT NULL DEFAULT ''",
+    "  image_data_url TEXT NOT NULL DEFAULT '',",
+    "  alcohol_vol_percent REAL,",
+    "  alcohol_grams REAL NOT NULL DEFAULT 0,",
+    "  alcohol_calories REAL NOT NULL DEFAULT 0",
     ");",
     "CREATE INDEX IF NOT EXISTS idx_entries_consumed_at ON entries(consumed_at DESC);",
     "CREATE TABLE IF NOT EXISTS meal_templates (",
@@ -1319,6 +1333,10 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "entries", "meal_id", "TEXT");
   addColumnIfMissing(database, "entries", "meal_name", "TEXT");
   addColumnIfMissing(database, "entries", "image_data_url", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, "entries", "alcohol_vol_percent", "REAL");
+  addColumnIfMissing(database, "entries", "alcohol_grams", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "entries", "alcohol_calories", "REAL NOT NULL DEFAULT 0");
+  migrateEntriesQuantityUnitCheck(database);
   addColumnIfMissing(database, "nutrition_config", "calorie_goal_offset", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
@@ -1428,6 +1446,7 @@ function buildWeeklyAnalysis(weekStartInput) {
     protein: sum.protein + day.totals.protein,
     carbs: sum.carbs + day.totals.carbs,
     fat: sum.fat + day.totals.fat,
+    alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
     calorieTarget: sum.calorieTarget + day.calorieTarget,
     proteinTarget: sum.proteinTarget + day.macroTargets.protein.grams,
     carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
@@ -1439,6 +1458,7 @@ function buildWeeklyAnalysis(weekStartInput) {
     protein: 0,
     carbs: 0,
     fat: 0,
+    alcoholCalories: 0,
     calorieTarget: 0,
     proteinTarget: 0,
     carbsTarget: 0,
@@ -1933,7 +1953,7 @@ function listEntriesForWeek(weekStart) {
       "SELECT",
       "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
       "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
-      "  meal_id, meal_name, image_data_url",
+      "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
       "FROM entries",
       "WHERE substr(consumed_at, 1, 10) >= ? AND substr(consumed_at, 1, 10) < ?",
       "ORDER BY consumed_at ASC, created_at ASC",
@@ -1949,7 +1969,8 @@ function summarizeEntryTotals(entries) {
     protein: sum.protein + macroForEntry(entry, entry.proteinPer100g),
     carbs: sum.carbs + macroForEntry(entry, entry.carbsPer100g),
     fat: sum.fat + macroForEntry(entry, entry.fatPer100g),
-  }), { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0 });
+    alcoholCalories: sum.alcoholCalories + alcoholCaloriesForEntry(entry),
+  }), { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0, alcoholCalories: 0 });
 }
 
 function calculateMacroTargets(calorieGoal, preset) {
@@ -1978,7 +1999,34 @@ function gramsForEntry(entry) {
 }
 
 function caloriesForEntry(entry) {
+  if (isAlcoholEntry(entry)) return alcoholCaloriesForEntry(entry);
   return Math.round((gramsForEntry(entry) / 100) * entry.caloriesPer100g);
+}
+
+function isAlcoholEntry(entry) {
+  return entry.quantityUnit === "ml" && Number(entry.alcoholVolPercent ?? 0) > 0;
+}
+
+function alcoholGramsForEntry(entry) {
+  if (!isAlcoholEntry(entry)) return 0;
+  const storedGrams = Number(entry.alcoholGrams ?? 0);
+  if (Number.isFinite(storedGrams) && storedGrams > 0) return storedGrams;
+  return calculateAlcoholGrams(entry.quantityValue, entry.alcoholVolPercent);
+}
+
+function alcoholCaloriesForEntry(entry) {
+  if (!isAlcoholEntry(entry)) return 0;
+  const storedCalories = Number(entry.alcoholCalories ?? 0);
+  if (Number.isFinite(storedCalories) && storedCalories > 0) return Math.round(storedCalories);
+  return calculateAlcoholCalories(alcoholGramsForEntry(entry));
+}
+
+function calculateAlcoholGrams(quantityMl, volPercent) {
+  return roundNutrition(Number(quantityMl) * (Number(volPercent) / 100) * ethanolDensityGPerMl);
+}
+
+function calculateAlcoholCalories(alcoholGrams) {
+  return Math.round(Number(alcoholGrams) * ethanolCaloriesPerGram);
 }
 
 function macroForEntry(entry, valuePer100g) {
@@ -2633,6 +2681,47 @@ function addColumnIfMissing(database, table, column, definition) {
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+function migrateEntriesQuantityUnitCheck(database) {
+  const table = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entries'").get();
+  if (!table?.sql || table.sql.includes("'ml'")) return;
+
+  database.exec([
+    "ALTER TABLE entries RENAME TO entries_legacy_unit_check;",
+    "CREATE TABLE entries (",
+    "  id TEXT PRIMARY KEY,",
+    "  food_key TEXT,",
+    "  food_name TEXT NOT NULL,",
+    "  quantity_value REAL NOT NULL,",
+    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg', 'ml')),",
+    "  calories_per_100g REAL NOT NULL,",
+    "  protein_per_100g REAL NOT NULL DEFAULT 0,",
+    "  carbs_per_100g REAL NOT NULL DEFAULT 0,",
+    "  fat_per_100g REAL NOT NULL DEFAULT 0,",
+    "  consumed_at TEXT NOT NULL,",
+    "  created_at TEXT NOT NULL,",
+    "  source TEXT NOT NULL DEFAULT 'manual',",
+    "  ai_usage_json TEXT NOT NULL DEFAULT '',",
+    "  meal_id TEXT,",
+    "  meal_name TEXT,",
+    "  image_data_url TEXT NOT NULL DEFAULT '',",
+    "  alcohol_vol_percent REAL,",
+    "  alcohol_grams REAL NOT NULL DEFAULT 0,",
+    "  alcohol_calories REAL NOT NULL DEFAULT 0",
+    ");",
+    "INSERT INTO entries (",
+    "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
+    "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
+    ")",
+    "SELECT",
+    "  id, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at, created_at, source, ai_usage_json,",
+    "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
+    "FROM entries_legacy_unit_check;",
+    "DROP TABLE entries_legacy_unit_check;",
+  ].join("\n"));
+}
+
 async function fetchOpenFoodFacts(query, limit) {
   const url = new URL("https://world.openfoodfacts.org/cgi/search.pl");
   url.searchParams.set("search_terms", query);
@@ -2793,8 +2882,15 @@ function dedupeFoodObjects(foods) {
 function validateEntry(input) {
   const foodName = String(input?.foodName ?? "").trim();
   const quantityValue = Number(input?.quantityValue);
-  const quantityUnit = input?.quantityUnit === "kg" ? "kg" : "g";
-  const caloriesPer100g = Number(input?.caloriesPer100g);
+  const quantityUnit = input?.quantityUnit === "kg" || input?.quantityUnit === "ml" ? input.quantityUnit : "g";
+  const alcoholVolPercent = input?.alcoholVolPercent === undefined || input?.alcoholVolPercent === null || input?.alcoholVolPercent === ""
+    ? undefined
+    : Number(input.alcoholVolPercent);
+  const alcoholGrams = alcoholVolPercent ? calculateAlcoholGrams(quantityValue, alcoholVolPercent) : 0;
+  const alcoholCalories = alcoholVolPercent ? calculateAlcoholCalories(alcoholGrams) : 0;
+  const caloriesPer100g = alcoholVolPercent && quantityUnit === "ml"
+    ? roundNutrition((alcoholCalories / quantityValue) * 100)
+    : Number(input?.caloriesPer100g);
   const proteinPer100g = Number(input?.proteinPer100g ?? 0);
   const carbsPer100g = Number(input?.carbsPer100g ?? 0);
   const fatPer100g = Number(input?.fatPer100g ?? 0);
@@ -2806,6 +2902,10 @@ function validateEntry(input) {
   if (!foodName) throw new Error("Food name is required");
   if (!Number.isFinite(quantityValue) || quantityValue <= 0) throw new Error("Invalid quantity");
   if (!Number.isFinite(caloriesPer100g) || caloriesPer100g < 0) throw new Error("Invalid calories");
+  if (alcoholVolPercent !== undefined && quantityUnit !== "ml") throw new Error("Alcohol entries require ml");
+  if (alcoholVolPercent !== undefined && (!Number.isFinite(alcoholVolPercent) || alcoholVolPercent <= 0 || alcoholVolPercent > 100)) {
+    throw new Error("Invalid alcohol volume percent");
+  }
   if (![proteinPer100g, carbsPer100g, fatPer100g].every((value) => Number.isFinite(value) && value >= 0)) {
     throw new Error("Invalid macro values");
   }
@@ -2828,6 +2928,9 @@ function validateEntry(input) {
     mealId,
     mealName,
     imageDataUrl,
+    alcoholVolPercent,
+    alcoholGrams,
+    alcoholCalories,
   };
 }
 
@@ -2849,6 +2952,9 @@ function entryFromRow(row) {
     mealId: row.meal_id ?? undefined,
     mealName: row.meal_name ?? undefined,
     imageDataUrl: row.image_data_url || undefined,
+    alcoholVolPercent: row.alcohol_vol_percent ?? undefined,
+    alcoholGrams: row.alcohol_grams ?? 0,
+    alcoholCalories: row.alcohol_calories ?? 0,
   };
 }
 

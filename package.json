@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "start": "node server/app-server.js",
     "lint": "eslint .",
+    "smoke:alcohol": "node scripts/alcohol-smoke.mjs",
     "security:scan": "bash scripts/security-scan.sh"
   },
   "dependencies": {
