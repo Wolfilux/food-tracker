@@ -275,9 +275,9 @@ h1 {
 
 .calorie-ideas-card {
   display: grid;
-  gap: 12px;
-  margin: -4px 0 18px;
-  padding: 16px;
+  gap: 10px;
+  margin: -4px 0 14px;
+  padding: 12px 14px;
   background:
     linear-gradient(135deg, rgba(36, 64, 58, 0.1), transparent 44%),
     #fffaf0;
@@ -285,10 +285,17 @@ h1 {
   border-radius: var(--radius);
 }
 
+.calorie-ideas-card--expanded {
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+
 .calorie-ideas-card__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -313,10 +320,36 @@ h1 {
   font-size: 1.1rem;
 }
 
+.calorie-ideas-card__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: #17211b;
+  background: #fffdf7;
+  border: 1px solid rgba(23, 33, 27, 0.18);
+  border-radius: 7px;
+}
+
 .calorie-ideas-list {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
+}
+
+.calorie-ideas-empty {
+  margin: 0;
+  color: #627064;
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .calorie-idea {
@@ -2366,11 +2399,11 @@ button:focus-visible {
   }
 
   .calorie-ideas-card__head {
-    display: grid;
+    align-items: flex-start;
   }
 
-  .calorie-ideas-card__head .secondary-button {
-    width: 100%;
+  .calorie-ideas-card__actions {
+    align-self: flex-start;
   }
 
   .calorie-idea {

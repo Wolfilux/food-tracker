@@ -691,6 +691,8 @@ function App() {
   const [calorieIdeas, setCalorieIdeas] = useState<CalorieIdea[]>([]);
   const [calorieIdeasState, setCalorieIdeasState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [calorieIdeasError, setCalorieIdeasError] = useState("");
+  const [calorieIdeasContext, setCalorieIdeasContext] = useState("");
+  const calorieIdeasRequestRef = useRef(0);
   const [importExportState, setImportExportState] = useState<"idle" | "working" | "done" | "error">("idle");
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
@@ -773,6 +775,8 @@ function App() {
   );
   const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
   const dailyRemainingCalories = effectiveCalorieGoal - totals.calories;
+  const calorieIdeasKey = `${selectedDate}:${dailyRemainingCalories}`;
+  const hasCurrentCalorieIdeas = calorieIdeasContext === calorieIdeasKey;
   const calorieTimingPoints = useMemo(
     () => buildCalorieTimingPoints(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints),
     [dayEntries, effectiveCalorieGoal],
@@ -834,31 +838,6 @@ function App() {
   );
   const supportsBarcodeScanner = Boolean(navigator.mediaDevices?.getUserMedia);
 
-  useEffect(() => {
-    if (!isConfigLoaded || activeView !== "tracker") return undefined;
-
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => {
-      setCalorieIdeasState("loading");
-      setCalorieIdeasError("");
-      fetchCalorieIdeas(dailyRemainingCalories, selectedDate, controller.signal)
-        .then((ideas) => {
-          setCalorieIdeas(ideas);
-          setCalorieIdeasState("done");
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return;
-          setCalorieIdeasError(error instanceof Error ? error.message : "Ideen konnten nicht geladen werden.");
-          setCalorieIdeasState("error");
-        });
-    }, 250);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [activeView, dailyRemainingCalories, isConfigLoaded, mealTemplates.length, selectedDate]);
-
   function toggleMealCollapsed(mealId: string) {
     setCollapsedMealIds((currentIds) => ({
       ...currentIds,
@@ -867,13 +846,20 @@ function App() {
   }
 
   async function refreshCalorieIdeas() {
+    if (!isConfigLoaded) return;
+    const requestId = calorieIdeasRequestRef.current + 1;
+    const requestKey = calorieIdeasKey;
+    calorieIdeasRequestRef.current = requestId;
+    setCalorieIdeasContext(requestKey);
     setCalorieIdeasState("loading");
     setCalorieIdeasError("");
     try {
       const ideas = await fetchCalorieIdeas(dailyRemainingCalories, selectedDate);
+      if (calorieIdeasRequestRef.current !== requestId) return;
       setCalorieIdeas(ideas);
       setCalorieIdeasState("done");
     } catch (error) {
+      if (calorieIdeasRequestRef.current !== requestId) return;
       setCalorieIdeasError(error instanceof Error ? error.message : "Ideen konnten nicht geladen werden.");
       setCalorieIdeasState("error");
     }
@@ -2441,10 +2427,10 @@ function App() {
       </section>
 
       <CalorieIdeasCard
-        ideas={calorieIdeas}
+        ideas={hasCurrentCalorieIdeas ? calorieIdeas : []}
         remainingCalories={dailyRemainingCalories}
-        state={calorieIdeasState}
-        error={calorieIdeasError}
+        state={hasCurrentCalorieIdeas ? calorieIdeasState : "idle"}
+        error={hasCurrentCalorieIdeas ? calorieIdeasError : ""}
         onRefresh={() => void refreshCalorieIdeas()}
       />
 
@@ -3361,8 +3347,16 @@ function CalorieIdeasCard({
   error: string;
   onRefresh: () => void;
 }) {
+  const [isExpanded, setExpanded] = useState(false);
+  const hasIdeas = ideas.length > 0;
+
+  function handleRefresh() {
+    setExpanded(true);
+    onRefresh();
+  }
+
   return (
-    <section className="calorie-ideas-card" aria-label="Restkalorien Ideen" aria-live="polite">
+    <section className={isExpanded ? "calorie-ideas-card calorie-ideas-card--expanded" : "calorie-ideas-card"} aria-label="Restkalorien Ideen" aria-live="polite">
       <div className="calorie-ideas-card__head">
         <div>
           <span>
@@ -3371,26 +3365,45 @@ function CalorieIdeasCard({
           </span>
           <strong>{remainingCalories > 0 ? `${remainingCalories.toLocaleString("de-DE")} kcal offen` : "Tagesziel erreicht"}</strong>
         </div>
-        <button className="secondary-button secondary-button--compact" type="button" disabled={state === "loading"} onClick={onRefresh}>
-          {state === "loading" ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <RefreshCw size={16} aria-hidden="true" />}
-          Ideen
-        </button>
+        <div className="calorie-ideas-card__actions">
+          <button className="secondary-button secondary-button--compact" type="button" disabled={state === "loading"} onClick={handleRefresh}>
+            {state === "loading" ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+            {state === "done" ? "Neu" : "Generieren"}
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={isExpanded ? "Restkalorien-Ideen einklappen" : "Restkalorien-Ideen aufklappen"}
+            aria-expanded={isExpanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {isExpanded ? <ChevronUp size={17} aria-hidden="true" /> : <ChevronDown size={17} aria-hidden="true" />}
+          </button>
+        </div>
       </div>
-      {state === "error" && <p className="photo-note photo-note--error">{error}</p>}
-      <div className="calorie-ideas-list">
-        {(ideas.length > 0 ? ideas : [{ title: "Ideen laden", subtitle: "Nutzt Vorlagen, Verlauf und schnelle Basics.", calories: 0, source: "quick" as const }]).map((idea) => (
-          <article className="calorie-idea" key={`${idea.source}-${idea.title}`}>
-            <div>
-              <strong>{idea.title}</strong>
-              <small>{idea.subtitle}</small>
-            </div>
-            <span>
-              {idea.calories > 0 ? `${idea.calories.toLocaleString("de-DE")} kcal` : sourceLabel(idea.source)}
-            </span>
-            <em>{sourceLabel(idea.source)}</em>
-          </article>
-        ))}
-      </div>
+      {isExpanded && state === "error" && <p className="photo-note photo-note--error">{error}</p>}
+      {isExpanded && (
+        hasIdeas ? (
+          <div className="calorie-ideas-list">
+            {ideas.map((idea) => (
+              <article className="calorie-idea" key={`${idea.source}-${idea.title}`}>
+                <div>
+                  <strong>{idea.title}</strong>
+                  <small>{idea.subtitle}</small>
+                </div>
+                <span>
+                  {idea.calories > 0 ? `${idea.calories.toLocaleString("de-DE")} kcal` : sourceLabel(idea.source)}
+                </span>
+                <em>{sourceLabel(idea.source)}</em>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="calorie-ideas-empty">
+            {state === "loading" ? "Ideen werden generiert." : "Bei Bedarf manuell generieren."}
+          </p>
+        )
+      )}
     </section>
   );
 }
