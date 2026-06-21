@@ -21,7 +21,7 @@ Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Fotoanalyse fuer Beschreibung, geschaetztes Gewicht, Kalorien und Makros
 - Textanalyse fuer freie Essensbeschreibungen
 - Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate, Fett und Garmin-Sportaktivitaeten
-- Manuelle KI-Wochenanalyse mit Ampel, tiefer Ernaehrungs-/Gewohnheits-/Timing-Einschaetzung und Optimierungsvorschlaegen
+- Manuelle KI-Wochenanalyse mit Ampel, strukturierten Abschnitten, tiefer Ernaehrungs-/Gewohnheits-/Timing-Einschaetzung, konkreten Empfehlungen und Wochenplan
 - Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
@@ -97,6 +97,18 @@ SMTP_FROM=Food Tracker <food-tracker@example.com>
 ```
 
 Wenn `SMTP_HOST`, Empfaengeradresse oder KI-Key fehlen, laeuft der Scheduler weiter und ueberspringt nur den Mailversand.
+Der Readiness-Endpunkt `/api/config/weekly-email/status` zeigt ohne Secrets, ob Zieladresse, SMTP und Analyse-Key vorhanden sind und wann zuletzt versendet wurde.
+
+Optionale SoGO-/CalDAV-Kalenderanbindung fuer die Wochenanalyse:
+
+```env
+CALDAV_URL=https://mail.example.com/SOGo/dav/user@example.com/Calendar/personal/
+CALDAV_USER=user@example.com
+CALDAV_PASS=
+CALENDAR_LOOKAHEAD_DAYS=14
+```
+
+Die KI bekommt daraus nur freie/volle Zeitbloecke und Tagesrhythmus fuer den naechsten Zeitraum. Termintitel, Beschreibungen und Orte werden nicht in den Prompt aufgenommen.
 
 ## BLS-Datenimport
 
@@ -160,7 +172,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Im Tab `Analyse` die Woche wechseln.
 - Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
 - Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
-- `KI-Analyse` erzeugt eine Ampel und eine tiefere Wochenbewertung mit Lebensmitteln, Gewohnheiten, Timing, Zielbezug und Sportkontext.
+- `KI-Analyse` erzeugt eine Ampel und strukturierte Abschnitte zu Kurzfazit, Mustern, Timing, Makros, Alkohol, konkreten Lebensmittelempfehlungen, Garmin-Sportkontext und Plan fuer die kommende Woche.
 - `Garmin` aktualisiert Tagesverbrauchswerte und importiert Sportaktivitaeten, falls Garmin konfiguriert ist.
 
 ### Konfiguration
@@ -168,7 +180,8 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Tagesziel und Makro-Preset bestimmen die Basisziele.
 - Garmin kann das Kalorienziel pro Tag durch aktive Kalorien erweitern und Sportaktivitaeten fuer die Analyse bereitstellen.
 - Die KI-Konfiguration nutzt einen gemeinsamen API-Key, aber separate Modelle fuer Fotoanalyse und Wochenanalyse.
-- Wochenmail versendet automatisch montags um 01:00 Uhr Europe/Berlin die Analyse der Vorwoche, wenn SMTP, Zieladresse und KI-Key vorhanden sind.
+- Wochenmail versendet automatisch montags um 01:00 Uhr Europe/Berlin die Analyse der Vorwoche, wenn SMTP, Zieladresse und KI-Key vorhanden sind. `/api/config/weekly-email/status` zeigt die Readiness ohne Secrets.
+- Optional kann die Wochenanalyse einen SoGO-/CalDAV-Kalender als reinen Busy-Kontext nutzen, wenn `CALDAV_URL`, `CALDAV_USER` und `CALDAV_PASS` gesetzt sind.
 
 ### Backup
 

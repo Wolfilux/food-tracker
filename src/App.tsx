@@ -231,6 +231,21 @@ type WeeklyAiSignal = {
   message: string;
 };
 
+type WeeklyAiSections = {
+  summary: string;
+  positives: string[];
+  patterns: string[];
+  recommendations: { title: string; details: string }[];
+  timing: string[];
+  macros: string[];
+  alcohol: string;
+  garmin: string;
+  nextWeekPlan: {
+    meals: string[];
+    activity: string[];
+  };
+};
+
 type WeeklyAiAnalysis = {
   weekStart: string;
   weekEnd: string;
@@ -251,6 +266,7 @@ type WeeklyAiAnalysis = {
   };
   signal: WeeklyAiSignal;
   aiText: string;
+  aiSections?: WeeklyAiSections;
   provider: string;
   model: string;
 };
@@ -2239,7 +2255,11 @@ function App() {
             {displayedWeeklyAiAnalysis ? (
               <>
                 <p>{displayedWeeklyAiAnalysis.signal.message}</p>
-                <p>{displayedWeeklyAiAnalysis.aiText}</p>
+                {displayedWeeklyAiAnalysis.aiSections ? (
+                  <WeeklyAiStructuredBody sections={displayedWeeklyAiAnalysis.aiSections} />
+                ) : (
+                  <p>{displayedWeeklyAiAnalysis.aiText}</p>
+                )}
               </>
             ) : (
               <p>{weeklyAiState === "error" ? weeklyAiError : "Die Einschaetzung nutzt die Wochensummen, Tagesausreisser und Makroziele."}</p>
@@ -3542,6 +3562,71 @@ function GarminActivitiesCard({
   );
 }
 
+function WeeklyAiStructuredBody({ sections }: { sections: WeeklyAiSections }) {
+  return (
+    <div className="weekly-ai-sections">
+      <WeeklyAiTextSection title="Kurzfazit" text={sections.summary} />
+      <WeeklyAiListSection title="Was gut lief" items={sections.positives} />
+      <WeeklyAiListSection title="Muster" items={sections.patterns} />
+      <section className="weekly-ai-section">
+        <h3>Konkrete Empfehlungen</h3>
+        <div className="weekly-ai-recommendations">
+          {sections.recommendations.map((item, index) => (
+            <article key={`${item.title}-${index}`}>
+              <strong>{item.title}</strong>
+              {item.details && <span>{item.details}</span>}
+            </article>
+          ))}
+        </div>
+      </section>
+      <WeeklyAiListSection title="Timing" items={sections.timing} />
+      <WeeklyAiListSection title="Makros" items={sections.macros} />
+      <WeeklyAiTextSection title="Alkohol" text={sections.alcohol} />
+      <WeeklyAiTextSection title="Garmin und Sport" text={sections.garmin} />
+      <section className="weekly-ai-section weekly-ai-section--plan">
+        <h3>Plan fuer kommende Woche</h3>
+        <div className="weekly-ai-plan-grid">
+          <WeeklyAiListBlock title="Essen" items={sections.nextWeekPlan.meals} />
+          <WeeklyAiListBlock title="Aktivitaet" items={sections.nextWeekPlan.activity} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function WeeklyAiTextSection({ title, text }: { title: string; text: string }) {
+  if (!text) return null;
+  return (
+    <section className="weekly-ai-section">
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </section>
+  );
+}
+
+function WeeklyAiListSection({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="weekly-ai-section">
+      <h3>{title}</h3>
+      <ul>
+        {items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}
+      </ul>
+    </section>
+  );
+}
+
+function WeeklyAiListBlock({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <strong>{title}</strong>
+      <ul>
+        {items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 type WeeklyChartPoint = {
   date: string;
   actual: number;
@@ -4800,9 +4885,37 @@ function normalizeWeeklyAiAnalysis(analysis: WeeklyAiAnalysis): WeeklyAiAnalysis
       message: String(analysis.signal?.message ?? ""),
     },
     aiText: String(analysis.aiText ?? ""),
+    aiSections: normalizeWeeklyAiSections(analysis.aiSections),
     provider: String(analysis.provider ?? ""),
     model: String(analysis.model ?? ""),
   };
+}
+
+function normalizeWeeklyAiSections(sections: WeeklyAiAnalysis["aiSections"]): WeeklyAiSections | undefined {
+  if (!sections || typeof sections !== "object") return undefined;
+  return {
+    summary: String(sections.summary ?? ""),
+    positives: normalizeStringList(sections.positives),
+    patterns: normalizeStringList(sections.patterns),
+    recommendations: Array.isArray(sections.recommendations)
+      ? sections.recommendations.map((item) => ({
+        title: String(item?.title ?? ""),
+        details: String(item?.details ?? ""),
+      })).filter((item) => item.title || item.details)
+      : [],
+    timing: normalizeStringList(sections.timing),
+    macros: normalizeStringList(sections.macros),
+    alcohol: String(sections.alcohol ?? ""),
+    garmin: String(sections.garmin ?? ""),
+    nextWeekPlan: {
+      meals: normalizeStringList(sections.nextWeekPlan?.meals),
+      activity: normalizeStringList(sections.nextWeekPlan?.activity),
+    },
+  };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
 }
 
 function normalizeCalorieIdea(idea: CalorieIdea): CalorieIdea {

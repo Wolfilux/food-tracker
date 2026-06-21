@@ -13,6 +13,10 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-Food Tracker <food-tracker@localhost>}
+      CALDAV_URL: ${CALDAV_URL:-}
+      CALDAV_USER: ${CALDAV_USER:-}
+      CALDAV_PASS: ${CALDAV_PASS:-}
+      CALENDAR_LOOKAHEAD_DAYS: ${CALENDAR_LOOKAHEAD_DAYS:-14}
     ports:
       - "4173:4173"
     volumes:

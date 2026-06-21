@@ -417,6 +417,11 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname === "/api/config/weekly-email/status" && request.method === "GET") {
+      sendJson(response, getWeeklyEmailStatus());
+      return;
+    }
+
     if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
       sendJson(response, { summary: await readGarminDailySummary(url.searchParams.get("date"), {
         refresh: url.searchParams.get("refresh") === "1",
@@ -754,6 +759,27 @@ export function saveWeeklyEmailConfig(input) {
     .run(targetEmail);
 
   return getWeeklyEmailConfig();
+}
+
+export function getWeeklyEmailStatus() {
+  const mailConfig = getWeeklyEmailConfig();
+  const smtpConfig = getSmtpConfig();
+  const aiConfig = getAnalysisAiConfigRecord();
+  const lastSent = getFoodDatabase()
+    .prepare("SELECT week_start, sent_at FROM weekly_email_log ORDER BY sent_at DESC LIMIT 1")
+    .get();
+  const readiness = [
+    { key: "targetEmail", ok: Boolean(mailConfig.targetEmail), label: "Zieladresse" },
+    { key: "smtp", ok: Boolean(smtpConfig.host && smtpConfig.port), label: "SMTP" },
+    { key: "analysisAiKey", ok: Boolean(aiConfig.apiKey), label: "Analyse-Key" },
+  ];
+
+  return {
+    enabled: readiness.every((item) => item.ok),
+    readiness,
+    schedule: "Montag 01:00 Europe/Berlin fuer die Vorwoche",
+    lastSent: lastSent ? { weekStart: lastSent.week_start, sentAt: lastSent.sent_at } : null,
+  };
 }
 
 export function getPublicGarminConfig() {
@@ -1445,6 +1471,7 @@ async function analyzeWeekManually(input) {
   return {
     ...summary,
     aiText: ai.text,
+    aiSections: ai.sections,
     provider: ai.provider,
     model: ai.model,
     aiUsage: ai.aiUsage,
@@ -1562,6 +1589,7 @@ async function generateWeeklyAiText(summary) {
   if (!provider) throw new Error("Analysis AI provider is not configured");
   if (!config.apiKey) throw new Error("API key fehlt in der Analyse-Konfiguration");
   validateProviderKeyPair(config.provider, config.apiKey);
+  const promptPayload = await buildWeeklyPromptPayload(summary);
 
   const response = await fetch(provider.endpoint, {
     method: "POST",
@@ -1584,16 +1612,20 @@ async function generateWeeklyAiText(summary) {
           content: [
             "Du bist ein pragmatischer deutschsprachiger Nutrition-Coach.",
             "Antworte ausschliesslich als JSON ohne Markdown.",
-            "Erstelle eine schoene, tiefgreifende Wochenanalyse statt einer knappen Zusammenfassung.",
+            "Erstelle eine klar strukturierte, tiefgreifende Wochenanalyse statt einer Textwand.",
             "Bewerte Zielunterstuetzung, Kalorien, Makros, Art der Lebensmittel, Mahlzeitenmuster, Essenszeiten, Ausgewogenheit, Alkohol und Garmin-Sportaktivitaeten.",
             "Leite Gewohnheiten aus Wiederholungen, Tageszeiten, Mahlzeitengroessen und Sport/Ernaehrungs-Zusammenspiel ab.",
-            "Keine medizinischen Diagnosen. Gib konkrete, alltagstaugliche Verbesserungstipps mit Prioritaet fuer die naechste Woche.",
-            "Schema: {text:string}. Der Text hat 8 bis 12 kurze Saetze auf Deutsch, gern mit klaren Abschnitten in Fliesstextform.",
+            "Gib konkrete Lebensmittellisten: Fettquellen wie Olivenoel, Nuesse/Saaten, Avocado, fetter Fisch, Eier oder Milchprodukte wenn passend; Proteinquellen; ballaststoffreiche Carbs und Gemuese.",
+            "Plane die kommende Woche mit einfachen Mahlzeiten und einem realistischen Sport-/Aktivitaetsplan aus Garmin-Historie und Ziel.",
+            "Nutze Kalenderdaten nur als Tagesrhythmus/Frei-Besetzt-Kontext und erwaehne keine Termindetails.",
+            "Keine medizinischen Diagnosen. Ton: normaler Ernaehrungs-Coach, direkt, freundlich, nicht streng.",
+            "Schema: {summary:string, positives:string[], patterns:string[], recommendations:[{title:string,details:string}], timing:string[], macros:string[], alcohol:string, garmin:string, nextWeekPlan:{meals:string[],activity:string[]}, text:string}.",
+            "summary: 1-2 Saetze. Listen jeweils 2-5 kurze, konkrete Punkte. recommendations details maximal 180 Zeichen.",
           ].join(" "),
         },
         {
           role: "user",
-          content: "Analysiere diese Woche: " + JSON.stringify(buildWeeklyPromptPayload(summary)),
+          content: "Analysiere diese Woche: " + JSON.stringify(promptPayload),
         },
       ],
     }),
@@ -1603,18 +1635,20 @@ async function generateWeeklyAiText(summary) {
   if (!response.ok) throw new Error(String(payload?.error?.message ?? "AI analysis failed"));
 
   const parsed = parseJsonObject(payload?.choices?.[0]?.message?.content);
-  const text = String(parsed.text ?? "").trim();
+  const sections = normalizeWeeklyAiSections(parsed, summary);
+  const text = buildWeeklyAnalysisPlainText(sections);
   if (!text) throw new Error("AI response could not be understood");
 
   return {
-    text: text.slice(0, 3000),
+    text: text.slice(0, 6000),
+    sections,
     provider: config.provider,
     model: config.model,
     aiUsage: await buildAiUsageSnapshot(config, payload),
   };
 }
 
-function buildWeeklyPromptPayload(summary) {
+async function buildWeeklyPromptPayload(summary) {
   return {
     weekStart: summary.weekStart,
     weekEnd: summary.weekEnd,
@@ -1644,7 +1678,155 @@ function buildWeeklyPromptPayload(summary) {
       durationMinutes: summary.totals.activityDurationMinutes,
       count: summary.totals.activityCount,
     }),
+    calendarContext: await fetchCalendarContextForAnalysis(summary.weekEnd),
   };
+}
+
+function normalizeWeeklyAiSections(parsed, summary) {
+  const nextWeekPlan = parsed?.nextWeekPlan && typeof parsed.nextWeekPlan === "object" ? parsed.nextWeekPlan : {};
+  return {
+    summary: textValue(parsed?.summary || parsed?.text, fallbackWeeklySummary(summary), 520),
+    positives: normalizeTextList(parsed?.positives, 5, fallbackPositives(summary)),
+    patterns: normalizeTextList(parsed?.patterns, 5, fallbackPatterns(summary)),
+    recommendations: normalizeRecommendationList(parsed?.recommendations, fallbackRecommendations(summary)),
+    timing: normalizeTextList(parsed?.timing, 5, fallbackTiming(summary)),
+    macros: normalizeTextList(parsed?.macros, 5, fallbackMacros(summary)),
+    alcohol: textValue(parsed?.alcohol, fallbackAlcohol(summary), 420),
+    garmin: textValue(parsed?.garmin, fallbackGarmin(summary), 520),
+    nextWeekPlan: {
+      meals: normalizeTextList(nextWeekPlan.meals, 7, fallbackMealPlan(summary)),
+      activity: normalizeTextList(nextWeekPlan.activity, 5, fallbackActivityPlan(summary)),
+    },
+  };
+}
+
+function normalizeTextList(value, limit, fallback = []) {
+  const source = Array.isArray(value) ? value : [];
+  const items = source.map((item) => textValue(item, "", 220)).filter(Boolean);
+  return (items.length > 0 ? items : fallback).slice(0, limit);
+}
+
+function normalizeRecommendationList(value, fallback = []) {
+  const source = Array.isArray(value) ? value : [];
+  const recommendations = source.map((item) => {
+    if (typeof item === "string") return { title: item.slice(0, 80), details: "" };
+    return {
+      title: textValue(item?.title, "", 80),
+      details: textValue(item?.details, "", 220),
+    };
+  }).filter((item) => item.title || item.details);
+  return (recommendations.length > 0 ? recommendations : fallback).slice(0, 5);
+}
+
+function textValue(value, fallback = "", limit = 300) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return (text || fallback).slice(0, limit);
+}
+
+function buildWeeklyAnalysisPlainText(sections) {
+  return [
+    "Kurzfazit",
+    sections.summary,
+    "",
+    "Was gut lief",
+    ...sections.positives.map((item) => "- " + item),
+    "",
+    "Muster und Stolperstellen",
+    ...sections.patterns.map((item) => "- " + item),
+    "",
+    "Konkrete Empfehlungen",
+    ...sections.recommendations.map((item) => `- ${item.title}${item.details ? ": " + item.details : ""}`),
+    "",
+    "Timing",
+    ...sections.timing.map((item) => "- " + item),
+    "",
+    "Makros",
+    ...sections.macros.map((item) => "- " + item),
+    "",
+    "Alkohol",
+    sections.alcohol,
+    "",
+    "Garmin und Sport",
+    sections.garmin,
+    "",
+    "Plan fuer kommende Woche - Essen",
+    ...sections.nextWeekPlan.meals.map((item) => "- " + item),
+    "",
+    "Plan fuer kommende Woche - Aktivitaet",
+    ...sections.nextWeekPlan.activity.map((item) => "- " + item),
+  ].filter((line) => line !== null && line !== undefined).join("\n");
+}
+
+function fallbackWeeklySummary(summary) {
+  return `${summary.loggedDayCount} Tage wurden erfasst. Die Ampel steht auf ${summary.signal.label} mit ${summary.signal.score}/100 Punkten.`;
+}
+
+function fallbackPositives(summary) {
+  const positives = [];
+  if (summary.totals.protein >= summary.totals.proteinTarget * 0.85) positives.push("Protein lag nah am Wochenziel.");
+  if (summary.totals.activityCount > 0) positives.push(`${Math.round(summary.totals.activityDurationMinutes)} Minuten Aktivitaet sind bereits ein guter Anker.`);
+  if (summary.loggedDayCount >= 5) positives.push("Die meisten Tage sind erfasst, dadurch ist die Analyse belastbar.");
+  return positives.length ? positives : ["Es gibt genug Daten, um konkrete Stellschrauben fuer die naechste Woche abzuleiten."];
+}
+
+function fallbackPatterns(summary) {
+  const calorieDelta = Math.round(summary.totals.calories - summary.totals.calorieTarget);
+  const patterns = [`Kalorien lagen insgesamt ${calorieDelta >= 0 ? "+" : ""}${calorieDelta} kcal zum Ziel.`];
+  if (summary.totals.alcoholCalories > 0) patterns.push(`${Math.round(summary.totals.alcoholCalories)} kcal kamen aus Alkohol.`);
+  if (summary.loggedDayCount < 7) patterns.push("Nicht alle Tage sind erfasst; fehlende Tage koennen die Wochenbilanz verzerren.");
+  return patterns;
+}
+
+function fallbackRecommendations() {
+  return [
+    { title: "Fettquellen bewusst waehlen", details: "Olivenoel dosieren, Nuesse/Saaten portionieren, Avocado oder fetten Fisch gezielt statt nebenbei einbauen." },
+    { title: "Protein pro Mahlzeit sichern", details: "Skyr, Quark, Eier, Huettenkaese, Fisch, Haehnchen, Tofu, Linsen oder Bohnen als festen Baustein planen." },
+    { title: "Carbs ballaststoffreicher machen", details: "Haferflocken, Kartoffeln, Vollkornreis, Vollkornbrot, Bohnen und viel Gemuese bevorzugen." },
+  ];
+}
+
+function fallbackTiming(summary) {
+  const eveningCalories = summary.days.reduce((sum, day) => sum + Number(day.timing?.eveningCalories ?? 0), 0);
+  return [
+    eveningCalories > summary.totals.calories * 0.35
+      ? "Ein groesserer Teil der Kalorien lag abends; tagsueber frueher Protein und Ballaststoffe einplanen."
+      : "Timing wirkt nicht auffaellig; Mahlzeiten weiter regelmaessig erfassen.",
+  ];
+}
+
+function fallbackMacros(summary) {
+  return [
+    `Protein: ${Math.round(summary.totals.protein)} g von ${Math.round(summary.totals.proteinTarget)} g.`,
+    `Kohlenhydrate: ${Math.round(summary.totals.carbs)} g von ${Math.round(summary.totals.carbsTarget)} g.`,
+    `Fett: ${Math.round(summary.totals.fat)} g von ${Math.round(summary.totals.fatTarget)} g.`,
+  ];
+}
+
+function fallbackAlcohol(summary) {
+  return summary.totals.alcoholCalories > 0
+    ? `Alkohol war mit ${Math.round(summary.totals.alcoholCalories)} kcal sichtbar. Fuer Zieltreue am besten vorher ein Kalorienfenster setzen.`
+    : "Kein relevanter Alkoholeintrag in dieser Woche.";
+}
+
+function fallbackGarmin(summary) {
+  return summary.totals.activityCount > 0
+    ? `${summary.totals.activityCount} Garmin-Einheiten mit ca. ${Math.round(summary.totals.activityDurationMinutes)} Minuten und ${Math.round(summary.totals.activityCalories)} aktiven kcal sind in der Analyse beruecksichtigt.`
+    : "Keine Garmin-Aktivitaeten fuer diese Woche importiert; fuer genauere Sportempfehlungen Garmin aktualisieren.";
+}
+
+function fallbackMealPlan() {
+  return [
+    "Fruehstueck: Skyr oder Quark mit Beeren, Haferflocken und 10-15 g Nuesse/Saaten.",
+    "Mittag: Reis- oder Kartoffel-Bowl mit Haehnchen, Tofu oder Bohnen plus viel Gemuese.",
+    "Abend: Omelette, Fisch oder Huettenkaese mit Salat/Gemuese und dosierter Fettquelle wie Olivenoel oder Avocado.",
+  ];
+}
+
+function fallbackActivityPlan(summary) {
+  const hadActivities = summary.totals.activityCount > 0;
+  return hadActivities
+    ? ["2 lockere Einheiten aehnlich der letzten Woche wiederholen.", "1 zusaetzlicher Spaziergang oder lockere Zone-2-Einheit einplanen.", "Nach intensiveren Einheiten Protein und Carbs zeitnah einbauen."]
+    : ["3 Spaziergaenge oder lockere Ausdauereinheiten von 25-40 Minuten einplanen.", "Optional 1 kurze Kraft-/Mobility-Einheit ergaenzen.", "Sportplan bewusst leicht halten, damit er realistisch bleibt."];
 }
 
 function buildDayMealPayload(date) {
@@ -2049,12 +2231,14 @@ function calculateTrafficLight(days, totals) {
 }
 
 function buildWeeklyEmailText(analysis) {
+  const sectionsText = analysis.aiSections ? buildWeeklyAnalysisPlainText(analysis.aiSections) : analysis.aiText;
   return [
     `Food Tracker Wochenanalyse ${formatDate(analysis.weekStart)} - ${formatDate(analysis.weekEnd)}`,
     `Ampel: ${analysis.signal.label} (${analysis.signal.score}/100). ${analysis.signal.message}`,
     "",
-    analysis.aiText,
+    sectionsText,
     "",
+    "Wochensummen",
     `Kalorien: ${Math.round(analysis.totals.calories)} von ${Math.round(analysis.totals.calorieTarget)} kcal`,
     `Protein: ${Math.round(analysis.totals.protein)} von ${Math.round(analysis.totals.proteinTarget)} g`,
     `Kohlenhydrate: ${Math.round(analysis.totals.carbs)} von ${Math.round(analysis.totals.carbsTarget)} g`,
@@ -2081,11 +2265,50 @@ function buildWeeklyEmailHtml(analysis) {
         <strong style="color:${signalColor};text-transform:uppercase;">${escapeHtml(analysis.signal.label)} · ${analysis.signal.score}/100</strong>
         <p style="margin:8px 0 0;">${escapeHtml(analysis.signal.message)}</p>
       </div>
-      <div style="margin:16px 0;padding:16px;border-radius:8px;background:#eef5f0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">${escapeHtml(analysis.aiText).replace(/\n/g, "<br>")}</div>
+      ${analysis.aiSections ? buildWeeklyEmailSectionsHtml(analysis.aiSections) : `<div style="margin:16px 0;padding:16px;border-radius:8px;background:#eef5f0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">${escapeHtml(analysis.aiText).replace(/\n/g, "<br>")}</div>`}
       ${charts}
     </div>
   </body>
 </html>`;
+}
+
+function buildWeeklyEmailSectionsHtml(sections) {
+  return [
+    buildEmailTextSection("Kurzfazit", sections.summary),
+    buildEmailListSection("Was gut lief", sections.positives),
+    buildEmailListSection("Muster und Stolperstellen", sections.patterns),
+    buildEmailRecommendationSection(sections.recommendations),
+    buildEmailListSection("Timing", sections.timing),
+    buildEmailListSection("Makros", sections.macros),
+    buildEmailTextSection("Alkohol", sections.alcohol),
+    buildEmailTextSection("Garmin und Sport", sections.garmin),
+    buildEmailListSection("Plan fuer kommende Woche: Essen", sections.nextWeekPlan?.meals ?? []),
+    buildEmailListSection("Plan fuer kommende Woche: Aktivitaet", sections.nextWeekPlan?.activity ?? []),
+  ].join("");
+}
+
+function buildEmailTextSection(title, text) {
+  if (!text) return "";
+  return `<section style="margin:14px 0;padding:16px;border-radius:8px;background:#eef5f0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">
+    <h2 style="margin:0 0 8px;font-size:18px;">${escapeHtml(title)}</h2>
+    <p style="margin:0;">${escapeHtml(text)}</p>
+  </section>`;
+}
+
+function buildEmailListSection(title, items) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  return `<section style="margin:14px 0;padding:16px;border-radius:8px;background:#fffaf0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">
+    <h2 style="margin:0 0 8px;font-size:18px;">${escapeHtml(title)}</h2>
+    <ul style="margin:0;padding-left:20px;">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+  </section>`;
+}
+
+function buildEmailRecommendationSection(items) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  return `<section style="margin:14px 0;padding:16px;border-radius:8px;background:#fffaf0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">
+    <h2 style="margin:0 0 8px;font-size:18px;">Konkrete Empfehlungen</h2>
+    ${items.map((item) => `<p style="margin:0 0 8px;"><strong>${escapeHtml(item.title)}</strong>${item.details ? `<br>${escapeHtml(item.details)}` : ""}</p>`).join("")}
+  </section>`;
 }
 
 function buildEmailChart(analysis, label, suffix, key, targetKey) {
@@ -2116,6 +2339,158 @@ function buildEmailChart(analysis, label, suffix, key, targetKey) {
     </div>
     <table role="presentation" style="width:100%;border-collapse:collapse;"><tr>${bars}</tr></table>
   </section>`;
+}
+
+async function fetchCalendarContextForAnalysis(weekEnd) {
+  const config = getCalendarConfig();
+  if (!config.enabled) return { enabled: false, reason: config.reason };
+
+  const start = addDays(weekEnd, 1);
+  const days = config.lookaheadDays;
+  const end = addDays(start, days);
+  try {
+    const events = await fetchCalDavBusyEvents(config, start, end);
+    return summarizeCalendarBusyContext(events, start, days);
+  } catch (error) {
+    return {
+      enabled: true,
+      available: false,
+      reason: "calendar_fetch_failed",
+      error: error instanceof Error ? error.message.slice(0, 120) : "Calendar fetch failed",
+    };
+  }
+}
+
+function getCalendarConfig() {
+  const url = String(process.env.CALDAV_URL ?? process.env.SOGO_CALDAV_URL ?? "").trim();
+  const user = String(process.env.CALDAV_USER ?? process.env.SOGO_CALDAV_USER ?? "").trim();
+  const pass = String(process.env.CALDAV_PASS ?? process.env.SOGO_CALDAV_PASS ?? "");
+  const lookaheadDays = Math.min(21, Math.max(7, Number(process.env.CALENDAR_LOOKAHEAD_DAYS ?? 14) || 14));
+  if (!url || !user || !pass) {
+    return { enabled: false, reason: "CALDAV_URL/CALDAV_USER/CALDAV_PASS missing", lookaheadDays };
+  }
+  return { enabled: true, url, user, pass, lookaheadDays };
+}
+
+async function fetchCalDavBusyEvents(config, startDate, endDate) {
+  const startUtc = toCalDavUtc(startDate, "00:00:00");
+  const endUtc = toCalDavUtc(endDate, "00:00:00");
+  const body = `<?xml version="1.0" encoding="utf-8" ?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop><D:getetag/><C:calendar-data/></D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR">
+      <C:comp-filter name="VEVENT">
+        <C:time-range start="${startUtc}" end="${endUtc}"/>
+      </C:comp-filter>
+    </C:comp-filter>
+  </C:filter>
+</C:calendar-query>`;
+  const response = await fetch(config.url, {
+    method: "REPORT",
+    headers: {
+      authorization: "Basic " + Buffer.from(`${config.user}:${config.pass}`).toString("base64"),
+      "content-type": "application/xml; charset=utf-8",
+      depth: "1",
+    },
+    body,
+  });
+  if (!response.ok) throw new Error(`CalDAV ${response.status}`);
+  const xml = await response.text();
+  return parseCalendarDataBlocks(xml)
+    .flatMap(parseIcsBusyEvents)
+    .filter((event) => event.end > `${startDate}T00:00` && event.start < `${endDate}T00:00`);
+}
+
+function parseCalendarDataBlocks(xml) {
+  const blocks = [];
+  const pattern = /<(?:[^:>]+:)?calendar-data[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?calendar-data>/gi;
+  let match;
+  while ((match = pattern.exec(xml))) {
+    blocks.push(decodeXmlEntities(match[1]));
+  }
+  return blocks;
+}
+
+function parseIcsBusyEvents(ics) {
+  const unfolded = String(ics ?? "").replace(/\r?\n[ \t]/g, "");
+  const events = [];
+  const pattern = /BEGIN:VEVENT([\s\S]*?)END:VEVENT/g;
+  let match;
+  while ((match = pattern.exec(unfolded))) {
+    const eventText = match[1];
+    if (/TRANSP(?:;[^:]*)?:TRANSPARENT/i.test(eventText)) continue;
+    if (/STATUS(?:;[^:]*)?:CANCELLED/i.test(eventText)) continue;
+    const start = parseIcsDateTime(readIcsProperty(eventText, "DTSTART"));
+    const end = parseIcsDateTime(readIcsProperty(eventText, "DTEND")) || start;
+    if (!start || !end) continue;
+    events.push({ start, end, minutes: diffMinutes(start, end), partOfDay: classifyBusyPartOfDay(start.slice(11, 16)) });
+  }
+  return events;
+}
+
+function readIcsProperty(eventText, name) {
+  const pattern = new RegExp(`^${name}(?:;[^:]*)?:(.+)$`, "im");
+  return eventText.match(pattern)?.[1]?.trim() ?? "";
+}
+
+function parseIcsDateTime(value) {
+  const raw = String(value ?? "").trim();
+  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}T00:00`;
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?Z?$/);
+  if (!match) return "";
+  const [, year, month, day, hour, minute] = match;
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function summarizeCalendarBusyContext(events, startDate, days) {
+  const dates = Array.from({ length: days }, (_, index) => addDays(startDate, index));
+  const byDate = dates.map((date) => {
+    const dayEvents = events.filter((event) => event.start.slice(0, 10) === date);
+    const byPart = { morning: 0, midday: 0, afternoon: 0, evening: 0 };
+    for (const event of dayEvents) byPart[event.partOfDay] += Math.max(0, event.minutes);
+    return {
+      date,
+      busyBlocks: dayEvents.length,
+      busyMinutes: Math.round(dayEvents.reduce((sum, event) => sum + Math.max(0, event.minutes), 0)),
+      busyParts: Object.fromEntries(Object.entries(byPart).filter(([, minutes]) => minutes > 0)),
+    };
+  });
+  return {
+    enabled: true,
+    available: true,
+    privacy: "busy_blocks_only_no_titles",
+    rangeStart: startDate,
+    rangeEnd: addDays(startDate, days - 1),
+    days: byDate,
+  };
+}
+
+function toCalDavUtc(date, time) {
+  return `${date.replace(/-/g, "")}T${time.replace(/:/g, "")}Z`;
+}
+
+function diffMinutes(start, end) {
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.round((endMs - startMs) / 60000);
+}
+
+function classifyBusyPartOfDay(time) {
+  if (time < "11:00") return "morning";
+  if (time < "15:00") return "midday";
+  if (time < "18:00") return "afternoon";
+  return "evening";
+}
+
+function decodeXmlEntities(value) {
+  return String(value ?? "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 function getSmtpConfig() {

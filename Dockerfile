@@ -18,7 +18,11 @@ ENV NODE_ENV=production \
     SMTP_SECURE=false \
     SMTP_USER="" \
     SMTP_PASS="" \
-    SMTP_FROM="Food Tracker <food-tracker@localhost>"
+    SMTP_FROM="Food Tracker <food-tracker@localhost>" \
+    CALDAV_URL="" \
+    CALDAV_USER="" \
+    CALDAV_PASS="" \
+    CALENDAR_LOOKAHEAD_DAYS=14
 WORKDIR /app
 
 COPY package.json package-lock.json ./
