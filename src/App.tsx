@@ -92,6 +92,7 @@ type MealEditDialogState = {
   mealId: string;
   name: string;
   consumedAt: string;
+  targetTotalGrams: number;
 };
 
 type MealTemplate = {
@@ -660,6 +661,27 @@ function gramsFor(entry: Pick<FoodEntry, "quantityUnit" | "quantityValue">) {
   return entry.quantityUnit === "kg" ? entry.quantityValue * 1000 : entry.quantityValue;
 }
 
+function totalGramsFor(entries: Pick<FoodEntry, "quantityUnit" | "quantityValue">[]) {
+  return entries.reduce((sum, entry) => sum + gramsFor(entry), 0);
+}
+
+function mealScaleFactor(currentTotalGrams: number, targetTotalGrams?: number) {
+  if (!Number.isFinite(currentTotalGrams) || currentTotalGrams <= 0) return null;
+  if (!Number.isFinite(targetTotalGrams) || Number(targetTotalGrams) <= 0) return null;
+  return Number(targetTotalGrams) / currentTotalGrams;
+}
+
+function scaledQuantityValue(entry: Pick<FoodEntry, "quantityValue">, factor: number) {
+  const scaledValue = entry.quantityValue * factor;
+  return Math.max(0.001, Math.round(scaledValue * 1000) / 1000);
+}
+
+function scaleMealQuantities<T extends Pick<FoodEntry, "quantityValue" | "quantityUnit">>(items: T[], targetTotalGrams?: number) {
+  const factor = mealScaleFactor(totalGramsFor(items), targetTotalGrams);
+  if (!factor) return items;
+  return items.map((item) => ({ ...item, quantityValue: scaledQuantityValue(item, factor) }));
+}
+
 function caloriesFor(entry: CalorieEntryLike) {
   if (isAlcoholEntry(entry)) return alcoholCaloriesFor(entry);
   return Math.round((gramsFor(entry) / 100) * entry.caloriesPer100g);
@@ -753,8 +775,10 @@ function App() {
   const [editingMealTemplateId, setEditingMealTemplateId] = useState<string | null>(null);
   const [mealTemplateEditNameDraft, setMealTemplateEditNameDraft] = useState("");
   const [savingMealTemplateId, setSavingMealTemplateId] = useState<string | null>(null);
+  const [mealTemplateTargetGramDrafts, setMealTemplateTargetGramDrafts] = useState<Record<string, string>>({});
   const [mealNameDraft, setMealNameDraft] = useState("");
   const [mealBuilderItems, setMealBuilderItems] = useState<MealTemplateItem[]>([]);
+  const [mealBuilderTargetGramDraft, setMealBuilderTargetGramDraft] = useState("");
   const [mealState, setMealState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [mealError, setMealError] = useState("");
   const [mealTemplateError, setMealTemplateError] = useState("");
@@ -1614,12 +1638,13 @@ function App() {
       const meal = await createMealTemplate({ name, items: mealBuilderItems });
       setMealTemplates((currentTemplates) => upsertMealTemplate(currentTemplates, meal));
       if (addToDay) {
-        const savedEntries = await addMealTemplateToDay(meal);
+        const savedEntries = await addMealTemplateToDay(meal, mealTargetGramsFromDraft(mealBuilderTargetGramDraft));
         setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
         setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
       }
       setMealNameDraft("");
       setMealBuilderItems([]);
+      setMealBuilderTargetGramDraft("");
       setMealState("saved");
     } catch (error) {
       setMealError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
@@ -1627,18 +1652,20 @@ function App() {
     }
   }
 
-  async function addMealTemplateToDay(meal: MealTemplate) {
+  async function addMealTemplateToDay(meal: MealTemplate, targetTotalGrams?: number) {
     const consumedAt = draft.consumedAt || nowLocal();
-    const entriesToSave = meal.items.map((item) => ({ ...item, consumedAt }));
+    const scaledItems = scaleMealQuantities(meal.items, targetTotalGrams);
+    const entriesToSave = scaledItems.map((item) => ({ ...item, consumedAt }));
     return createEntryGroup(meal.name, entriesToSave);
   }
 
   async function applyMealTemplate(meal: MealTemplate) {
     setEntryError("");
     try {
-      const savedEntries = await addMealTemplateToDay(meal);
+      const savedEntries = await addMealTemplateToDay(meal, mealTargetGramsFromDraft(mealTemplateTargetGramDrafts[meal.id]));
       setEntries((currentEntries) => [...savedEntries, ...currentEntries]);
       setSelectedDate(savedEntries[0].consumedAt.slice(0, 10));
+      setMealTemplateTargetGramDrafts((drafts) => ({ ...drafts, [meal.id]: "" }));
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Mahlzeit konnte nicht gespeichert werden.");
     }
@@ -1748,10 +1775,12 @@ function App() {
   }
 
   function startMealEdit(group: MealEntryGroup) {
+    const totalGrams = totalGramsFor(group.entries);
     setMealEditDialog({
       mealId: group.id,
       name: group.name,
       consumedAt: group.consumedAt,
+      targetTotalGrams: Math.round(totalGrams),
     });
     setEntryError("");
   }
@@ -1767,13 +1796,16 @@ function App() {
     if (!mealEditDialog || savingMealId) return;
     const mealName = mealEditDialog.name.trim();
     const group = mealGroups.find((mealGroup) => mealGroup.id === mealEditDialog.mealId);
-    if (!mealName || !mealEditDialog.consumedAt || !group) return;
+    const originalTotalGrams = group ? totalGramsFor(group.entries) : 0;
+    const scaleFactor = mealScaleFactor(originalTotalGrams, mealEditDialog.targetTotalGrams);
+    if (!mealName || !mealEditDialog.consumedAt || !group || !scaleFactor) return;
 
     setSavingMealId(group.id);
     setEntryError("");
     try {
       const updatedEntries = await Promise.all(group.entries.map((entry) => updateBackendEntry(entry.id, {
         ...draftFromEntry(entry),
+        quantityValue: scaledQuantityValue(entry, scaleFactor),
         mealId: group.id,
         mealName,
         consumedAt: mealEditDialog.consumedAt,
@@ -2800,6 +2832,26 @@ function App() {
                 ))}
               </div>
             )}
+            {mealBuilderItems.length > 0 && (
+              <div className="meal-scale-control">
+                <div>
+                  <span>Ursprung</span>
+                  <strong>{formatGrams(totalGramsFor(mealBuilderItems))}</strong>
+                </div>
+                <label>
+                  Ziel-Gesamtgewicht
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    value={mealBuilderTargetGramDraft}
+                    onChange={(event) => setMealBuilderTargetGramDraft(event.target.value)}
+                    placeholder={`${Math.round(totalGramsFor(mealBuilderItems)).toLocaleString("de-DE")} g`}
+                  />
+                </label>
+                <small>{mealScaleLabel(totalGramsFor(mealBuilderItems), mealTargetGramsFromDraft(mealBuilderTargetGramDraft))}</small>
+              </div>
+            )}
             {mealError && <p className="photo-note photo-note--error">{mealError}</p>}
             {mealTemplateError && <p className="photo-note photo-note--error">{mealTemplateError}</p>}
             {mealState === "saved" && <p className="photo-note">Mahlzeit gespeichert.</p>}
@@ -2812,6 +2864,8 @@ function App() {
                   const isFavorite = mealFavoriteKeys.includes(meal.favoriteKey);
                   const isEditing = editingMealTemplateId === meal.id;
                   const isSavedTemplate = meal.source === "template";
+                  const originalGrams = totalGramsFor(meal.items);
+                  const targetGrams = mealTargetGramsFromDraft(mealTemplateTargetGramDrafts[meal.id]);
 
                   return (
                   <article className="meal-template-card" key={meal.id}>
@@ -2861,7 +2915,21 @@ function App() {
                           </button>
                         )}
                       </div>
-                      <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal{meal.source === "history" ? " · Verlauf" : ""}</small>
+                      <small>{meal.items.length} Lebensmittel · {mealCalories(meal.items).toLocaleString("de-DE")} kcal · {formatGrams(originalGrams)}{meal.source === "history" ? " · Verlauf" : ""}</small>
+                      <div className="meal-template-card__scale">
+                        <label>
+                          Zielgewicht
+                          <input
+                            type="number"
+                            min="0.001"
+                            step="0.001"
+                            value={mealTemplateTargetGramDrafts[meal.id] ?? ""}
+                            onChange={(event) => setMealTemplateTargetGramDrafts((drafts) => ({ ...drafts, [meal.id]: event.target.value }))}
+                            placeholder={`${Math.round(originalGrams).toLocaleString("de-DE")} g`}
+                          />
+                        </label>
+                        <small>{mealScaleLabel(originalGrams, targetGrams)}</small>
+                      </div>
                     </div>
                     <div className="food-actions">
                       <button type="button" aria-label={`${meal.name} eintragen`} onClick={() => void applyMealTemplate(meal)}>
@@ -3282,6 +3350,14 @@ function App() {
         </EditDialogShell>
       )}
       {mealEditDialog && activeMealEditGroup && (
+        (() => {
+          const originalTotalGrams = totalGramsFor(activeMealEditGroup.entries);
+          const scaleFactor = mealScaleFactor(originalTotalGrams, mealEditDialog.targetTotalGrams);
+          const scaledEntries = scaleFactor
+            ? activeMealEditGroup.entries.map((entry) => ({ ...entry, quantityValue: scaledQuantityValue(entry, scaleFactor) }))
+            : activeMealEditGroup.entries;
+          const scaledCalories = scaledEntries.reduce((sum, entry) => sum + caloriesFor(entry), 0);
+          return (
         <EditDialogShell
           title="Mahlzeit bearbeiten"
           subtitle={`${activeMealEditGroup.entries.length} Lebensmittel · ${activeMealEditGroup.calories.toLocaleString("de-DE")} kcal`}
@@ -3306,11 +3382,25 @@ function App() {
               />
             </label>
             <div className="edit-dialog__summary">
-              <span>Gesamtgewicht</span>
-              <strong>{Math.round(activeMealEditGroup.entries.reduce((sum, entry) => sum + gramsFor(entry), 0)).toLocaleString("de-DE")} g</strong>
+              <span>Ursprungs-Gesamtgewicht</span>
+              <strong>{formatGrams(originalTotalGrams)}</strong>
+            </div>
+            <div className="meal-scale-control meal-scale-control--dialog">
+              <NumberInput
+                label="Ziel-Gesamtgewicht"
+                min={0.001}
+                step={0.001}
+                value={mealEditDialog.targetTotalGrams}
+                onChange={(targetTotalGrams) => setMealEditDialog({ ...mealEditDialog, targetTotalGrams })}
+              />
+              <div>
+                <span>Faktor</span>
+                <strong>{scaleFactor ? scaleFactor.toLocaleString("de-DE", { maximumFractionDigits: 3 }) : "n/a"}x</strong>
+              </div>
+              <small>{formatGrams(totalGramsFor(scaledEntries))} · {scaledCalories.toLocaleString("de-DE")} kcal nach Skalierung</small>
             </div>
             <div className="edit-dialog__entry-list" aria-label="Lebensmittel in dieser Mahlzeit">
-              {activeMealEditGroup.entries.map((entry) => (
+              {scaledEntries.map((entry) => (
                 <div key={entry.id}>
                   <span>{entry.foodName}</span>
                   <strong>{formatQuantity(entry)}</strong>
@@ -3326,7 +3416,7 @@ function App() {
               <button
                 className="secondary-button secondary-button--dark"
                 type="submit"
-                disabled={savingMealId === mealEditDialog.mealId || !mealEditDialog.name.trim() || !mealEditDialog.consumedAt}
+                disabled={savingMealId === mealEditDialog.mealId || !mealEditDialog.name.trim() || !mealEditDialog.consumedAt || !scaleFactor}
               >
                 {savingMealId === mealEditDialog.mealId ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
                 Speichern
@@ -3334,6 +3424,8 @@ function App() {
             </div>
           </form>
         </EditDialogShell>
+          );
+        })()
       )}
     </main>
   );
@@ -4946,6 +5038,21 @@ function formatWeekRange(dates: string[]) {
 
 function formatQuantity(entry: Pick<FoodEntry, "quantityValue" | "quantityUnit">) {
   return `${entry.quantityValue.toLocaleString("de-DE")} ${entry.quantityUnit}`;
+}
+
+function formatGrams(value: number) {
+  return `${Math.round(value).toLocaleString("de-DE")} g`;
+}
+
+function mealTargetGramsFromDraft(value: string | undefined) {
+  const parsedValue = Number(value);
+  return value && Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : undefined;
+}
+
+function mealScaleLabel(currentTotalGrams: number, targetTotalGrams?: number) {
+  const factor = mealScaleFactor(currentTotalGrams, targetTotalGrams);
+  if (!factor) return "Ohne Zielgewicht wird 1:1 eingetragen.";
+  return `Faktor ${factor.toLocaleString("de-DE", { maximumFractionDigits: 3 })}x · Ziel ${formatGrams(targetTotalGrams ?? currentTotalGrams)}`;
 }
 
 function formatMacro(value: number) {

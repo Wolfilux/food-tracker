@@ -1507,6 +1507,62 @@ button:focus-visible {
   border-radius: 6px;
 }
 
+.meal-scale-control,
+.meal-template-card__scale {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(238, 245, 240, 0.72);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: 7px;
+}
+
+.meal-scale-control {
+  grid-template-columns: minmax(96px, 0.55fr) minmax(140px, 1fr) minmax(120px, 0.85fr);
+  align-items: end;
+}
+
+.meal-scale-control--dialog {
+  grid-template-columns: minmax(150px, 1fr) minmax(82px, auto);
+  align-items: center;
+}
+
+.meal-scale-control label,
+.meal-template-card__scale label {
+  margin: 0;
+}
+
+.meal-scale-control input,
+.meal-template-card__scale input {
+  min-height: 38px;
+  background: #fffdf7;
+}
+
+.meal-scale-control span,
+.meal-template-card__scale label {
+  color: #627064;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.meal-scale-control strong {
+  display: block;
+  margin-top: 4px;
+  color: #24403a;
+  white-space: nowrap;
+}
+
+.meal-scale-control small,
+.meal-template-card__scale small {
+  color: #627064;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.meal-scale-control--dialog small {
+  grid-column: 1 / -1;
+}
+
 .meal-template-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1583,6 +1639,10 @@ button:focus-visible {
 .meal-template-card small {
   color: #627064;
   font-size: 0.82rem;
+}
+
+.meal-template-card__scale {
+  margin-top: 4px;
 }
 
 .photo-note {
@@ -2593,6 +2653,11 @@ button:focus-visible {
 
   .meal-navigation__step {
     min-width: 34px;
+  }
+
+  .meal-scale-control,
+  .meal-scale-control--dialog {
+    grid-template-columns: 1fr;
   }
 
   .meal-row__heading {
