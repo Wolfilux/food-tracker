@@ -48,6 +48,53 @@ export async function getGarminDailySummary(dateString, credentials = {}) {
   }
 }
 
+export async function getGarminActivitiesForWeek(weekStartString, credentials = {}) {
+  const weekStart = normalizeDate(weekStartString);
+  const weekEnd = addDays(weekStart, 6);
+  const username = String(credentials.username ?? "").trim();
+  const garminPass = String(credentials.authValue ?? "").trim();
+
+  if (!username || !garminPass) {
+    return {
+      configured: false,
+      weekStart,
+      weekEnd,
+      source: "garmin-connect",
+      activities: [],
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const client = await getGarminClient(username, garminPass);
+    const activities = await client.getActivities(0, 100);
+    const normalizedActivities = activities
+      .map(normalizeGarminActivity)
+      .filter((activity) => activity.date >= weekStart && activity.date <= weekEnd)
+      .sort((left, right) => left.startTimeLocal.localeCompare(right.startTimeLocal));
+
+    return {
+      configured: true,
+      weekStart,
+      weekEnd,
+      source: "garmin-connect",
+      activities: normalizedActivities,
+      fetchedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    clientPromise = undefined;
+    return {
+      configured: true,
+      weekStart,
+      weekEnd,
+      source: "garmin-connect",
+      activities: [],
+      error: error instanceof Error ? error.message : "Garmin activity sync failed",
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+}
+
 async function getGarminClient(username, password) {
   const identity = username;
   if (!clientPromise || clientIdentity !== identity) {
@@ -105,6 +152,33 @@ function normalizeGarminSummary(summary, date) {
     remainingKilocalories: finiteNumber(summary?.remainingKilocalories),
     fetchedAt: new Date().toISOString(),
   };
+}
+
+function normalizeGarminActivity(activity) {
+  const startTimeLocal = String(activity?.startTimeLocal ?? "");
+  const date = /^\d{4}-\d{2}-\d{2}/.test(startTimeLocal)
+    ? startTimeLocal.slice(0, 10)
+    : normalizeDate(activity?.calendarDate);
+
+  return {
+    activityId: String(activity?.activityId ?? ""),
+    activityName: String(activity?.activityName ?? activity?.activityType?.typeKey ?? "Garmin Aktivitaet").trim(),
+    activityType: String(activity?.activityType?.typeKey ?? activity?.activityType ?? "activity").trim(),
+    date,
+    startTimeLocal: startTimeLocal || `${date}T00:00:00`,
+    durationSeconds: finiteNumber(activity?.duration) ?? finiteNumber(activity?.movingDuration),
+    movingDurationSeconds: finiteNumber(activity?.movingDuration),
+    distanceMeters: finiteNumber(activity?.distance),
+    calories: finiteNumber(activity?.calories),
+    averageHeartRate: finiteNumber(activity?.averageHR),
+    maxHeartRate: finiteNumber(activity?.maxHR),
+  };
+}
+
+function addDays(date, days) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
 }
 
 function finiteNumber(value) {

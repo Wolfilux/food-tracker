@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
 import { seedFoods } from "./food-data.js";
-import { getGarminDailySummary } from "./garmin-service.js";
+import { getGarminActivitiesForWeek, getGarminDailySummary } from "./garmin-service.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbPath = join(here, "..", "data", "food-tracker.sqlite");
@@ -419,6 +419,13 @@ export function createFoodApiMiddleware() {
 
     if (url.pathname === "/api/garmin/daily-summary" && request.method === "GET") {
       sendJson(response, { summary: await readGarminDailySummary(url.searchParams.get("date"), {
+        refresh: url.searchParams.get("refresh") === "1",
+      }) });
+      return;
+    }
+
+    if (url.pathname === "/api/garmin/activities" && request.method === "GET") {
+      sendJson(response, { week: await readGarminActivitiesForWeek(url.searchParams.get("weekStart"), {
         refresh: url.searchParams.get("refresh") === "1",
       }) });
       return;
@@ -1279,6 +1286,12 @@ function initializeDatabase(database) {
     "  summary_json TEXT NOT NULL,",
     "  fetched_at TEXT NOT NULL",
     ");",
+    "CREATE TABLE IF NOT EXISTS garmin_week_activities (",
+    "  week_start TEXT PRIMARY KEY,",
+    "  week_end TEXT NOT NULL,",
+    "  activities_json TEXT NOT NULL,",
+    "  fetched_at TEXT NOT NULL",
+    ");",
     "CREATE TABLE IF NOT EXISTS entries (",
     "  id TEXT PRIMARY KEY,",
     "  food_key TEXT,",
@@ -1365,6 +1378,27 @@ async function readGarminDailySummary(dateString, options = {}) {
   return fetchAndStoreGarminDailySummary(date, config);
 }
 
+async function readGarminActivitiesForWeek(weekStartString, options = {}) {
+  const weekStart = normalizeWeekStart(weekStartString ?? todayInBerlin());
+  const config = getGarminConfigRecord();
+
+  if (!config.username || !config.authValue) {
+    return {
+      configured: false,
+      weekStart,
+      weekEnd: addDays(weekStart, 6),
+      source: "garmin-connect",
+      activities: [],
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  const cached = getGarminCachedActivities(weekStart);
+  if (cached && options.refresh !== true) return cached;
+
+  return fetchAndStoreGarminActivities(weekStart, config);
+}
+
 async function runGarminScheduledSync() {
   if (garminSchedulerRunning) return;
   const config = getGarminConfigRecord();
@@ -1376,7 +1410,10 @@ async function runGarminScheduledSync() {
 
   garminSchedulerRunning = true;
   try {
-    await fetchAndStoreGarminDailySummary(date, config);
+    await Promise.all([
+      fetchAndStoreGarminDailySummary(date, config),
+      fetchAndStoreGarminActivities(getWeekStart(date), config),
+    ]);
   } finally {
     garminSchedulerRunning = false;
   }
@@ -1418,12 +1455,16 @@ function buildWeeklyAnalysis(weekStartInput) {
   const weekStart = normalizeWeekStart(weekStartInput);
   const weekEnd = addDays(weekStart, 6);
   const entries = listEntriesForWeek(weekStart);
+  const garminActivities = getGarminCachedActivities(weekStart)?.activities ?? [];
+  const activitiesByDate = groupGarminActivitiesByDate(garminActivities);
   const nutritionConfig = getNutritionConfig();
   const preset = nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance;
   const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
   const days = dates.map((date) => {
     const dayEntries = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
     const totals = summarizeEntryTotals(dayEntries);
+    const activities = activitiesByDate.get(date) ?? [];
+    const activityTotals = summarizeGarminActivities(activities);
     const garminSummary = getGarminCachedSummary(date);
     const calorieTarget = calculateEffectiveCalorieGoal(
       nutritionConfig.calorieGoal,
@@ -1435,6 +1476,8 @@ function buildWeeklyAnalysis(weekStartInput) {
       date,
       entryCount: dayEntries.length,
       totals,
+      activities,
+      activityTotals,
       calorieTarget,
       macroTargets,
     };
@@ -1447,6 +1490,9 @@ function buildWeeklyAnalysis(weekStartInput) {
     carbs: sum.carbs + day.totals.carbs,
     fat: sum.fat + day.totals.fat,
     alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
+    activityCalories: sum.activityCalories + day.activityTotals.calories,
+    activityDurationMinutes: sum.activityDurationMinutes + day.activityTotals.durationMinutes,
+    activityCount: sum.activityCount + day.activityTotals.count,
     calorieTarget: sum.calorieTarget + day.calorieTarget,
     proteinTarget: sum.proteinTarget + day.macroTargets.protein.grams,
     carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
@@ -1459,6 +1505,9 @@ function buildWeeklyAnalysis(weekStartInput) {
     carbs: 0,
     fat: 0,
     alcoholCalories: 0,
+    activityCalories: 0,
+    activityDurationMinutes: 0,
+    activityCount: 0,
     calorieTarget: 0,
     proteinTarget: 0,
     carbsTarget: 0,
@@ -1474,6 +1523,7 @@ function buildWeeklyAnalysis(weekStartInput) {
     goalLabel: preset.label,
     loggedDayCount: loggedDays.length,
     days,
+    activities: garminActivities,
     totals,
     signal,
   };
@@ -1534,9 +1584,11 @@ async function generateWeeklyAiText(summary) {
           content: [
             "Du bist ein pragmatischer deutschsprachiger Nutrition-Coach.",
             "Antworte ausschliesslich als JSON ohne Markdown.",
-            "Bewerte die Food-Tracker-Woche anhand Zielkalorien, Makroziele, Eintragshaeufigkeit und Ausreissern.",
-            "Keine medizinischen Diagnosen. Gib konkrete, alltagstaugliche Optimierungsvorschlaege.",
-            "Schema: {text:string}. Der Text hat 4 bis 7 kurze Saetze auf Deutsch.",
+            "Erstelle eine schoene, tiefgreifende Wochenanalyse statt einer knappen Zusammenfassung.",
+            "Bewerte Zielunterstuetzung, Kalorien, Makros, Art der Lebensmittel, Mahlzeitenmuster, Essenszeiten, Ausgewogenheit, Alkohol und Garmin-Sportaktivitaeten.",
+            "Leite Gewohnheiten aus Wiederholungen, Tageszeiten, Mahlzeitengroessen und Sport/Ernaehrungs-Zusammenspiel ab.",
+            "Keine medizinischen Diagnosen. Gib konkrete, alltagstaugliche Verbesserungstipps mit Prioritaet fuer die naechste Woche.",
+            "Schema: {text:string}. Der Text hat 8 bis 12 kurze Saetze auf Deutsch, gern mit klaren Abschnitten in Fliesstextform.",
           ].join(" "),
         },
         {
@@ -1574,6 +1626,11 @@ function buildWeeklyPromptPayload(summary) {
       date: day.date,
       entryCount: day.entryCount,
       totals: roundWeeklyNumbers(day.totals),
+      meals: buildDayMealPayload(day.date),
+      timing: buildDayTimingPayload(day.date),
+      foodProfile: buildDayFoodProfilePayload(day.date),
+      activityTotals: roundWeeklyNumbers(day.activityTotals),
+      activities: day.activities.map(compactGarminActivity),
       calorieTarget: Math.round(day.calorieTarget),
       macroTargets: {
         protein: day.macroTargets.protein.grams,
@@ -1581,6 +1638,150 @@ function buildWeeklyPromptPayload(summary) {
         fat: day.macroTargets.fat.grams,
       },
     })),
+    habits: buildWeeklyHabitPayload(summary.weekStart),
+    activityTotals: roundWeeklyNumbers({
+      calories: summary.totals.activityCalories,
+      durationMinutes: summary.totals.activityDurationMinutes,
+      count: summary.totals.activityCount,
+    }),
+  };
+}
+
+function buildDayMealPayload(date) {
+  const entries = listEntriesForWeek(getWeekStart(date)).filter((entry) => entry.consumedAt.slice(0, 10) === date);
+  const meals = new Map();
+  for (const entry of entries) {
+    const mealKey = entry.mealId || `${entry.consumedAt}:${entry.foodName}`;
+    const meal = meals.get(mealKey) ?? {
+      name: entry.mealName || entry.foodName,
+      time: entry.consumedAt.slice(11, 16),
+      items: [],
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+    };
+    meal.items.push(entry.foodName);
+    meal.calories += caloriesForEntry(entry);
+    meal.protein += macroForEntry(entry, entry.proteinPer100g);
+    meal.carbs += macroForEntry(entry, entry.carbsPer100g);
+    meal.fat += macroForEntry(entry, entry.fatPer100g);
+    meals.set(mealKey, meal);
+  }
+
+  return [...meals.values()].map((meal) => ({
+    ...meal,
+    calories: Math.round(meal.calories),
+    protein: roundNutrition(meal.protein),
+    carbs: roundNutrition(meal.carbs),
+    fat: roundNutrition(meal.fat),
+    items: meal.items.slice(0, 8),
+  }));
+}
+
+function buildDayTimingPayload(date) {
+  const meals = buildDayMealPayload(date);
+  if (meals.length === 0) {
+    return { firstMeal: null, lastMeal: null, mealCount: 0, eveningCalories: 0, largestMeal: null };
+  }
+
+  const largestMeal = meals.slice().sort((left, right) => right.calories - left.calories)[0];
+  return {
+    firstMeal: meals[0].time,
+    lastMeal: meals[meals.length - 1].time,
+    mealCount: meals.length,
+    eveningCalories: Math.round(meals.filter((meal) => meal.time >= "18:00").reduce((sum, meal) => sum + meal.calories, 0)),
+    largestMeal: largestMeal ? { name: largestMeal.name, time: largestMeal.time, calories: largestMeal.calories } : null,
+  };
+}
+
+function buildDayFoodProfilePayload(date) {
+  const entries = listEntriesForWeek(getWeekStart(date)).filter((entry) => entry.consumedAt.slice(0, 10) === date);
+  const categories = {};
+  for (const entry of entries) {
+    const category = classifyFoodEntry(entry);
+    categories[category] = (categories[category] ?? 0) + caloriesForEntry(entry);
+  }
+
+  return Object.fromEntries(Object.entries(categories).map(([category, calories]) => [category, Math.round(calories)]));
+}
+
+function buildWeeklyHabitPayload(weekStart) {
+  const entries = listEntriesForWeek(weekStart);
+  const foodCounts = new Map();
+  const timeBuckets = { morning: 0, midday: 0, afternoon: 0, evening: 0, late: 0 };
+  const categoryCalories = {};
+
+  for (const entry of entries) {
+    const foodKey = normalizeFoodKey(entry.foodName);
+    foodCounts.set(foodKey, {
+      name: entry.foodName,
+      count: (foodCounts.get(foodKey)?.count ?? 0) + 1,
+    });
+    timeBuckets[classifyMealTime(entry.consumedAt.slice(11, 16))] += caloriesForEntry(entry);
+    const category = classifyFoodEntry(entry);
+    categoryCalories[category] = (categoryCalories[category] ?? 0) + caloriesForEntry(entry);
+  }
+
+  return {
+    repeatedFoods: [...foodCounts.values()]
+      .filter((food) => food.count > 1)
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 8),
+    timeBuckets: Object.fromEntries(Object.entries(timeBuckets).map(([key, value]) => [key, Math.round(value)])),
+    categoryCalories: Object.fromEntries(Object.entries(categoryCalories).map(([key, value]) => [key, Math.round(value)])),
+  };
+}
+
+function classifyFoodEntry(entry) {
+  if (isAlcoholEntry(entry)) return "alcohol";
+  const name = normalizeFoodKey(entry.foodName);
+  if (/(skyr|quark|joghurt|huettenkaese|hüttenkäse|protein|haehnchen|hähnchen|thunfisch|ei|tofu|linsen|bohnen)/.test(name)) return "protein";
+  if (/(apfel|banane|beeren|pfirsich|paprika|gemuese|gemüse|salat|tomate|gurke|brokkoli|karotte|obst)/.test(name)) return "fruit_vegetables";
+  if (/(reis|nudel|pasta|kartoffel|brot|hafer|flocken|muesli|müsli|couscous|bulgur)/.test(name)) return "carbs_staples";
+  if (/(nuss|nuesse|nüsse|oel|öl|butter|avocado|kaese|käse|sahne)/.test(name)) return "fat_rich";
+  if (/(schokolade|keks|chips|pizza|burger|pommes|kuchen|eis|suess|süß|snack)/.test(name)) return "treats_processed";
+  return "mixed_other";
+}
+
+function classifyMealTime(time) {
+  if (time < "11:00") return "morning";
+  if (time < "15:00") return "midday";
+  if (time < "18:00") return "afternoon";
+  if (time < "21:30") return "evening";
+  return "late";
+}
+
+function groupGarminActivitiesByDate(activities) {
+  const grouped = new Map();
+  for (const activity of activities) {
+    const date = String(activity.date ?? activity.startTimeLocal ?? "").slice(0, 10);
+    if (!date) continue;
+    const list = grouped.get(date) ?? [];
+    list.push(activity);
+    grouped.set(date, list);
+  }
+  return grouped;
+}
+
+function summarizeGarminActivities(activities) {
+  return activities.reduce((sum, activity) => ({
+    count: sum.count + 1,
+    calories: sum.calories + Number(activity.calories ?? 0),
+    durationMinutes: sum.durationMinutes + Number(activity.durationSeconds ?? activity.movingDurationSeconds ?? 0) / 60,
+    distanceMeters: sum.distanceMeters + Number(activity.distanceMeters ?? 0),
+  }), { count: 0, calories: 0, durationMinutes: 0, distanceMeters: 0 });
+}
+
+function compactGarminActivity(activity) {
+  return {
+    name: activity.activityName,
+    type: activity.activityType,
+    time: String(activity.startTimeLocal ?? "").slice(11, 16),
+    calories: Math.round(Number(activity.calories ?? 0)),
+    durationMinutes: Math.round(Number(activity.durationSeconds ?? activity.movingDurationSeconds ?? 0) / 60),
+    distanceKm: roundNutrition(Number(activity.distanceMeters ?? 0) / 1000),
+    averageHeartRate: activity.averageHeartRate,
   };
 }
 
@@ -2099,6 +2300,15 @@ async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRec
   return summary;
 }
 
+async function fetchAndStoreGarminActivities(weekStart, config = getGarminConfigRecord()) {
+  const activityWeek = await getGarminActivitiesForWeek(weekStart, {
+    username: config.username,
+    authValue: config.authValue,
+  });
+  storeGarminActivities(activityWeek);
+  return activityWeek;
+}
+
 function getGarminCachedSummary(date) {
   const row = getFoodDatabase()
     .prepare("SELECT summary_json FROM garmin_daily_summary WHERE date = ?")
@@ -2123,6 +2333,45 @@ function storeGarminDailySummary(summary) {
       "  fetched_at = excluded.fetched_at",
     ].join("\n"))
     .run(summary.date, JSON.stringify(summary), summary.fetchedAt ?? new Date().toISOString());
+}
+
+function getGarminCachedActivities(weekStart) {
+  const row = getFoodDatabase()
+    .prepare("SELECT week_start, week_end, activities_json, fetched_at FROM garmin_week_activities WHERE week_start = ?")
+    .get(weekStart);
+  if (!row?.activities_json) return null;
+
+  try {
+    return {
+      configured: true,
+      weekStart: row.week_start,
+      weekEnd: row.week_end,
+      source: "garmin-connect",
+      activities: JSON.parse(row.activities_json),
+      fetchedAt: row.fetched_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeGarminActivities(activityWeek) {
+  if (!activityWeek?.weekStart) return;
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
+      "VALUES (?, ?, ?, ?)",
+      "ON CONFLICT(week_start) DO UPDATE SET",
+      "  week_end = excluded.week_end,",
+      "  activities_json = excluded.activities_json,",
+      "  fetched_at = excluded.fetched_at",
+    ].join("\n"))
+    .run(
+      activityWeek.weekStart,
+      activityWeek.weekEnd ?? addDays(activityWeek.weekStart, 6),
+      JSON.stringify(activityWeek.activities ?? []),
+      activityWeek.fetchedAt ?? new Date().toISOString(),
+    );
 }
 
 function normalizeGarminDate(value) {

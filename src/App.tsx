@@ -192,6 +192,38 @@ type GarminDailySummary = {
   fetchedAt?: string;
 };
 
+type GarminActivity = {
+  activityId: string;
+  activityName: string;
+  activityType: string;
+  date: string;
+  startTimeLocal: string;
+  durationSeconds?: number;
+  movingDurationSeconds?: number;
+  distanceMeters?: number;
+  calories?: number;
+  averageHeartRate?: number;
+  maxHeartRate?: number;
+};
+
+type GarminActivityWeek = {
+  configured: boolean;
+  weekStart: string;
+  weekEnd: string;
+  source: string;
+  activities: GarminActivity[];
+  error?: string;
+  fetchedAt?: string;
+};
+
+const defaultGarminActivityWeek = (weekStart = selectedFallbackWeekStart()): GarminActivityWeek => ({
+  configured: false,
+  weekStart,
+  weekEnd: addDays(weekStart, 6),
+  source: "garmin-connect",
+  activities: [],
+});
+
 type WeeklyAiSignal = {
   label: "gut" | "okay" | "schlecht";
   score: number;
@@ -212,6 +244,9 @@ type WeeklyAiAnalysis = {
     fat: number;
     fatTarget: number;
     entryCount: number;
+    activityCalories?: number;
+    activityDurationMinutes?: number;
+    activityCount?: number;
   };
   signal: WeeklyAiSignal;
   aiText: string;
@@ -743,8 +778,10 @@ function App() {
   const [importExportMessage, setImportExportMessage] = useState("");
   const [garminSummary, setGarminSummary] = useState<GarminDailySummary | null>(null);
   const [weekGarminSummaries, setWeekGarminSummaries] = useState<Record<string, GarminDailySummary>>({});
+  const [weekGarminActivities, setWeekGarminActivities] = useState<Record<string, GarminActivityWeek>>({});
   const [garminState, setGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [weekGarminState, setWeekGarminState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [weekGarminActivityState, setWeekGarminActivityState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [garminConfigState, setGarminConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [garminConfigError, setGarminConfigError] = useState("");
   const [reanalyzingEntryId, setReanalyzingEntryId] = useState<string | null>(null);
@@ -833,8 +870,8 @@ function App() {
     [dayEntries, effectiveCalorieGoal, selectedDate],
   );
   const weekAnalysis = useMemo(
-    () => buildWeekAnalysis(weekDates, entries, nutritionConfig, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}),
-    [entries, hasGarminCredentials, nutritionConfig, selectedPreset, weekDates, weekGarminSummaries],
+    () => buildWeekAnalysis(weekDates, entries, nutritionConfig, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}, weekGarminActivities[selectedWeekStart]?.activities ?? []),
+    [entries, hasGarminCredentials, nutritionConfig, selectedPreset, selectedWeekStart, weekDates, weekGarminActivities, weekGarminSummaries],
   );
   const weekSummary = useMemo(
     () =>
@@ -849,11 +886,15 @@ function App() {
           fat: sum.fat + day.totals.fat,
           fatTarget: sum.fatTarget + day.macroTargets.fat.grams,
           alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
+          activityCalories: sum.activityCalories + day.activityTotals.calories,
+          activityDurationMinutes: sum.activityDurationMinutes + day.activityTotals.durationMinutes,
+          activityCount: sum.activityCount + day.activityTotals.count,
         }),
-        { calories: 0, calorieTarget: 0, protein: 0, proteinTarget: 0, carbs: 0, carbsTarget: 0, fat: 0, fatTarget: 0, alcoholCalories: 0 },
+        { calories: 0, calorieTarget: 0, protein: 0, proteinTarget: 0, carbs: 0, carbsTarget: 0, fat: 0, fatTarget: 0, alcoholCalories: 0, activityCalories: 0, activityDurationMinutes: 0, activityCount: 0 },
       ),
     [weekAnalysis],
   );
+  const selectedWeekGarminActivities = weekGarminActivities[selectedWeekStart] ?? defaultGarminActivityWeek(selectedWeekStart);
   const loggedWeekDayCount = useMemo(() => weekAnalysis.filter((day) => day.entryCount > 0).length, [weekAnalysis]);
   const displayedWeeklyAiAnalysis = weeklyAiAnalysis?.weekStart === selectedWeekStart ? weeklyAiAnalysis : null;
   const availableMealTemplates = useMemo(
@@ -1019,19 +1060,27 @@ function App() {
     if (!hasGarminCredentials) {
       setGarminSummary(null);
       setGarminState("idle");
+      setWeekGarminActivityState("idle");
       return;
     }
 
     setGarminState("loading");
+    setWeekGarminActivityState("loading");
     try {
-      const summary = await fetchGarminDailySummary(selectedDate, true);
+      const [summary, activityWeek] = await Promise.all([
+        fetchGarminDailySummary(selectedDate, true),
+        fetchGarminActivitiesForWeek(selectedWeekStart, true),
+      ]);
       setGarminSummary(summary);
+      setWeekGarminActivities((currentWeeks) => ({ ...currentWeeks, [activityWeek.weekStart]: activityWeek }));
       setGarminState(summary.error ? "error" : "done");
+      setWeekGarminActivityState(activityWeek.error ? "error" : "done");
     } catch {
       setGarminSummary(null);
       setGarminState("error");
+      setWeekGarminActivityState("error");
     }
-  }, [hasGarminCredentials, selectedDate]);
+  }, [hasGarminCredentials, selectedDate, selectedWeekStart]);
 
   useEffect(() => {
     if (!isConfigLoaded) return;
@@ -1064,17 +1113,26 @@ function App() {
     let isMounted = true;
     const timeoutId = window.setTimeout(() => {
       setWeekGarminState("loading");
-      void fetchWeekGarminSummaries(weekDates)
-        .then((summaries) => {
+      setWeekGarminActivityState("loading");
+      void Promise.all([
+        fetchWeekGarminSummaries(weekDates),
+        fetchGarminActivitiesForWeek(selectedWeekStart),
+      ])
+        .then(([summaries, activityWeek]) => {
           if (!isMounted) return;
           setWeekGarminSummaries((currentSummaries) => ({
             ...currentSummaries,
             ...Object.fromEntries(summaries.map((summary) => [summary.date, summary])),
           }));
+          setWeekGarminActivities((currentWeeks) => ({ ...currentWeeks, [activityWeek.weekStart]: activityWeek }));
           setWeekGarminState(summaries.some((summary) => summary.error) ? "error" : "done");
+          setWeekGarminActivityState(activityWeek.error ? "error" : "done");
         })
         .catch(() => {
-          if (isMounted) setWeekGarminState("error");
+          if (isMounted) {
+            setWeekGarminState("error");
+            setWeekGarminActivityState("error");
+          }
         });
     }, 0);
 
@@ -1082,22 +1140,29 @@ function App() {
       isMounted = false;
       window.clearTimeout(timeoutId);
     };
-  }, [activeView, hasGarminCredentials, isConfigLoaded, weekDates]);
+  }, [activeView, hasGarminCredentials, isConfigLoaded, selectedWeekStart, weekDates]);
 
   const refreshWeekGarminSummaries = useCallback(async () => {
     if (!hasGarminCredentials) return;
     setWeekGarminState("loading");
+    setWeekGarminActivityState("loading");
     try {
-      const summaries = await fetchWeekGarminSummaries(weekDates, true);
+      const [summaries, activityWeek] = await Promise.all([
+        fetchWeekGarminSummaries(weekDates, true),
+        fetchGarminActivitiesForWeek(selectedWeekStart, true),
+      ]);
       setWeekGarminSummaries((currentSummaries) => ({
         ...currentSummaries,
         ...Object.fromEntries(summaries.map((summary) => [summary.date, summary])),
       }));
+      setWeekGarminActivities((currentWeeks) => ({ ...currentWeeks, [activityWeek.weekStart]: activityWeek }));
       setWeekGarminState(summaries.some((summary) => summary.error) ? "error" : "done");
+      setWeekGarminActivityState(activityWeek.error ? "error" : "done");
     } catch {
       setWeekGarminState("error");
+      setWeekGarminActivityState("error");
     }
-  }, [hasGarminCredentials, weekDates]);
+  }, [hasGarminCredentials, selectedWeekStart, weekDates]);
 
   const searchFoods = useCallback(async (searchTerm = draft.foodName.trim(), signal?: AbortSignal) => {
     const trimmedQuery = searchTerm.trim();
@@ -1308,14 +1373,20 @@ function App() {
       setGarminDraft({ username: savedConfig.username, authValue: "", autoSyncMinutes: savedConfig.autoSyncMinutes });
       setGarminConfigState("saved");
       if (savedConfig.username && savedConfig.hasCredential) {
-        void fetchGarminDailySummary(selectedDate, true)
-          .then((summary) => {
+        void Promise.all([
+          fetchGarminDailySummary(selectedDate, true),
+          fetchGarminActivitiesForWeek(selectedWeekStart, true),
+        ])
+          .then(([summary, activityWeek]) => {
             setGarminSummary(summary);
+            setWeekGarminActivities((currentWeeks) => ({ ...currentWeeks, [activityWeek.weekStart]: activityWeek }));
             setGarminState(summary.error ? "error" : "done");
+            setWeekGarminActivityState(activityWeek.error ? "error" : "done");
           })
           .catch(() => {
             setGarminSummary(null);
             setGarminState("error");
+            setWeekGarminActivityState("error");
           });
       }
     } catch (error) {
@@ -2033,6 +2104,12 @@ function App() {
                 : `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)}`}
             </small>
           )}
+          {hasGarminCredentials && (
+            <button className="secondary-button goal-card__garmin-button" type="button" disabled={garminState === "loading" || weekGarminActivityState === "loading"} onClick={() => void refreshGarminSummary()}>
+              {garminState === "loading" || weekGarminActivityState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+              Garmin aktualisieren
+            </button>
+          )}
         </div>
       </section>
 
@@ -2090,10 +2167,21 @@ function App() {
           <section className="analysis-summary-grid" aria-label="Wochensummen">
             <AnalysisSummaryMetric label="Kalorien" actual={weekSummary.calories} target={weekSummary.calorieTarget} suffix="kcal" />
             <AnalysisSummaryMetric label="Alkohol" actual={weekSummary.alcoholCalories} target={0} suffix="kcal" />
+            <AnalysisSummaryMetric label="Sport" actual={weekSummary.activityCalories} target={0} suffix="kcal" />
             <AnalysisSummaryMetric label="Protein" actual={weekSummary.protein} target={weekSummary.proteinTarget} suffix="g" />
             <AnalysisSummaryMetric label="Kohlenhydrate" actual={weekSummary.carbs} target={weekSummary.carbsTarget} suffix="g" />
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
           </section>
+
+          <GarminActivitiesCard
+            week={selectedWeekGarminActivities}
+            state={weekGarminActivityState}
+            summary={{
+              calories: weekSummary.activityCalories,
+              durationMinutes: weekSummary.activityDurationMinutes,
+              count: weekSummary.activityCount,
+            }}
+          />
 
           <CalorieTimingPlan
             date={selectedDate}
@@ -3310,6 +3398,58 @@ function AnalysisSummaryMetric({ label, actual, target, suffix }: { label: strin
   );
 }
 
+function GarminActivitiesCard({
+  week,
+  state,
+  summary,
+}: {
+  week: GarminActivityWeek;
+  state: "idle" | "loading" | "done" | "error";
+  summary: Pick<GarminActivityTotals, "calories" | "durationMinutes" | "count">;
+}) {
+  const activities = week.activities.slice(0, 8);
+
+  return (
+    <article className="garmin-activities-card" aria-label="Garmin Sportaktivitaeten">
+      <div className="garmin-activities-card__head">
+        <div>
+          <span className="eyebrow eyebrow--dark">
+            <Activity size={16} aria-hidden="true" />
+            Garmin Sport
+          </span>
+          <strong>
+            {summary.count > 0
+              ? `${summary.count.toLocaleString("de-DE")} Einheiten · ${Math.round(summary.durationMinutes).toLocaleString("de-DE")} min`
+              : state === "loading" ? "Import laeuft" : "Keine Einheiten importiert"}
+          </strong>
+        </div>
+        <small>{Math.round(summary.calories).toLocaleString("de-DE")} kcal aktiv</small>
+      </div>
+      {week.error ? (
+        <p className="config-status config-status--error">{week.error}</p>
+      ) : activities.length > 0 ? (
+        <div className="garmin-activity-list" role="list">
+          {activities.map((activity) => (
+            <div className="garmin-activity-item" role="listitem" key={activity.activityId}>
+              <div>
+                <strong>{activity.activityName}</strong>
+                <span>{formatWeekdayShort(activity.date)} · {activity.startTimeLocal.slice(11, 16)} · {activity.activityType}</span>
+              </div>
+              <small>
+                {Math.round(Number(activity.calories ?? 0)).toLocaleString("de-DE")} kcal
+                {activity.distanceMeters ? ` · ${(activity.distanceMeters / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km` : ""}
+              </small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>{week.configured ? "Garmin aktualisieren, um Sporteinheiten der Woche fuer die KI-Analyse zu importieren." : "Garmin ist noch nicht verbunden."}</p>
+      )}
+      {week.fetchedAt && <small>Letzter Aktivitaetsimport {formatTime(week.fetchedAt)}</small>}
+    </article>
+  );
+}
+
 type WeeklyChartPoint = {
   date: string;
   actual: number;
@@ -3752,9 +3892,18 @@ type WeekAnalysisDay = {
   date: string;
   entryCount: number;
   totals: DayTotals;
+  activities: GarminActivity[];
+  activityTotals: GarminActivityTotals;
   calorieTarget: number;
   macroTargets: ReturnType<typeof calculateMacroTargets>;
   garminError?: string;
+};
+
+type GarminActivityTotals = {
+  count: number;
+  calories: number;
+  durationMinutes: number;
+  distanceMeters: number;
 };
 
 function buildWeekAnalysis(
@@ -3763,10 +3912,13 @@ function buildWeekAnalysis(
   nutritionConfig: NutritionConfig,
   preset: MacroPreset,
   garminSummaries: Record<string, GarminDailySummary>,
+  garminActivities: GarminActivity[],
 ): WeekAnalysisDay[] {
+  const activitiesByDate = groupGarminActivitiesByDate(garminActivities);
   return dates.map((date) => {
     const dayEntriesForDate = entries.filter((entry) => entry.consumedAt.slice(0, 10) === date);
     const totals = summarizeEntries(dayEntriesForDate);
+    const activities = activitiesByDate.get(date) ?? [];
     const garminSummaryForDate = garminSummaries[date];
     const calorieTarget = buildCalorieGoalDetails(garminSummaryForDate, nutritionConfig).effectiveGoal;
 
@@ -3774,6 +3926,8 @@ function buildWeekAnalysis(
       date,
       entryCount: dayEntriesForDate.length,
       totals,
+      activities,
+      activityTotals: summarizeGarminActivities(activities),
       calorieTarget,
       macroTargets: calculateMacroTargets(calorieTarget, preset),
       garminError: garminSummaryForDate?.error,
@@ -3858,6 +4012,28 @@ function summarizeEntries(entries: FoodEntry[]): DayTotals {
       alcoholCalories: sum.alcoholCalories + alcoholCaloriesFor(entry),
     }),
     { calories: 0, grams: 0, protein: 0, carbs: 0, fat: 0, alcoholCalories: 0 },
+  );
+}
+
+function groupGarminActivitiesByDate(activities: GarminActivity[]) {
+  const grouped = new Map<string, GarminActivity[]>();
+  for (const activity of activities) {
+    const date = activity.date || activity.startTimeLocal.slice(0, 10);
+    if (!date) continue;
+    grouped.set(date, [...(grouped.get(date) ?? []), activity]);
+  }
+  return grouped;
+}
+
+function summarizeGarminActivities(activities: GarminActivity[]): GarminActivityTotals {
+  return activities.reduce(
+    (sum, activity) => ({
+      count: sum.count + 1,
+      calories: sum.calories + Number(activity.calories ?? 0),
+      durationMinutes: sum.durationMinutes + Number(activity.durationSeconds ?? activity.movingDurationSeconds ?? 0) / 60,
+      distanceMeters: sum.distanceMeters + Number(activity.distanceMeters ?? 0),
+    }),
+    { count: 0, calories: 0, durationMinutes: 0, distanceMeters: 0 },
   );
 }
 
@@ -4103,6 +4279,15 @@ async function fetchWeekGarminSummaries(dates: string[], refresh = false): Promi
   }
 
   return summaries;
+}
+
+async function fetchGarminActivitiesForWeek(weekStart: string, refresh = false): Promise<GarminActivityWeek> {
+  const params = new URLSearchParams({ weekStart });
+  if (refresh) params.set("refresh", "1");
+  const response = await fetch(`/api/garmin/activities?${params.toString()}`);
+  const data = (await response.json()) as { week?: GarminActivityWeek; error?: string };
+  if (!response.ok || !data.week) throw new Error(data.error ?? "Garmin-Aktivitaeten konnten nicht abgefragt werden.");
+  return normalizeGarminActivityWeek(data.week);
 }
 
 async function fetchExportData(): Promise<unknown> {
@@ -4564,6 +4749,37 @@ function normalizeGarminDailySummary(summary: Partial<GarminDailySummary>): Garm
     remainingKilocalories: optionalNumber(summary.remainingKilocalories),
     error: summary.error ? String(summary.error) : undefined,
     fetchedAt: summary.fetchedAt ? String(summary.fetchedAt) : undefined,
+  };
+}
+
+function normalizeGarminActivityWeek(week: Partial<GarminActivityWeek>): GarminActivityWeek {
+  const weekStart = String(week.weekStart ?? selectedFallbackWeekStart());
+  return {
+    configured: Boolean(week.configured),
+    weekStart,
+    weekEnd: String(week.weekEnd ?? addDays(weekStart, 6)),
+    source: String(week.source ?? "garmin-connect"),
+    activities: Array.isArray(week.activities) ? week.activities.map(normalizeGarminActivity).filter((activity) => activity.activityId) : [],
+    error: week.error ? String(week.error) : undefined,
+    fetchedAt: week.fetchedAt ? String(week.fetchedAt) : undefined,
+  };
+}
+
+function normalizeGarminActivity(activity: Partial<GarminActivity>): GarminActivity {
+  const startTimeLocal = String(activity.startTimeLocal ?? "");
+  const date = String(activity.date ?? startTimeLocal.slice(0, 10) ?? todayLocal());
+  return {
+    activityId: String(activity.activityId ?? ""),
+    activityName: String(activity.activityName ?? "Garmin Aktivitaet"),
+    activityType: String(activity.activityType ?? "activity"),
+    date,
+    startTimeLocal: startTimeLocal || `${date}T00:00:00`,
+    durationSeconds: optionalNumber(activity.durationSeconds),
+    movingDurationSeconds: optionalNumber(activity.movingDurationSeconds),
+    distanceMeters: optionalNumber(activity.distanceMeters),
+    calories: optionalNumber(activity.calories),
+    averageHeartRate: optionalNumber(activity.averageHeartRate),
+    maxHeartRate: optionalNumber(activity.maxHeartRate),
   };
 }
 

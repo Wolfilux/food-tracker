@@ -20,12 +20,12 @@ Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Versionierter BLS-Import fuer generische/rohe Lebensmittel und deutsche Naehrwerte
 - Fotoanalyse fuer Beschreibung, geschaetztes Gewicht, Kalorien und Makros
 - Textanalyse fuer freie Essensbeschreibungen
-- Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate und Fett
-- Manuelle KI-Wochenanalyse mit Ampel, Text-Einschaetzung und Optimierungsvorschlaegen
+- Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate, Fett und Garmin-Sportaktivitaeten
+- Manuelle KI-Wochenanalyse mit Ampel, tiefer Ernaehrungs-/Gewohnheits-/Timing-Einschaetzung und Optimierungsvorschlaegen
 - Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
-- Optionaler Garmin-Connect-Abruf fuer den echten Tagesverbrauch als dynamisches Kalorienziel
+- Optionaler Garmin-Connect-Abruf fuer Tagesverbrauch, Sportaktivitaeten und dynamisches Kalorienziel
 - Backup-Import und -Export ueber die Weboberflaeche
 - Progressive Web App fuer iPhone Home-Screen-Nutzung
 
@@ -160,13 +160,13 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Im Tab `Analyse` die Woche wechseln.
 - Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
 - Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
-- `KI-Analyse` erzeugt eine Ampel und eine kurze Wochenbewertung.
-- `Garmin` aktualisiert die Tagesverbrauchswerte, falls Garmin konfiguriert ist.
+- `KI-Analyse` erzeugt eine Ampel und eine tiefere Wochenbewertung mit Lebensmitteln, Gewohnheiten, Timing, Zielbezug und Sportkontext.
+- `Garmin` aktualisiert Tagesverbrauchswerte und importiert Sportaktivitaeten, falls Garmin konfiguriert ist.
 
 ### Konfiguration
 
 - Tagesziel und Makro-Preset bestimmen die Basisziele.
-- Garmin kann das Kalorienziel pro Tag durch den echten Tagesverbrauch ersetzen.
+- Garmin kann das Kalorienziel pro Tag durch aktive Kalorien erweitern und Sportaktivitaeten fuer die Analyse bereitstellen.
 - Die KI-Konfiguration nutzt einen gemeinsamen API-Key, aber separate Modelle fuer Fotoanalyse und Wochenanalyse.
 - Wochenmail versendet automatisch montags um 01:00 Uhr Europe/Berlin die Analyse der Vorwoche, wenn SMTP, Zieladresse und KI-Key vorhanden sind.
 
