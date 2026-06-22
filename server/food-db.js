@@ -380,6 +380,15 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/ai/weekly-analysis" && request.method === "GET") {
+      try {
+        sendJson(response, { analysis: getStoredWeeklyAnalysis(url.searchParams.get("weekStart")) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/ai/calorie-ideas" && request.method === "POST") {
       try {
         const ideas = await suggestCalorieIdeas(await readJsonBody(request));
@@ -1022,6 +1031,7 @@ export function buildExportPayload() {
     },
     mealFavorites: listMealFavoriteKeys(),
     mealTemplates: listMealTemplates(),
+    weeklyAiAnalyses: listStoredWeeklyAnalyses(),
     entries: listEntries(),
   };
 }
@@ -1069,6 +1079,13 @@ export function importFoodTrackerData(input) {
       }
     }
 
+    if (Array.isArray(input.weeklyAiAnalyses)) {
+      database.prepare("DELETE FROM weekly_ai_analyses").run();
+      for (const analysis of input.weeklyAiAnalyses.slice(0, 260)) {
+        saveStoredWeeklyAnalysis(validateStoredWeeklyAnalysis(analysis), database);
+      }
+    }
+
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -1106,6 +1123,136 @@ function importPublicAiConfig(input, warnings) {
 
   saveAiConfig({ provider, model });
   return true;
+}
+
+export function getStoredWeeklyAnalysis(weekStartInput) {
+  const weekStart = normalizeWeekStart(weekStartInput ?? todayInBerlin());
+  const row = getFoodDatabase()
+    .prepare([
+      "SELECT user_key, week_start, week_end, provider, model, analysis_json, created_at, updated_at",
+      "FROM weekly_ai_analyses",
+      "WHERE user_key = 'default' AND week_start = ?",
+    ].join("\n"))
+    .get(weekStart);
+
+  return row ? weeklyAnalysisFromRow(row) : null;
+}
+
+export function listStoredWeeklyAnalyses() {
+  return getFoodDatabase()
+    .prepare([
+      "SELECT user_key, week_start, week_end, provider, model, analysis_json, created_at, updated_at",
+      "FROM weekly_ai_analyses",
+      "WHERE user_key = 'default'",
+      "ORDER BY week_start DESC",
+    ].join("\n"))
+    .all()
+    .map(weeklyAnalysisFromRow)
+    .filter(Boolean);
+}
+
+function saveStoredWeeklyAnalysis(analysis, database = getFoodDatabase()) {
+  const normalized = validateStoredWeeklyAnalysis(analysis);
+  const existing = database.prepare([
+    "SELECT created_at",
+    "FROM weekly_ai_analyses",
+    "WHERE user_key = 'default' AND week_start = ?",
+  ].join("\n")).get(normalized.weekStart);
+  const now = new Date().toISOString();
+  const createdAt = normalized.createdAt || existing?.created_at || now;
+  const updatedAt = now;
+  const persisted = {
+    ...normalized,
+    userKey: "default",
+    createdAt,
+    updatedAt,
+  };
+
+  database.prepare([
+    "INSERT INTO weekly_ai_analyses (",
+    "  user_key, week_start, week_end, provider, model, analysis_json, created_at, updated_at",
+    ")",
+    "VALUES ('default', ?, ?, ?, ?, ?, ?, ?)",
+    "ON CONFLICT(user_key, week_start) DO UPDATE SET",
+    "  week_end = excluded.week_end,",
+    "  provider = excluded.provider,",
+    "  model = excluded.model,",
+    "  analysis_json = excluded.analysis_json,",
+    "  updated_at = excluded.updated_at",
+  ].join("\n")).run(
+    persisted.weekStart,
+    persisted.weekEnd,
+    persisted.provider,
+    persisted.model,
+    JSON.stringify(persisted),
+    createdAt,
+    updatedAt,
+  );
+
+  return persisted;
+}
+
+function weeklyAnalysisFromRow(row) {
+  try {
+    const analysis = JSON.parse(row.analysis_json);
+    return validateStoredWeeklyAnalysis({
+      ...analysis,
+      userKey: row.user_key || "default",
+      weekStart: row.week_start,
+      weekEnd: row.week_end,
+      provider: row.provider || analysis.provider,
+      model: row.model || analysis.model,
+      createdAt: row.created_at || analysis.createdAt,
+      updatedAt: row.updated_at || analysis.updatedAt,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function validateStoredWeeklyAnalysis(input) {
+  const weekStart = normalizeWeekStart(input?.weekStart ?? todayInBerlin());
+  const weekEnd = /^\d{4}-\d{2}-\d{2}$/.test(String(input?.weekEnd ?? ""))
+    ? String(input.weekEnd)
+    : addDays(weekStart, 6);
+  const signalLabel = ["gut", "okay", "schlecht"].includes(input?.signal?.label) ? input.signal.label : "okay";
+  const sections = input?.aiSections && typeof input.aiSections === "object" ? input.aiSections : undefined;
+  return {
+    ...input,
+    userKey: "default",
+    weekStart,
+    weekEnd,
+    goalLabel: textValue(input?.goalLabel, "Normal", 80),
+    signal: {
+      label: signalLabel,
+      score: clampNumber(input?.signal?.score, 0, 100),
+      message: textValue(input?.signal?.message, "", 240),
+    },
+    aiText: textValue(input?.aiText, "", 6000),
+    aiSections: sections ? {
+      summary: textValue(sections.summary, "", 520),
+      positives: normalizeTextList(sections.positives, 5, []),
+      patterns: normalizeTextList(sections.patterns, 5, []),
+      followUp: {
+        status: ["umgesetzt", "teilweise", "nicht umgesetzt", "keine Vorwoche"].includes(sections.followUp?.status) ? sections.followUp.status : "keine Vorwoche",
+        summary: textValue(sections.followUp?.summary, "", 420),
+        evidence: normalizeTextList(sections.followUp?.evidence, 5, []),
+      },
+      recommendations: normalizeRecommendationList(sections.recommendations, []),
+      timing: normalizeTextList(sections.timing, 5, []),
+      macros: normalizeTextList(sections.macros, 5, []),
+      alcohol: textValue(sections.alcohol, "", 420),
+      garmin: textValue(sections.garmin, "", 520),
+      nextWeekPlan: {
+        meals: normalizeTextList(sections.nextWeekPlan?.meals, 7, []),
+        activity: normalizeTextList(sections.nextWeekPlan?.activity, 5, []),
+      },
+    } : undefined,
+    provider: textValue(input?.provider, "", 80),
+    model: textValue(input?.model, "", 160),
+    createdAt: input?.createdAt ? String(input.createdAt) : undefined,
+    updatedAt: input?.updatedAt ? String(input.updatedAt) : undefined,
+  };
 }
 
 export function listMealTemplates() {
@@ -1297,6 +1444,17 @@ function initializeDatabase(database) {
     "  week_start TEXT PRIMARY KEY,",
     "  sent_at TEXT NOT NULL",
     ");",
+    "CREATE TABLE IF NOT EXISTS weekly_ai_analyses (",
+    "  user_key TEXT NOT NULL DEFAULT 'default',",
+    "  week_start TEXT NOT NULL,",
+    "  week_end TEXT NOT NULL,",
+    "  provider TEXT NOT NULL DEFAULT '',",
+    "  model TEXT NOT NULL DEFAULT '',",
+    "  analysis_json TEXT NOT NULL,",
+    "  created_at TEXT NOT NULL,",
+    "  updated_at TEXT NOT NULL,",
+    "  PRIMARY KEY (user_key, week_start)",
+    ");",
     "CREATE TABLE IF NOT EXISTS garmin_config (",
     "  id TEXT PRIMARY KEY,",
     "  username TEXT NOT NULL DEFAULT '',",
@@ -1381,6 +1539,7 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "auto_sync_minutes", "INTEGER NOT NULL DEFAULT 0");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_weekly_ai_analyses_week_start ON weekly_ai_analyses(week_start DESC);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   seedFoodRecords(database);
 }
@@ -1468,7 +1627,7 @@ async function analyzeWeekManually(input) {
   const weekStart = normalizeWeekStart(input?.weekStart ?? todayInBerlin());
   const summary = buildWeeklyAnalysis(weekStart);
   const ai = await generateWeeklyAiText(summary);
-  return {
+  const analysis = {
     ...summary,
     aiText: ai.text,
     aiSections: ai.sections,
@@ -1476,6 +1635,7 @@ async function analyzeWeekManually(input) {
     model: ai.model,
     aiUsage: ai.aiUsage,
   };
+  return saveStoredWeeklyAnalysis(analysis);
 }
 
 function buildWeeklyAnalysis(weekStartInput) {
@@ -1617,9 +1777,11 @@ async function generateWeeklyAiText(summary) {
             "Leite Gewohnheiten aus Wiederholungen, Tageszeiten, Mahlzeitengroessen und Sport/Ernaehrungs-Zusammenspiel ab.",
             "Gib konkrete Lebensmittellisten: Fettquellen wie Olivenoel, Nuesse/Saaten, Avocado, fetter Fisch, Eier oder Milchprodukte wenn passend; Proteinquellen; ballaststoffreiche Carbs und Gemuese.",
             "Plane die kommende Woche mit einfachen Mahlzeiten und einem realistischen Sport-/Aktivitaetsplan aus Garmin-Historie und Ziel.",
+            "Wenn previousAnalysis vorhanden ist, bewerte explizit, ob Empfehlungen und Wochenplan der Vorwoche in der aktuellen Woche umgesetzt wurden.",
+            "Nutze fuer diese Follow-up-Bewertung nur aktuelle Wochendaten und die gespeicherte Vorwochenanalyse.",
             "Nutze Kalenderdaten nur als Tagesrhythmus/Frei-Besetzt-Kontext und erwaehne keine Termindetails.",
             "Keine medizinischen Diagnosen. Ton: normaler Ernaehrungs-Coach, direkt, freundlich, nicht streng.",
-            "Schema: {summary:string, positives:string[], patterns:string[], recommendations:[{title:string,details:string}], timing:string[], macros:string[], alcohol:string, garmin:string, nextWeekPlan:{meals:string[],activity:string[]}, text:string}.",
+            "Schema: {summary:string, positives:string[], patterns:string[], followUp:{status:'umgesetzt'|'teilweise'|'nicht umgesetzt'|'keine Vorwoche',summary:string,evidence:string[]}, recommendations:[{title:string,details:string}], timing:string[], macros:string[], alcohol:string, garmin:string, nextWeekPlan:{meals:string[],activity:string[]}, text:string}.",
             "summary: 1-2 Saetze. Listen jeweils 2-5 kurze, konkrete Punkte. recommendations details maximal 180 Zeichen.",
           ].join(" "),
         },
@@ -1678,6 +1840,7 @@ async function buildWeeklyPromptPayload(summary) {
       durationMinutes: summary.totals.activityDurationMinutes,
       count: summary.totals.activityCount,
     }),
+    previousAnalysis: buildPreviousWeeklyAnalysisPromptPayload(summary.weekStart),
     calendarContext: await fetchCalendarContextForAnalysis(summary.weekEnd),
   };
 }
@@ -1688,6 +1851,7 @@ function normalizeWeeklyAiSections(parsed, summary) {
     summary: textValue(parsed?.summary || parsed?.text, fallbackWeeklySummary(summary), 520),
     positives: normalizeTextList(parsed?.positives, 5, fallbackPositives(summary)),
     patterns: normalizeTextList(parsed?.patterns, 5, fallbackPatterns(summary)),
+    followUp: normalizeFollowUp(parsed?.followUp, summary),
     recommendations: normalizeRecommendationList(parsed?.recommendations, fallbackRecommendations(summary)),
     timing: normalizeTextList(parsed?.timing, 5, fallbackTiming(summary)),
     macros: normalizeTextList(parsed?.macros, 5, fallbackMacros(summary)),
@@ -1734,6 +1898,10 @@ function buildWeeklyAnalysisPlainText(sections) {
     "Muster und Stolperstellen",
     ...sections.patterns.map((item) => "- " + item),
     "",
+    "Vorwochen-Follow-up",
+    `${sections.followUp.status}: ${sections.followUp.summary}`,
+    ...sections.followUp.evidence.map((item) => "- " + item),
+    "",
     "Konkrete Empfehlungen",
     ...sections.recommendations.map((item) => `- ${item.title}${item.details ? ": " + item.details : ""}`),
     "",
@@ -1755,6 +1923,36 @@ function buildWeeklyAnalysisPlainText(sections) {
     "Plan fuer kommende Woche - Aktivitaet",
     ...sections.nextWeekPlan.activity.map((item) => "- " + item),
   ].filter((line) => line !== null && line !== undefined).join("\n");
+}
+
+function normalizeFollowUp(value, summary) {
+  const statusValues = new Set(["umgesetzt", "teilweise", "nicht umgesetzt", "keine Vorwoche"]);
+  const status = statusValues.has(value?.status) ? value.status : (buildPreviousWeeklyAnalysisPromptPayload(summary.weekStart) ? "teilweise" : "keine Vorwoche");
+  return {
+    status,
+    summary: textValue(value?.summary, fallbackFollowUp(summary), 420),
+    evidence: normalizeTextList(value?.evidence, 5, []),
+  };
+}
+
+function fallbackFollowUp(summary) {
+  const previousAnalysis = buildPreviousWeeklyAnalysisPromptPayload(summary.weekStart);
+  if (!previousAnalysis) return "Keine gespeicherte Vorwochenanalyse vorhanden, daher ist noch kein Umsetzungscheck moeglich.";
+  return "Vorwochenempfehlungen wurden mit den aktuellen Wochendaten abgeglichen; Details sollten in der naechsten Analyse konkretisiert werden.";
+}
+
+function buildPreviousWeeklyAnalysisPromptPayload(weekStart) {
+  const previous = getStoredWeeklyAnalysis(addDays(normalizeWeekStart(weekStart), -7));
+  if (!previous) return null;
+  return {
+    weekStart: previous.weekStart,
+    weekEnd: previous.weekEnd,
+    signal: previous.signal,
+    summary: previous.aiSections?.summary ?? previous.aiText?.slice(0, 700) ?? "",
+    patterns: previous.aiSections?.patterns ?? [],
+    recommendations: previous.aiSections?.recommendations ?? [],
+    nextWeekPlan: previous.aiSections?.nextWeekPlan ?? { meals: [], activity: [] },
+  };
 }
 
 function fallbackWeeklySummary(summary) {
@@ -2277,6 +2475,7 @@ function buildWeeklyEmailSectionsHtml(sections) {
     buildEmailTextSection("Kurzfazit", sections.summary),
     buildEmailListSection("Was gut lief", sections.positives),
     buildEmailListSection("Muster und Stolperstellen", sections.patterns),
+    buildEmailFollowUpSection(sections.followUp),
     buildEmailRecommendationSection(sections.recommendations),
     buildEmailListSection("Timing", sections.timing),
     buildEmailListSection("Makros", sections.macros),
@@ -2300,6 +2499,15 @@ function buildEmailListSection(title, items) {
   return `<section style="margin:14px 0;padding:16px;border-radius:8px;background:#fffaf0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">
     <h2 style="margin:0 0 8px;font-size:18px;">${escapeHtml(title)}</h2>
     <ul style="margin:0;padding-left:20px;">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+  </section>`;
+}
+
+function buildEmailFollowUpSection(followUp) {
+  if (!followUp?.summary) return "";
+  return `<section style="margin:14px 0;padding:16px;border-radius:8px;background:#eef5f0;border:1px solid rgba(23,33,27,.12);line-height:1.5;">
+    <h2 style="margin:0 0 8px;font-size:18px;">Vorwochen-Follow-up: ${escapeHtml(followUp.status)}</h2>
+    <p style="margin:0 0 8px;">${escapeHtml(followUp.summary)}</p>
+    ${Array.isArray(followUp.evidence) && followUp.evidence.length > 0 ? `<ul style="margin:0;padding-left:20px;">${followUp.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
   </section>`;
 }
 

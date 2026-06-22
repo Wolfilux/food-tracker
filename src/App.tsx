@@ -235,6 +235,11 @@ type WeeklyAiSections = {
   summary: string;
   positives: string[];
   patterns: string[];
+  followUp: {
+    status: "umgesetzt" | "teilweise" | "nicht umgesetzt" | "keine Vorwoche";
+    summary: string;
+    evidence: string[];
+  };
   recommendations: { title: string; details: string }[];
   timing: string[];
   macros: string[];
@@ -269,6 +274,8 @@ type WeeklyAiAnalysis = {
   aiSections?: WeeklyAiSections;
   provider: string;
   model: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type AiUsageSnapshot = {
@@ -1145,6 +1152,31 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [hasGarminCredentials, isConfigLoaded, selectedDate]);
+
+  useEffect(() => {
+    if (!isConfigLoaded || activeView !== "analysis") return;
+    let isMounted = true;
+    const timeoutId = window.setTimeout(() => {
+      void fetchStoredWeeklyAiAnalysis(selectedWeekStart)
+        .then((analysis) => {
+          if (!isMounted) return;
+          setWeeklyAiAnalysis(analysis);
+          setWeeklyAiState(analysis ? "done" : "idle");
+          setWeeklyAiError("");
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          setWeeklyAiAnalysis(null);
+          setWeeklyAiState("error");
+          setWeeklyAiError("Gespeicherte Wochenanalyse konnte nicht geladen werden.");
+        });
+    }, 0);
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeView, isConfigLoaded, selectedWeekStart]);
 
   useEffect(() => {
     if (!isConfigLoaded || activeView !== "analysis") return;
@@ -2207,7 +2239,7 @@ function App() {
               )}
               <button className="secondary-button secondary-button--dark" type="button" disabled={weeklyAiState === "loading" || !analysisAiConfig.hasApiKey} onClick={() => void requestWeeklyAiAnalysis()}>
                 {weeklyAiState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Sparkles size={18} aria-hidden="true" />}
-                KI
+                {displayedWeeklyAiAnalysis ? "Neu analysieren" : "KI"}
               </button>
             </div>
           </section>
@@ -2250,7 +2282,11 @@ function App() {
                     : analysisAiConfig.hasApiKey ? "Bereit" : "Analyse-Key fehlt"}
                 </strong>
               </div>
-              <small>{displayedWeeklyAiAnalysis ? `${displayedWeeklyAiAnalysis.provider}/${displayedWeeklyAiAnalysis.model}` : analysisAiConfig.model}</small>
+              <small>
+                {displayedWeeklyAiAnalysis
+                  ? `${displayedWeeklyAiAnalysis.provider}/${displayedWeeklyAiAnalysis.model}${displayedWeeklyAiAnalysis.updatedAt ? ` · gespeichert ${formatTime(displayedWeeklyAiAnalysis.updatedAt)}` : ""}`
+                  : analysisAiConfig.model}
+              </small>
             </div>
             {displayedWeeklyAiAnalysis ? (
               <>
@@ -3568,6 +3604,7 @@ function WeeklyAiStructuredBody({ sections }: { sections: WeeklyAiSections }) {
       <WeeklyAiTextSection title="Kurzfazit" text={sections.summary} />
       <WeeklyAiListSection title="Was gut lief" items={sections.positives} />
       <WeeklyAiListSection title="Muster" items={sections.patterns} />
+      <WeeklyAiFollowUpSection followUp={sections.followUp} />
       <section className="weekly-ai-section">
         <h3>Konkrete Empfehlungen</h3>
         <div className="weekly-ai-recommendations">
@@ -3591,6 +3628,22 @@ function WeeklyAiStructuredBody({ sections }: { sections: WeeklyAiSections }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function WeeklyAiFollowUpSection({ followUp }: { followUp: WeeklyAiSections["followUp"] }) {
+  if (!followUp?.summary) return null;
+  return (
+    <section className="weekly-ai-section weekly-ai-follow-up">
+      <h3>Vorwochen-Follow-up</h3>
+      <strong>{followUp.status}</strong>
+      <p>{followUp.summary}</p>
+      {followUp.evidence.length > 0 && (
+        <ul>
+          {followUp.evidence.map((item, index) => <li key={`follow-up-${index}`}>{item}</li>)}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -4418,6 +4471,14 @@ async function fetchWeeklyAiAnalysis(weekStart: string): Promise<WeeklyAiAnalysi
   return normalizeWeeklyAiAnalysis(data.analysis);
 }
 
+async function fetchStoredWeeklyAiAnalysis(weekStart: string): Promise<WeeklyAiAnalysis | null> {
+  const params = new URLSearchParams({ weekStart });
+  const response = await fetch(`/api/ai/weekly-analysis?${params.toString()}`);
+  const data = (await response.json()) as { analysis?: WeeklyAiAnalysis | null; error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Gespeicherte Wochenanalyse konnte nicht geladen werden.");
+  return data.analysis ? normalizeWeeklyAiAnalysis(data.analysis) : null;
+}
+
 async function fetchCalorieIdeas(remainingCalories: number, date: string, signal?: AbortSignal): Promise<CalorieIdea[]> {
   const response = await fetch("/api/ai/calorie-ideas", {
     method: "POST",
@@ -4888,6 +4949,8 @@ function normalizeWeeklyAiAnalysis(analysis: WeeklyAiAnalysis): WeeklyAiAnalysis
     aiSections: normalizeWeeklyAiSections(analysis.aiSections),
     provider: String(analysis.provider ?? ""),
     model: String(analysis.model ?? ""),
+    createdAt: analysis.createdAt ? String(analysis.createdAt) : undefined,
+    updatedAt: analysis.updatedAt ? String(analysis.updatedAt) : undefined,
   };
 }
 
@@ -4897,6 +4960,7 @@ function normalizeWeeklyAiSections(sections: WeeklyAiAnalysis["aiSections"]): We
     summary: String(sections.summary ?? ""),
     positives: normalizeStringList(sections.positives),
     patterns: normalizeStringList(sections.patterns),
+    followUp: normalizeWeeklyAiFollowUp(sections.followUp),
     recommendations: Array.isArray(sections.recommendations)
       ? sections.recommendations.map((item) => ({
         title: String(item?.title ?? ""),
@@ -4911,6 +4975,17 @@ function normalizeWeeklyAiSections(sections: WeeklyAiAnalysis["aiSections"]): We
       meals: normalizeStringList(sections.nextWeekPlan?.meals),
       activity: normalizeStringList(sections.nextWeekPlan?.activity),
     },
+  };
+}
+
+function normalizeWeeklyAiFollowUp(followUp: WeeklyAiSections["followUp"]): WeeklyAiSections["followUp"] {
+  const status = ["umgesetzt", "teilweise", "nicht umgesetzt", "keine Vorwoche"].includes(followUp?.status)
+    ? followUp.status
+    : "keine Vorwoche";
+  return {
+    status,
+    summary: String(followUp?.summary ?? ""),
+    evidence: normalizeStringList(followUp?.evidence),
   };
 }
 

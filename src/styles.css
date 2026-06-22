@@ -883,6 +883,16 @@ h1 {
   padding-left: 2px;
 }
 
+.weekly-ai-follow-up strong {
+  width: fit-content;
+  padding: 4px 8px;
+  color: #17211b;
+  background: rgba(255, 250, 240, 0.9);
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
 .weekly-ai-recommendations,
 .weekly-ai-plan-grid {
   display: grid;
