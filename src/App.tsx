@@ -37,6 +37,7 @@ import {
   Wine,
   X,
 } from "lucide-react";
+import { formatDateTime, formatTime, nowLocal, todayLocal, toBerlinDateTimeInputValue } from "./time";
 
 type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
@@ -675,8 +676,6 @@ const COMMON_FOODS: CommonFood[] = [
   },
 ];
 
-const nowLocal = () => new Date().toISOString().slice(0, 16);
-const todayLocal = () => nowLocal().slice(0, 10);
 const ethanolDensityGPerMl = 0.789;
 const ethanolCaloriesPerGram = 7;
 
@@ -2047,7 +2046,7 @@ function App() {
     setImportExportMessage("");
     try {
       const payload = await fetchExportData();
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayLocal();
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -4193,7 +4192,7 @@ function buildCurrentCalorieTimingBudget(
 ): CurrentCalorieTimingBudget {
   const now = new Date();
   const currentTime = selectedDate === todayLocal()
-    ? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
+    ? toBerlinDateTimeInputValue(now).slice(11, 16)
     : "21:00";
   const checkpoint = checkpoints.find((point) => currentTime <= point.time) ?? checkpoints[checkpoints.length - 1];
   const targetCalories = Math.round(calorieGoal * checkpoint.percent);
@@ -5187,22 +5186,6 @@ function addDays(date: string, days: number) {
   const dateObject = new Date(`${date}T12:00:00`);
   dateObject.setDate(dateObject.getDate() + days);
   return dateObject.toISOString().slice(0, 10);
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("de-DE", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }
 
 function formatDateLabel(value: string) {
