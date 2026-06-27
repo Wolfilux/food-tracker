@@ -1442,6 +1442,16 @@ button:focus-visible {
   margin-bottom: 0;
 }
 
+.meal-template-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meal-template-controls label {
+  margin-bottom: 0;
+}
+
 .photo-input {
   min-height: 42px;
   background: #fffdf7;
@@ -2735,6 +2745,10 @@ button:focus-visible {
 
   .meal-scale-control,
   .meal-scale-control--dialog {
+    grid-template-columns: 1fr;
+  }
+
+  .meal-template-controls {
     grid-template-columns: 1fr;
   }
 
