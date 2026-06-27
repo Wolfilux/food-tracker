@@ -766,6 +766,8 @@ function App() {
     autoSyncMinutes: defaultGarminConfig.autoSyncMinutes,
   });
   const [isConfigLoaded, setConfigLoaded] = useState(false);
+  const [nutritionConfigLoadError, setNutritionConfigLoadError] = useState("");
+  const [nutritionConfigAutoSaveEnabled, setNutritionConfigAutoSaveEnabled] = useState(false);
   const [draft, setDraft] = useState<FoodDraft>(createEmptyDraft);
   const [entryEditDialog, setEntryEditDialog] = useState<EntryEditDialogState | null>(null);
   const [savingEntryEditId, setSavingEntryEditId] = useState<string | null>(null);
@@ -1001,45 +1003,78 @@ function App() {
     }
   }
 
+  function applyNutritionConfig(config: NutritionConfig, enableAutoSave = true) {
+    setNutritionConfig(config);
+    if (enableAutoSave) {
+      setNutritionConfigAutoSaveEnabled(true);
+    }
+  }
+
+  function updateNutritionConfig(nextConfig: NutritionConfig) {
+    applyNutritionConfig(nextConfig);
+  }
+
   useEffect(() => {
     let isMounted = true;
 
     async function loadBackendState() {
-      try {
-        const [entriesResponse, configResponse, aiConfigResponse, analysisAiConfigResponse, weeklyEmailConfigResponse, garminConfigResponse, mealsResponse, mealFavoriteKeysResponse] = await Promise.all([
-          fetchEntries(),
-          fetchNutritionConfig(),
-          fetchAiConfig(),
-          fetchAnalysisAiConfig(),
-          fetchWeeklyEmailConfig(),
-          fetchGarminConfig(),
-          fetchMealTemplates(),
-          fetchMealFavoriteKeys(),
-        ]);
-        if (!isMounted) return;
-        setEntries(entriesResponse);
-        setMealTemplates(mealsResponse);
-        setMealFavoriteKeys(mealFavoriteKeysResponse);
-        setNutritionConfig(configResponse);
-        setAiConfig(aiConfigResponse);
-        setAnalysisAiConfig(analysisAiConfigResponse);
-        setWeeklyEmailConfig(weeklyEmailConfigResponse);
-        setGarminConfig(garminConfigResponse);
-        setGarminDraft({ username: garminConfigResponse.username, authValue: "", autoSyncMinutes: garminConfigResponse.autoSyncMinutes });
+      const [
+        entriesResult,
+        configResult,
+        aiConfigResult,
+        analysisAiConfigResult,
+        weeklyEmailConfigResult,
+        garminConfigResult,
+        mealsResult,
+        mealFavoriteKeysResult,
+      ] = await Promise.allSettled([
+        fetchEntries(),
+        fetchNutritionConfig(),
+        fetchAiConfig(),
+        fetchAnalysisAiConfig(),
+        fetchWeeklyEmailConfig(),
+        fetchGarminConfig(),
+        fetchMealTemplates(),
+        fetchMealFavoriteKeys(),
+      ]);
+
+      if (!isMounted) return;
+
+      if (entriesResult.status === "fulfilled") setEntries(entriesResult.value);
+      if (mealsResult.status === "fulfilled") setMealTemplates(mealsResult.value);
+      if (mealFavoriteKeysResult.status === "fulfilled") setMealFavoriteKeys(mealFavoriteKeysResult.value);
+      if (aiConfigResult.status === "fulfilled") {
+        setAiConfig(aiConfigResult.value);
         setAiDraft({
-          provider: aiConfigResponse.provider,
-          model: aiConfigResponse.model,
+          provider: aiConfigResult.value.provider,
+          model: aiConfigResult.value.model,
           apiKey: "",
         });
-        setAnalysisAiDraft({
-          provider: analysisAiConfigResponse.provider,
-          model: analysisAiConfigResponse.model,
-          apiKey: "",
-        });
-        setWeeklyEmailDraft({ targetEmail: weeklyEmailConfigResponse.targetEmail });
-      } finally {
-        if (isMounted) setConfigLoaded(true);
       }
+      if (analysisAiConfigResult.status === "fulfilled") {
+        setAnalysisAiConfig(analysisAiConfigResult.value);
+        setAnalysisAiDraft({
+          provider: analysisAiConfigResult.value.provider,
+          model: analysisAiConfigResult.value.model,
+          apiKey: "",
+        });
+      }
+      if (weeklyEmailConfigResult.status === "fulfilled") {
+        setWeeklyEmailConfig(weeklyEmailConfigResult.value);
+        setWeeklyEmailDraft({ targetEmail: weeklyEmailConfigResult.value.targetEmail });
+      }
+      if (garminConfigResult.status === "fulfilled") {
+        setGarminConfig(garminConfigResult.value);
+        setGarminDraft({ username: garminConfigResult.value.username, authValue: "", autoSyncMinutes: garminConfigResult.value.autoSyncMinutes });
+      }
+      if (configResult.status === "fulfilled") {
+        applyNutritionConfig(configResult.value, true);
+        setNutritionConfigLoadError("");
+      } else {
+        setNutritionConfigLoadError(configResult.reason instanceof Error ? configResult.reason.message : "Nutrition config request failed");
+      }
+
+      setConfigLoaded(true);
     }
 
     void loadBackendState();
@@ -1050,13 +1085,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isConfigLoaded) return;
+    if (!isConfigLoaded || !nutritionConfigAutoSaveEnabled) return;
     const timeoutId = window.setTimeout(() => {
       void saveNutritionConfig(nutritionConfig).catch(() => undefined);
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isConfigLoaded, nutritionConfig]);
+  }, [isConfigLoaded, nutritionConfig, nutritionConfigAutoSaveEnabled]);
 
   useEffect(() => {
     if (!isConfigLoaded || legacyFavoritesMigratedRef.current) return;
@@ -2082,7 +2117,8 @@ function App() {
         fetchAiConfig(),
       ]);
       setEntries(entriesResponse);
-      setNutritionConfig(configResponse);
+      applyNutritionConfig(configResponse, true);
+      setNutritionConfigLoadError("");
       setAiConfig(aiConfigResponse);
       setAiDraft({ provider: aiConfigResponse.provider, model: aiConfigResponse.model, apiKey: "" });
       setSelectedDate(todayLocal());
@@ -2364,6 +2400,11 @@ function App() {
               </p>
               <h2>Nährwerte</h2>
               <p>{selectedPreset.note}</p>
+              {nutritionConfigLoadError && (
+                <p className="config-status config-status--error">
+                  Nährwert-Konfiguration konnte nicht geladen werden. Es werden Standardwerte angezeigt: {nutritionConfigLoadError}
+                </p>
+              )}
             </div>
             <div className="config-controls">
               <NumberInput
@@ -2371,20 +2412,20 @@ function App() {
                 min={minimumCalorieGoal}
                 step={50}
                 value={nutritionConfig.calorieGoal}
-                onChange={(calorieGoal) => setNutritionConfig({ ...nutritionConfig, calorieGoal })}
+                onChange={(calorieGoal) => updateNutritionConfig({ ...nutritionConfig, calorieGoal })}
               />
               <NumberInput
                 label="Defizit/Überschuss"
                 min={-5000}
                 step={50}
                 value={nutritionConfig.calorieGoalOffset}
-                onChange={(calorieGoalOffset) => setNutritionConfig({ ...nutritionConfig, calorieGoalOffset })}
+                onChange={(calorieGoalOffset) => updateNutritionConfig({ ...nutritionConfig, calorieGoalOffset })}
               />
               <label>
                 Ziel
                 <select
                   value={nutritionConfig.goal}
-                  onChange={(event) => setNutritionConfig({ ...nutritionConfig, goal: event.target.value as NutritionGoal })}
+                  onChange={(event) => updateNutritionConfig({ ...nutritionConfig, goal: event.target.value as NutritionGoal })}
                 >
                   {Object.entries(macroPresets).map(([value, preset]) => (
                     <option value={value} key={value}>{preset.label}</option>
