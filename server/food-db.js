@@ -1513,7 +1513,7 @@ function initializeDatabase(database) {
     "  food_key TEXT,",
     "  food_name TEXT NOT NULL,",
     "  quantity_value REAL NOT NULL,",
-    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg')),",
+    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg', 'ml')),",
     "  calories_per_100g REAL NOT NULL,",
     "  protein_per_100g REAL NOT NULL DEFAULT 0,",
     "  carbs_per_100g REAL NOT NULL DEFAULT 0,",
@@ -1534,6 +1534,7 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "entries", "alcohol_grams", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "entries", "alcohol_calories", "REAL NOT NULL DEFAULT 0");
   migrateEntriesQuantityUnitCheck(database);
+  migrateMealTemplateItemsQuantityUnitCheck(database);
   addColumnIfMissing(database, "nutrition_config", "calorie_goal_offset", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "garmin_config", "encrypted_credential", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
@@ -2940,6 +2941,7 @@ function getGarminCachedActivities(weekStart) {
 
 function storeGarminActivities(activityWeek) {
   if (!activityWeek?.weekStart) return;
+  if (activityWeek.error) return;
   getFoodDatabase()
     .prepare([
       "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
@@ -3551,6 +3553,38 @@ function migrateEntriesQuantityUnitCheck(database) {
     "  meal_id, meal_name, image_data_url, alcohol_vol_percent, alcohol_grams, alcohol_calories",
     "FROM entries_legacy_unit_check;",
     "DROP TABLE entries_legacy_unit_check;",
+  ].join("\n"));
+}
+
+function migrateMealTemplateItemsQuantityUnitCheck(database) {
+  const table = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'meal_template_items'").get();
+  if (!table?.sql || table.sql.includes("'ml'")) return;
+
+  database.exec([
+    "ALTER TABLE meal_template_items RENAME TO meal_template_items_legacy_unit_check;",
+    "CREATE TABLE meal_template_items (",
+    "  meal_id TEXT NOT NULL REFERENCES meal_templates(id) ON DELETE CASCADE,",
+    "  position INTEGER NOT NULL,",
+    "  food_key TEXT,",
+    "  food_name TEXT NOT NULL,",
+    "  quantity_value REAL NOT NULL,",
+    "  quantity_unit TEXT NOT NULL CHECK (quantity_unit IN ('g', 'kg', 'ml')),",
+    "  calories_per_100g REAL NOT NULL,",
+    "  protein_per_100g REAL NOT NULL DEFAULT 0,",
+    "  carbs_per_100g REAL NOT NULL DEFAULT 0,",
+    "  fat_per_100g REAL NOT NULL DEFAULT 0,",
+    "  source TEXT NOT NULL DEFAULT 'manual',",
+    "  PRIMARY KEY (meal_id, position)",
+    ");",
+    "INSERT INTO meal_template_items (",
+    "  meal_id, position, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, source",
+    ")",
+    "SELECT",
+    "  meal_id, position, food_key, food_name, quantity_value, quantity_unit, calories_per_100g,",
+    "  protein_per_100g, carbs_per_100g, fat_per_100g, source",
+    "FROM meal_template_items_legacy_unit_check;",
+    "DROP TABLE meal_template_items_legacy_unit_check;",
   ].join("\n"));
 }
 
