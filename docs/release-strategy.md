@@ -8,8 +8,9 @@ Stand: 2026-06-28
 Das Container-Image `ghcr.io/wolfilux/food-tracker:dev` wird aus diesem Branch
 gebaut und ist in `docker-compose.yml` referenziert.
 
-`main` ist derzeit nicht aktuell und nicht release-fuehrend. Nach dem letzten
-Abgleich ist `main` 0 Commits vor und `dev` 77 Commits vor `main`.
+`main` ist derzeit nicht aktuell und nicht release-fuehrend. `dev` liegt
+deutlich vor `main`; der konkrete Abstand sollte bei Bedarf mit
+`git rev-list --left-right --count origin/main...origin/dev` geprueft werden.
 Bis ein gepruefter Merge oder Fast-Forward erfolgt, sollten Anwender und
 Deployments deshalb `dev` als aktuellen Stand betrachten.
 
