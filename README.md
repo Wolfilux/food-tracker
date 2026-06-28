@@ -1,6 +1,6 @@
 # Food Tracker
 
-Stand: 2026-06-03
+Stand: 2026-06-28
 
 Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. Die App kombiniert manuelle Eintraege, Lebensmittelsuche, OpenFoodFacts-Fallback, KI-Fotoanalyse, KI-Textanalyse, Wochenanalyse, optionale Garmin-Connect-Werte und eine woechentliche Analyse-Mail.
 
@@ -11,6 +11,14 @@ Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. D
 - Standard-Port im Container: `4173`
 - Persistente Daten: Docker-Volume auf `/app/data`
 - Live-Healthcheck: `/healthz`
+
+Hinweis zum Repository-Stand: `dev` ist aktuell der aktive Integrations- und
+Deploy-Branch. `main` ist derzeit nicht release-fuehrend und liegt hinter `dev`
+zurueck, bis die dokumentierte Release-Strategie umgesetzt und `dev` geprueft
+nach `main` uebernommen wurde.
+
+Die vorgeschlagene Branching- und Release-Strategie steht in
+[`docs/release-strategy.md`](docs/release-strategy.md).
 
 ## Features
 
@@ -55,6 +63,12 @@ npm run security:scan
 ```
 
 Der Security-Scan prueft unter anderem, dass keine `.env`-Dateien oder offensichtlichen Secrets ins Repository geraten.
+
+Aktuelle Repository-Hygiene:
+
+- MIT-Lizenz ist im Repository hinterlegt.
+- OP-120 hat einen gitleaks Git-History-Scan ohne Leaks dokumentiert.
+- OP-120 hat `npm run security:scan` erfolgreich ausgefuehrt.
 
 ## Installation mit Docker
 
