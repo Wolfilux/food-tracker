@@ -1,0 +1,38 @@
+services:
+  food-tracker:
+    image: ghcr.io/wolfilux/food-tracker:dev
+    container_name: food-tracker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4173
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Food Tracker <food-tracker@localhost>}
+      CALDAV_URL: ${CALDAV_URL:-}
+      CALDAV_USER: ${CALDAV_USER:-}
+      CALDAV_PASS: ${CALDAV_PASS:-}
+      CALENDAR_LOOKAHEAD_DAYS: ${CALENDAR_LOOKAHEAD_DAYS:-14}
+    ports:
+      - "4173:4173"
+    volumes:
+      - food-tracker-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4173/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  food-tracker-data:

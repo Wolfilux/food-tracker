@@ -7,16 +7,22 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "start": "node server/app-server.js",
     "lint": "eslint .",
+    "smoke:timezone": "node scripts/timezone-smoke.mjs",
+    "smoke:alcohol": "node scripts/alcohol-smoke.mjs",
     "security:scan": "bash scripts/security-scan.sh"
   },
   "dependencies": {
+    "@gooin/garmin-connect": "^1.8.1",
     "@vitejs/plugin-react": "^5.1.1",
-    "vite": "^7.2.4",
-    "typescript": "^5.9.3",
+    "@zxing/browser": "0.1.5",
+    "lucide-react": "^0.555.0",
+    "nodemailer": "^9.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "lucide-react": "^0.555.0"
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
