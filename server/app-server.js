@@ -34,7 +34,7 @@ function sendStaticFile(response, filePath) {
 
 function resolveStaticPath(urlPathname) {
   const decodedPath = decodeURIComponent(urlPathname);
-  const safePath = normalize(decodedPath).replace(/^(\.\.[/\\])+/, "");
+  const safePath = normalize(decodedPath).replace(/^([/\\]|(\.\.[/\\]))+/, "");
   const requestedPath = join(distDir, safePath);
 
   if (requestedPath.startsWith(distDir) && existsSync(requestedPath) && statSync(requestedPath).isFile()) {

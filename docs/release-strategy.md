@@ -4,15 +4,13 @@ Stand: 2026-06-28
 
 ## Aktueller Stand
 
-`dev` ist aktuell der aktive Integrations- und Deploy-Branch fuer Food Tracker.
-Das Container-Image `ghcr.io/wolfilux/food-tracker:dev` wird aus diesem Branch
-gebaut und ist in `docker-compose.yml` referenziert.
+`main` ist der stabile Release-Branch fuer Food Tracker. Gepruefte Releases
+werden per Pull Request von `dev` nach `main` uebernommen und koennen dort mit
+Tags im Format `vX.Y.Z` veroeffentlicht werden.
 
-`main` ist derzeit nicht aktuell und nicht release-fuehrend. `dev` liegt
-deutlich vor `main`; der konkrete Abstand sollte bei Bedarf mit
-`git rev-list --left-right --count origin/main...origin/dev` geprueft werden.
-Bis ein gepruefter Merge oder Fast-Forward erfolgt, sollten Anwender und
-Deployments deshalb `dev` als aktuellen Stand betrachten.
+`dev` bleibt der aktive Integrations- und Staging-Branch. Pushes nach `dev`
+bauen das Container-Image `ghcr.io/wolfilux/food-tracker:dev`; Pushes nach
+`main` bauen `ghcr.io/wolfilux/food-tracker:main`.
 
 ## Zielbild
 

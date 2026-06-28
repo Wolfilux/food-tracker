@@ -6,16 +6,16 @@ Food Tracker ist eine React/Vite-App fuer ein taegliches Ernaehrungsprotokoll. D
 
 ## Status
 
-- Branch: `dev`
-- Container-Image: `ghcr.io/wolfilux/food-tracker:dev`
+- Stable-Branch: `main`
+- Integrations-Branch: `dev`
+- Container-Images: `ghcr.io/wolfilux/food-tracker:main` und `ghcr.io/wolfilux/food-tracker:dev`
 - Standard-Port im Container: `4173`
 - Persistente Daten: Docker-Volume auf `/app/data`
 - Live-Healthcheck: `/healthz`
 
-Hinweis zum Repository-Stand: `dev` ist aktuell der aktive Integrations- und
-Deploy-Branch. `main` ist derzeit nicht release-fuehrend und liegt hinter `dev`
-zurueck, bis die dokumentierte Release-Strategie umgesetzt und `dev` geprueft
-nach `main` uebernommen wurde.
+Hinweis zum Repository-Stand: `main` ist der stabile Release-Branch. `dev`
+bleibt der aktive Integrations- und Staging-Branch, aus dem gepruefte Releases
+per Pull Request nach `main` uebernommen werden.
 
 Die vorgeschlagene Branching- und Release-Strategie steht in
 [`docs/release-strategy.md`](docs/release-strategy.md).
