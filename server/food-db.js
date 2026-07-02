@@ -8,7 +8,9 @@ import { seedFoods } from "./food-data.js";
 import { getGarminActivitiesForWeek, getGarminDailySummary } from "./garmin-service.js";
 import {
   adaptiveMinimumCalorieGoal,
+  buildCoachMode,
   calculateAdaptiveMaintenance,
+  calculateConfidenceScore,
   calculateDailyGoal,
   calculateInitialTdee,
   calculateTargetDeficit,
@@ -918,11 +920,25 @@ export function getAdaptiveGoalOverview(dateInput = todayInBerlin()) {
     summary: profileForCalculation.garminEnabled ? garminSummary : undefined,
     activities: profileForCalculation.garminEnabled ? todayActivities : [],
   });
+  recordWeeklyAdaptiveMaintenance({
+    date,
+    profile: profileForCalculation,
+    adaptiveMaintenance,
+    theoreticalMaintenance: calculateInitialTdee(profileForCalculation),
+  });
   const feedback = calculateWeeklyFeedback(profileForCalculation, adaptiveMaintenance);
   const proposedCalorieGoal = Math.max(
     adaptiveMinimumCalorieGoal,
     Math.round((profileForCalculation.manualOverrideCalories || calculation.recommendedToday) + feedback.adjustmentCalories),
   );
+
+  const weekBudget = buildAdaptiveWeekBudget(weekStart, profileForCalculation, adaptiveMaintenance, garminActivities);
+  const confidence = calculateConfidenceScore({
+    profile: profileForCalculation,
+    dailyCalories,
+    weightLogs,
+    adaptiveResult: adaptiveMaintenance,
+  });
 
   return {
     date,
@@ -936,7 +952,7 @@ export function getAdaptiveGoalOverview(dateInput = todayInBerlin()) {
       ...calculation,
       source: profileForCalculation.manualOverrideCalories > 0 ? "manual-override" : adaptiveMaintenance.available ? "adaptive" : "initial",
     },
-    weekBudget: buildAdaptiveWeekBudget(weekStart, profileForCalculation, adaptiveMaintenance, garminActivities),
+    weekBudget,
     feedback: {
       ...feedback,
       proposedCalorieGoal,
@@ -947,6 +963,13 @@ export function getAdaptiveGoalOverview(dateInput = todayInBerlin()) {
       previousAverage: rollingWeightAverage(weightLogs, addDays(date, -7)),
       logs: weightLogs.slice(-35),
     },
+    confidence,
+    coach: buildCoachMode({
+      profile: profileForCalculation,
+      dailyGoal: calculation,
+      adaptiveResult: adaptiveMaintenance,
+      confidence,
+    }),
     history: listAdaptiveGoalHistory(),
     compatibility: {
       nutritionGoal: nutritionConfig.goal,
@@ -960,7 +983,8 @@ export function getAdaptiveGoalProfile() {
   const row = getFoodDatabase()
     .prepare([
       "SELECT enabled, age, sex, height_cm, current_weight_kg, target_weight_kg, weekly_loss_kg,",
-      "  activity_level, garmin_enabled, training_types_json, manual_override_calories",
+      "  activity_level, garmin_enabled, training_types_json, manual_override_calories,",
+      "  max_deficit_percent, use_body_weight_deficit_limit, enforce_sex_minimum_calories, workout_credit_factors_json",
       "FROM adaptive_goal_profile WHERE id = 'default'",
     ].join("\n"))
     .get();
@@ -979,6 +1003,10 @@ export function getAdaptiveGoalProfile() {
     garminEnabled: row.garmin_enabled === 1,
     trainingTypes: safeJsonArray(row.training_types_json),
     manualOverrideCalories: row.manual_override_calories,
+    maxDeficitPercent: row.max_deficit_percent,
+    useBodyWeightDeficitLimit: row.use_body_weight_deficit_limit === 1,
+    enforceSexMinimumCalories: row.enforce_sex_minimum_calories === 1,
+    workoutCreditFactors: safeJsonObject(row.workout_credit_factors_json),
   });
 }
 
@@ -989,9 +1017,10 @@ export function saveAdaptiveGoalProfile(input) {
     .prepare([
       "INSERT INTO adaptive_goal_profile (",
       "  id, enabled, age, sex, height_cm, current_weight_kg, target_weight_kg, weekly_loss_kg,",
-      "  activity_level, garmin_enabled, training_types_json, manual_override_calories, updated_at",
+      "  activity_level, garmin_enabled, training_types_json, manual_override_calories,",
+      "  max_deficit_percent, use_body_weight_deficit_limit, enforce_sex_minimum_calories, workout_credit_factors_json, updated_at",
       ")",
-      "VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+      "VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
       "ON CONFLICT(id) DO UPDATE SET",
       "  enabled = excluded.enabled,",
       "  age = excluded.age,",
@@ -1004,6 +1033,10 @@ export function saveAdaptiveGoalProfile(input) {
       "  garmin_enabled = excluded.garmin_enabled,",
       "  training_types_json = excluded.training_types_json,",
       "  manual_override_calories = excluded.manual_override_calories,",
+      "  max_deficit_percent = excluded.max_deficit_percent,",
+      "  use_body_weight_deficit_limit = excluded.use_body_weight_deficit_limit,",
+      "  enforce_sex_minimum_calories = excluded.enforce_sex_minimum_calories,",
+      "  workout_credit_factors_json = excluded.workout_credit_factors_json,",
       "  updated_at = excluded.updated_at",
     ].join("\n"))
     .run(
@@ -1018,6 +1051,10 @@ export function saveAdaptiveGoalProfile(input) {
       profile.garminEnabled ? 1 : 0,
       JSON.stringify(profile.trainingTypes),
       profile.manualOverrideCalories,
+      profile.maxDeficitPercent,
+      profile.useBodyWeightDeficitLimit ? 1 : 0,
+      profile.enforceSexMinimumCalories ? 1 : 0,
+      JSON.stringify(profile.workoutCreditFactors),
     );
 
   if (profile.currentWeightKg > 0) {
@@ -1093,15 +1130,49 @@ function buildAdaptiveWeekBudget(weekStart, profile, adaptiveMaintenance, garmin
       basisTarget: calculation.basisTarget,
       activityAdjustment: calculation.activityAdjustment,
       finalGoal: calculation.finalGoal,
+      consumedCalories: listDailyCalories(date, date)[0]?.calories ?? 0,
     };
   });
+  const consumedCalories = days.reduce((sum, day) => sum + day.consumedCalories, 0);
 
   return {
     weekStart,
     weekEnd: addDays(weekStart, 6),
     days,
     totalCalories: days.reduce((sum, day) => sum + day.finalGoal, 0),
+    consumedCalories,
+    remainingCalories: days.reduce((sum, day) => sum + day.finalGoal, 0) - consumedCalories,
   };
+}
+
+function recordWeeklyAdaptiveMaintenance({ date, profile, adaptiveMaintenance, theoreticalMaintenance }) {
+  if (!adaptiveMaintenance.available) return;
+  const newMaintenance = Math.round(adaptiveMaintenance.adaptiveMaintenance);
+  const oldMaintenance = Math.round(theoreticalMaintenance);
+  if (Math.abs(newMaintenance - oldMaintenance) < 50) return;
+  const weekStart = getWeekStart(date);
+  const alreadyRecorded = listAdaptiveGoalHistory().some((entry) => (
+    entry.action === "maintenance-adjustment"
+    && entry.details?.weekStart === weekStart
+    && entry.newCalorieGoal === newMaintenance
+  ));
+  if (alreadyRecorded) return;
+
+  insertAdaptiveGoalHistory({
+    action: "maintenance-adjustment",
+    oldCalorieGoal: oldMaintenance,
+    newCalorieGoal: newMaintenance,
+    reason: `Dein tatsaechlicher Erhaltungsbedarf wurde anhand deiner letzten ${adaptiveMaintenance.observedDays} Tage von ${oldMaintenance.toLocaleString("de-DE")} kcal auf ${newMaintenance.toLocaleString("de-DE")} kcal angepasst.`,
+    details: {
+      weekStart,
+      type: "adaptive-maintenance",
+      adaptiveMaintenance,
+      profile: {
+        weeklyLossKg: profile.weeklyLossKg,
+        activityLevel: profile.activityLevel,
+      },
+    },
+  });
 }
 
 function listDailyCalories(startDate, endDate) {
@@ -1832,6 +1903,10 @@ function initializeDatabase(database) {
     "  garmin_enabled INTEGER NOT NULL DEFAULT 0,",
     "  training_types_json TEXT NOT NULL DEFAULT '[]',",
     "  manual_override_calories INTEGER NOT NULL DEFAULT 0,",
+    "  max_deficit_percent REAL NOT NULL DEFAULT 30,",
+    "  use_body_weight_deficit_limit INTEGER NOT NULL DEFAULT 0,",
+    "  enforce_sex_minimum_calories INTEGER NOT NULL DEFAULT 0,",
+    "  workout_credit_factors_json TEXT NOT NULL DEFAULT '{}',",
     "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
     ");",
     "CREATE TABLE IF NOT EXISTS adaptive_weight_logs (",
@@ -1914,6 +1989,10 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "auto_sync_minutes", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "adaptive_goal_profile", "manual_override_calories", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "adaptive_goal_profile", "max_deficit_percent", "REAL NOT NULL DEFAULT 30");
+  addColumnIfMissing(database, "adaptive_goal_profile", "use_body_weight_deficit_limit", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "adaptive_goal_profile", "enforce_sex_minimum_calories", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "adaptive_goal_profile", "workout_credit_factors_json", "TEXT NOT NULL DEFAULT '{}'");
   database.exec("CREATE INDEX IF NOT EXISTS idx_weekly_ai_analyses_week_start ON weekly_ai_analyses(week_start DESC);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_adaptive_goal_history_created_at ON adaptive_goal_history(created_at DESC);");

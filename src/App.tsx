@@ -232,6 +232,16 @@ type AdaptiveGoalProfile = {
   garminEnabled: boolean;
   trainingTypes: string[];
   manualOverrideCalories: number;
+  maxDeficitPercent: number;
+  useBodyWeightDeficitLimit: boolean;
+  enforceSexMinimumCalories: boolean;
+  workoutCreditFactors: {
+    strength: number;
+    running: number;
+    cycling: number;
+    walking: number;
+    default: number;
+  };
 };
 
 type AdaptiveGoalOverview = {
@@ -250,6 +260,9 @@ type AdaptiveGoalOverview = {
     weightDeltaKg?: number;
     calorieDeltaPerDay?: number;
     adaptiveMaintenance?: number;
+    completeDayCount?: number;
+    weightLogCount?: number;
+    requiredWeightLogCount?: number;
     message: string;
     startAverage?: { date: string; averageKg: number; sampleCount: number };
     latestAverage?: { date: string; averageKg: number; sampleCount: number };
@@ -258,6 +271,10 @@ type AdaptiveGoalOverview = {
     bmr: number;
     initialTdee: number;
     adaptiveMaintenance: number;
+    maintenance: number;
+    activityCalories: number;
+    activityFactor: number;
+    requestedDeficit: number;
     targetDeficit: number;
     targetLossKgPerWeek: number;
     basisTarget: number;
@@ -266,6 +283,27 @@ type AdaptiveGoalOverview = {
     finalGoal: number;
     hasManualOverride: boolean;
     minimumCalorieGoal: number;
+    safety: {
+      requestedDeficit: number;
+      maxDeficit: number;
+      maxDeficitPercent: number;
+      bodyWeightDeficitLimit: number;
+      useBodyWeightDeficitLimit: boolean;
+      minimumGoal: number;
+      minimumGoalFromBmr: number;
+      enforceSexMinimumCalories: boolean;
+      deficit: number;
+      wasAdjusted: boolean;
+      notice: string;
+    };
+    breakdown: {
+      bmr: number;
+      activityCalories: number;
+      maintenance: number;
+      deficit: number;
+      recommendedCalorieGoal: number;
+      formula: string;
+    };
     source: string;
     activity: {
       strategy: string;
@@ -281,8 +319,10 @@ type AdaptiveGoalOverview = {
   weekBudget: {
     weekStart: string;
     weekEnd: string;
-    days: { date: string; basisTarget: number; activityAdjustment: number; finalGoal: number }[];
+    days: { date: string; basisTarget: number; activityAdjustment: number; finalGoal: number; consumedCalories: number }[];
     totalCalories: number;
+    consumedCalories: number;
+    remainingCalories: number;
   };
   feedback: {
     status: "insufficient-data" | "on-track" | "too-slow" | "too-fast";
@@ -297,6 +337,17 @@ type AdaptiveGoalOverview = {
     previousAverage: { date: string; averageKg: number; sampleCount: number } | null;
     logs: { date: string; weightKg: number }[];
   };
+  confidence: {
+    score: number;
+    basis: string;
+    factors: { key: string; label: string; points: number; max: number }[];
+  };
+  coach: {
+    projectedLossKgPerWeek: number;
+    message: string;
+    dailyTarget: number;
+    suggestions: string[];
+  };
   history: {
     id: string;
     createdAt: string;
@@ -304,6 +355,7 @@ type AdaptiveGoalOverview = {
     oldCalorieGoal: number;
     newCalorieGoal: number;
     reason: string;
+    details?: Record<string, unknown>;
   }[];
 };
 
@@ -463,6 +515,16 @@ const defaultAdaptiveGoalProfile: AdaptiveGoalProfile = {
   garminEnabled: false,
   trainingTypes: [],
   manualOverrideCalories: 0,
+  maxDeficitPercent: 30,
+  useBodyWeightDeficitLimit: false,
+  enforceSexMinimumCalories: false,
+  workoutCreditFactors: {
+    strength: 0.4,
+    running: 0.7,
+    cycling: 0.7,
+    walking: 0.8,
+    default: 0.35,
+  },
 };
 const mealFavoritesStorageKey = "food-tracker:meal-favorites";
 const mealTemplateFavoritesStorageKey = "food-tracker-template-favorites";
@@ -2642,6 +2704,23 @@ function App() {
                 />
                 <span>Garmin fuer Aktivitaet nutzen</span>
               </label>
+              <NumberInput label="Max. Defizit %" min={5} step={1} value={adaptiveDraft.maxDeficitPercent} onChange={(maxDeficitPercent) => setAdaptiveDraft({ ...adaptiveDraft, maxDeficitPercent })} />
+              <label className="toggle-control">
+                <input
+                  type="checkbox"
+                  checked={adaptiveDraft.useBodyWeightDeficitLimit}
+                  onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, useBodyWeightDeficitLimit: event.target.checked })}
+                />
+                <span>1% Koerpergewicht/Woche begrenzen</span>
+              </label>
+              <label className="toggle-control">
+                <input
+                  type="checkbox"
+                  checked={adaptiveDraft.enforceSexMinimumCalories}
+                  onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, enforceSexMinimumCalories: event.target.checked })}
+                />
+                <span>Mindestziel nach Geschlecht</span>
+              </label>
               <label>
                 Trainingstypen
                 <input
@@ -2650,6 +2729,10 @@ function App() {
                   placeholder="Laufen, Rad, Kraft"
                 />
               </label>
+              <NumberInput label="Faktor Kraft" min={0} step={0.05} value={adaptiveDraft.workoutCreditFactors.strength} onChange={(strength) => setAdaptiveDraft({ ...adaptiveDraft, workoutCreditFactors: { ...adaptiveDraft.workoutCreditFactors, strength } })} />
+              <NumberInput label="Faktor Laufen" min={0} step={0.05} value={adaptiveDraft.workoutCreditFactors.running} onChange={(running) => setAdaptiveDraft({ ...adaptiveDraft, workoutCreditFactors: { ...adaptiveDraft.workoutCreditFactors, running } })} />
+              <NumberInput label="Faktor Rad" min={0} step={0.05} value={adaptiveDraft.workoutCreditFactors.cycling} onChange={(cycling) => setAdaptiveDraft({ ...adaptiveDraft, workoutCreditFactors: { ...adaptiveDraft.workoutCreditFactors, cycling } })} />
+              <NumberInput label="Faktor Gehen" min={0} step={0.05} value={adaptiveDraft.workoutCreditFactors.walking} onChange={(walking) => setAdaptiveDraft({ ...adaptiveDraft, workoutCreditFactors: { ...adaptiveDraft.workoutCreditFactors, walking } })} />
               <label>
                 Gewicht heute
                 <input
@@ -2667,11 +2750,27 @@ function App() {
             {adaptiveGoal && (
               <div className="adaptive-goal-summary">
                 <AdaptiveMetric label="BMR" value={adaptiveGoal.bmr} suffix="kcal" />
+                <AdaptiveMetric label="Aktivitaetskalorien" value={adaptiveGoal.dailyGoal.activityCalories} suffix="kcal" />
                 <AdaptiveMetric label="TDEE initial" value={adaptiveGoal.initialTdee} suffix="kcal" />
+                <AdaptiveMetric label="Faktor" value={adaptiveGoal.dailyGoal.activityFactor} suffix="x" />
                 <AdaptiveMetric label="Defizit" value={adaptiveGoal.targetDeficit} suffix="kcal" />
                 <AdaptiveMetric label="Heute" value={adaptiveGoal.dailyGoal.finalGoal} suffix="kcal" />
                 <AdaptiveMetric label="Aktivitaet" value={adaptiveGoal.dailyGoal.activityAdjustment} suffix="kcal" />
                 <AdaptiveMetric label="Wochenbudget" value={adaptiveGoal.weekBudget.totalCalories} suffix="kcal" />
+              </div>
+            )}
+            {adaptiveGoal && (
+              <div className="adaptive-feedback-card">
+                <div>
+                  <strong>
+                    {adaptiveGoal.dailyGoal.breakdown.bmr.toLocaleString("de-DE")} + {adaptiveGoal.dailyGoal.breakdown.activityCalories.toLocaleString("de-DE")} = {adaptiveGoal.dailyGoal.breakdown.maintenance.toLocaleString("de-DE")} - {adaptiveGoal.dailyGoal.breakdown.deficit.toLocaleString("de-DE")} = {adaptiveGoal.dailyGoal.breakdown.recommendedCalorieGoal.toLocaleString("de-DE")} kcal
+                  </strong>
+                  <span>{adaptiveGoal.dailyGoal.breakdown.formula}</span>
+                  <small>
+                    Gewuenscht {adaptiveGoal.dailyGoal.targetLossKgPerWeek.toLocaleString("de-DE")} kg/Woche · aktuelles Defizit {adaptiveGoal.dailyGoal.targetDeficit.toLocaleString("de-DE")} kcal · Aktivitaetsbonus {adaptiveGoal.dailyGoal.activityAdjustment.toLocaleString("de-DE")} kcal · Faktor {adaptiveGoal.dailyGoal.activityFactor.toLocaleString("de-DE")}
+                  </small>
+                  {adaptiveGoal.dailyGoal.safety.notice && <small className="config-status config-status--error">{adaptiveGoal.dailyGoal.safety.notice}</small>}
+                </div>
               </div>
             )}
             {adaptiveGoal && (
@@ -2697,12 +2796,35 @@ function App() {
               </div>
             )}
             {adaptiveGoal && (
+              <div className="adaptive-feedback-card">
+                <div>
+                  <strong>Confidence {adaptiveGoal.confidence.score.toLocaleString("de-DE")}%</strong>
+                  <span>{adaptiveGoal.confidence.basis}</span>
+                  <small>{adaptiveGoal.confidence.factors.map((factor) => `${factor.label}: ${factor.points}/${factor.max}`).join(" · ")}</small>
+                </div>
+              </div>
+            )}
+            {adaptiveGoal && (
+              <div className="adaptive-feedback-card">
+                <div>
+                  <strong>Coach Mode</strong>
+                  <span>{adaptiveGoal.coach.message}</span>
+                  {adaptiveGoal.coach.suggestions.map((suggestion) => <small key={suggestion}>{suggestion}</small>)}
+                </div>
+              </div>
+            )}
+            {adaptiveGoal && (
               <div className="adaptive-week-budget" aria-label="Wochenbudget adaptive Ziele">
+                <span>
+                  <strong>Woche</strong>
+                  {adaptiveGoal.weekBudget.totalCalories.toLocaleString("de-DE")}
+                  <small>{adaptiveGoal.weekBudget.remainingCalories.toLocaleString("de-DE")} frei</small>
+                </span>
                 {adaptiveGoal.weekBudget.days.map((day) => (
                   <span key={day.date}>
                     <strong>{formatWeekdayShort(day.date)}</strong>
                     {day.finalGoal.toLocaleString("de-DE")}
-                    <small>+{day.activityAdjustment.toLocaleString("de-DE")}</small>
+                    <small>{day.consumedCalories.toLocaleString("de-DE")} gegessen · +{day.activityAdjustment.toLocaleString("de-DE")}</small>
                   </span>
                 ))}
               </div>
@@ -4313,10 +4435,11 @@ function MacroTarget({ label, grams, calories, percent }: { label: string; grams
 }
 
 function AdaptiveMetric({ label, value, suffix }: { label: string; value: number; suffix: string }) {
+  const formattedValue = suffix === "x" ? value.toLocaleString("de-DE", { maximumFractionDigits: 3 }) : Math.round(value).toLocaleString("de-DE");
   return (
     <article className="adaptive-metric">
       <span>{label}</span>
-      <strong>{Math.round(value).toLocaleString("de-DE")} <small>{suffix}</small></strong>
+      <strong>{formattedValue} <small>{suffix}</small></strong>
     </article>
   );
 }

@@ -13,6 +13,16 @@ export const defaultAdaptiveGoalProfile = {
   garminEnabled: false,
   trainingTypes: [],
   manualOverrideCalories: 0,
+  maxDeficitPercent: 30,
+  useBodyWeightDeficitLimit: false,
+  enforceSexMinimumCalories: false,
+  workoutCreditFactors: {
+    strength: 0.4,
+    running: 0.7,
+    cycling: 0.7,
+    walking: 0.8,
+    default: 0.35,
+  },
 };
 
 const activityFactors = new Map([
@@ -24,9 +34,10 @@ const activityFactors = new Map([
 ]);
 
 const workoutCreditRanges = [
-  { match: /walk|hike|gehen|wandern/i, factor: 0.8 },
-  { match: /run|lauf|bike|cycling|rad|ride/i, factor: 0.7 },
-  { match: /strength|kraft|weight|weights|crossfit|training/i, factor: 0.45 },
+  { key: "walking", match: /walk|hike|gehen|wandern/i },
+  { key: "running", match: /run|lauf/i },
+  { key: "cycling", match: /bike|cycling|rad|ride/i },
+  { key: "strength", match: /strength|kraft|weight|weights|crossfit|training/i },
 ];
 
 export function normalizeAdaptiveGoalProfile(input = {}, fallback = defaultAdaptiveGoalProfile) {
@@ -48,6 +59,10 @@ export function normalizeAdaptiveGoalProfile(input = {}, fallback = defaultAdapt
     garminEnabled: Boolean(input.garminEnabled),
     trainingTypes,
     manualOverrideCalories: clampInteger(input.manualOverrideCalories, 0, 10000, fallback.manualOverrideCalories),
+    maxDeficitPercent: clampNumber(input.maxDeficitPercent, 5, 50, fallback.maxDeficitPercent ?? defaultAdaptiveGoalProfile.maxDeficitPercent),
+    useBodyWeightDeficitLimit: Boolean(input.useBodyWeightDeficitLimit),
+    enforceSexMinimumCalories: Boolean(input.enforceSexMinimumCalories),
+    workoutCreditFactors: normalizeWorkoutCreditFactors(input.workoutCreditFactors, fallback.workoutCreditFactors),
   };
 }
 
@@ -64,12 +79,12 @@ export function calculateTargetDeficit(profile) {
   return Math.round((profile.weeklyLossKg * kcalPerKgBodyWeight) / 7);
 }
 
-export function calculateActivityAdjustment({ summary, activities = [] } = {}) {
+export function calculateActivityAdjustment({ summary, activities = [], workoutCreditFactors } = {}) {
   const totalCalories = finiteNumber(summary?.totalKilocalories);
   const bmrCalories = finiteNumber(summary?.bmrKilocalories);
   const activeCalories = finiteNumber(summary?.activeKilocalories);
   const steps = finiteNumber(summary?.steps) ?? finiteNumber(summary?.totalSteps) ?? 0;
-  const workoutBonus = activities.reduce((sum, activity) => sum + calculateWorkoutCredit(activity), 0);
+  const workoutBonus = activities.reduce((sum, activity) => sum + calculateWorkoutCredit(activity, workoutCreditFactors), 0);
   const stepBonus = calculateStepBonus(steps);
   const cappedOwnCalculation = Math.min(650, Math.round(stepBonus + workoutBonus));
 
@@ -114,19 +129,25 @@ export function calculateActivityAdjustment({ summary, activities = [] } = {}) {
 export function calculateDailyGoal({ profile, adaptiveMaintenance, summary, activities = [] }) {
   const bmr = calculateBmr(profile);
   const initialTdee = calculateInitialTdee(profile);
-  const targetDeficit = calculateTargetDeficit(profile);
   const maintenance = Math.round(adaptiveMaintenance ?? initialTdee);
+  const requestedDeficit = calculateTargetDeficit(profile);
+  const safety = calculateSafetyLimits(profile, bmr, maintenance, requestedDeficit);
+  const targetDeficit = safety.deficit;
   const activity = profile.garminEnabled
-    ? calculateActivityAdjustment({ summary, activities })
-    : calculateActivityAdjustment({ activities: [] });
-  const basisTarget = Math.max(adaptiveMinimumCalorieGoal, maintenance - targetDeficit);
-  const recommendedToday = Math.max(adaptiveMinimumCalorieGoal, Math.round(basisTarget + activity.cappedBonus));
+    ? calculateActivityAdjustment({ summary, activities, workoutCreditFactors: profile.workoutCreditFactors })
+    : calculateActivityAdjustment({ activities: [], workoutCreditFactors: profile.workoutCreditFactors });
+  const basisTarget = Math.max(safety.minimumGoal, maintenance - targetDeficit);
+  const recommendedToday = Math.max(safety.minimumGoal, Math.round(basisTarget + activity.cappedBonus));
   const finalGoal = profile.manualOverrideCalories > 0 ? profile.manualOverrideCalories : recommendedToday;
 
   return {
     bmr,
     initialTdee,
     adaptiveMaintenance: maintenance,
+    maintenance,
+    activityCalories: Math.max(0, maintenance - bmr),
+    activityFactor: activityFactors.get(profile.activityLevel) ?? 1.375,
+    requestedDeficit,
     targetDeficit,
     targetLossKgPerWeek: profile.weeklyLossKg,
     basisTarget,
@@ -134,25 +155,61 @@ export function calculateDailyGoal({ profile, adaptiveMaintenance, summary, acti
     recommendedToday,
     finalGoal,
     hasManualOverride: profile.manualOverrideCalories > 0,
-    minimumCalorieGoal: adaptiveMinimumCalorieGoal,
+    minimumCalorieGoal: safety.minimumGoal,
+    safety,
+    breakdown: {
+      bmr,
+      activityCalories: Math.max(0, maintenance - bmr),
+      maintenance,
+      deficit: targetDeficit,
+      recommendedCalorieGoal: recommendedToday,
+      formula: "Grundumsatz + Aktivitaet = Erhaltungsbedarf - Defizit = Kalorienziel",
+    },
     activity,
   };
 }
 
-export function calculateAdaptiveMaintenance(dailyCalories, weightLogs, today) {
+export function calculateAdaptiveMaintenance(dailyCalories, weightLogs, today, options = {}) {
   const validDays = dailyCalories.filter((day) => day.calories > 0);
+  const completeDays = dailyCalories.filter((day) => Number(day.entryCount ?? 0) >= (options.minimumEntriesPerCompleteDay ?? 2));
+  const sortedWeights = [...weightLogs]
+    .filter((log) => Number.isFinite(log.weightKg))
+    .sort((left, right) => left.date.localeCompare(right.date));
+
   if (validDays.length < 14) {
     return {
       available: false,
       validDayCount: validDays.length,
       requiredDayCount: 14,
+      completeDayCount: completeDays.length,
+      weightLogCount: sortedWeights.length,
       message: "Noch zu wenige valide Tracking-Tage fuer automatische Anpassung.",
     };
   }
 
-  const sortedWeights = [...weightLogs]
-    .filter((log) => Number.isFinite(log.weightKg))
-    .sort((left, right) => left.date.localeCompare(right.date));
+  if (completeDays.length < 14) {
+    return {
+      available: false,
+      validDayCount: validDays.length,
+      requiredDayCount: 14,
+      completeDayCount: completeDays.length,
+      weightLogCount: sortedWeights.length,
+      message: "Food Tracking ist noch nicht vollstaendig genug fuer automatische Anpassung.",
+    };
+  }
+
+  if (sortedWeights.length < 10) {
+    return {
+      available: false,
+      validDayCount: validDays.length,
+      requiredDayCount: 14,
+      completeDayCount: completeDays.length,
+      weightLogCount: sortedWeights.length,
+      requiredWeightLogCount: 10,
+      message: "Mindestens 10 Gewichtseintraege sind fuer die adaptive Berechnung noetig.",
+    };
+  }
+
   const latestDate = today ?? validDays[validDays.length - 1]?.date;
   const startDate = validDays[0]?.date;
   const latestAverage = rollingWeightAverage(sortedWeights, latestDate);
@@ -164,6 +221,8 @@ export function calculateAdaptiveMaintenance(dailyCalories, weightLogs, today) {
       available: false,
       validDayCount: validDays.length,
       requiredDayCount: 14,
+      completeDayCount: completeDays.length,
+      weightLogCount: sortedWeights.length,
       message: "Gewichtsdaten sind lueckenhaft; automatische Anpassung pausiert.",
     };
   }
@@ -176,6 +235,8 @@ export function calculateAdaptiveMaintenance(dailyCalories, weightLogs, today) {
   return {
     available: true,
     validDayCount: validDays.length,
+    completeDayCount: completeDays.length,
+    weightLogCount: sortedWeights.length,
     observedDays,
     averageCalories,
     startAverage,
@@ -183,7 +244,7 @@ export function calculateAdaptiveMaintenance(dailyCalories, weightLogs, today) {
     weightDeltaKg: round(weightDeltaKg, 2),
     calorieDeltaPerDay,
     adaptiveMaintenance: Math.max(adaptiveMinimumCalorieGoal, averageCalories + calorieDeltaPerDay),
-    message: "Adaptiver Erhaltungsbedarf aus Tracking und 7-Tage-Gewichtstrend berechnet.",
+    message: "Adaptiver Erhaltungsbedarf aus vollstaendigem Tracking und 7-Tage-Gewichtstrend berechnet.",
   };
 }
 
@@ -228,13 +289,57 @@ export function calculateStepBonus(steps) {
   return Math.min(350, 200 + Math.round((steps - 10000) / 1000 * 35));
 }
 
-export function calculateWorkoutCredit(activity) {
+export function calculateWorkoutCredit(activity, workoutCreditFactors) {
   const calories = finiteNumber(activity?.calories) ?? 0;
   if (calories <= 0) return 0;
   const descriptor = `${activity?.activityType ?? ""} ${activity?.activityName ?? ""}`;
   const matchedRange = workoutCreditRanges.find((range) => range.match.test(descriptor));
-  const factor = matchedRange?.factor ?? 0.35;
+  const factors = normalizeWorkoutCreditFactors(workoutCreditFactors, defaultAdaptiveGoalProfile.workoutCreditFactors);
+  const factor = matchedRange ? factors[matchedRange.key] : factors.default;
   return Math.round(calories * factor);
+}
+
+export function calculateConfidenceScore({ profile, dailyCalories = [], weightLogs = [], adaptiveResult } = {}) {
+  const validDayCount = adaptiveResult?.validDayCount ?? dailyCalories.filter((day) => day.calories > 0).length;
+  const completeDayCount = adaptiveResult?.completeDayCount ?? dailyCalories.filter((day) => Number(day.entryCount ?? 0) >= 2).length;
+  const recentWeightLogs = weightLogs.filter((log) => Number.isFinite(log.weightKg)).length;
+  const factors = [
+    { key: "garmin", label: profile?.garminEnabled ? "Garmin verbunden" : "Garmin nicht verbunden", points: profile?.garminEnabled ? 20 : 0, max: 20 },
+    { key: "tracking-days", label: `${validDayCount} Trackingtage`, points: Math.min(25, Math.round(validDayCount / 14 * 25)), max: 25 },
+    { key: "complete-food", label: `${completeDayCount} vollstaendige Food-Tage`, points: Math.min(25, Math.round(completeDayCount / 14 * 25)), max: 25 },
+    { key: "weight-logs", label: `${recentWeightLogs} Gewichtseintraege`, points: Math.min(30, Math.round(recentWeightLogs / 10 * 30)), max: 30 },
+  ];
+  return {
+    score: Math.max(0, Math.min(100, factors.reduce((sum, factor) => sum + factor.points, 0))),
+    factors,
+    basis: factors.map((factor) => factor.label).join(", "),
+  };
+}
+
+export function buildCoachMode({ profile, dailyGoal, adaptiveResult, confidence }) {
+  const lossKgPerWeek = adaptiveResult?.available && adaptiveResult.observedDays > 0
+    ? Math.max(-2, Math.min(2, (-adaptiveResult.weightDeltaKg / adaptiveResult.observedDays) * 7))
+    : profile.weeklyLossKg;
+  const stepCalories = calculateStepBonus(4000);
+  const stagnating = adaptiveResult?.available && Math.abs(adaptiveResult.weightDeltaKg) < 0.2;
+  const suggestions = [
+    `4.000 zusaetzliche Schritte erlauben heute ca. ${stepCalories.toLocaleString("de-DE")} kcal mehr.`,
+  ];
+
+  if (stagnating) {
+    suggestions.push("Bei laengerer Stagnation: Kalorien leicht reduzieren, Aktivitaet erhoehen, Protein priorisieren und haeufiger wiegen.");
+  } else if ((confidence?.score ?? 0) < 70) {
+    suggestions.push("Mehr vollstaendige Food-Tage und regelmaessige Gewichtseintraege verbessern die naechste Wochenanpassung.");
+  } else {
+    suggestions.push("Aktuelles Ziel beibehalten und die naechste Wochenpruefung abwarten.");
+  }
+
+  return {
+    projectedLossKgPerWeek: round(lossKgPerWeek, 2),
+    message: `Mit deinem aktuellen Verhalten wirst du voraussichtlich ${round(lossKgPerWeek, 2).toLocaleString("de-DE")} kg pro Woche verlieren.`,
+    dailyTarget: dailyGoal.finalGoal,
+    suggestions,
+  };
 }
 
 export function rollingWeightAverage(weightLogs, date) {
@@ -276,4 +381,45 @@ function finiteNumber(value) {
 function round(value, digits) {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+function calculateSafetyLimits(profile, bmr, maintenance, requestedDeficit) {
+  const percentLimit = Math.round(maintenance * ((profile.maxDeficitPercent ?? 30) / 100));
+  const bodyWeightLimit = Math.round((profile.currentWeightKg * 0.01 * kcalPerKgBodyWeight) / 7);
+  const maxDeficit = profile.useBodyWeightDeficitLimit ? bodyWeightLimit : percentLimit;
+  const minimums = [adaptiveMinimumCalorieGoal, Math.ceil(bmr * 0.8)];
+  if (profile.enforceSexMinimumCalories) {
+    if (profile.sex === "male") minimums.push(1800);
+    if (profile.sex === "female") minimums.push(1400);
+  }
+  const minimumGoal = Math.max(...minimums);
+  const minimumAdjustedDeficit = Math.max(0, maintenance - minimumGoal);
+  const deficit = Math.min(requestedDeficit, maxDeficit, minimumAdjustedDeficit);
+  const wasAdjusted = deficit < requestedDeficit;
+
+  return {
+    requestedDeficit,
+    maxDeficit,
+    maxDeficitPercent: profile.maxDeficitPercent ?? 30,
+    bodyWeightDeficitLimit: bodyWeightLimit,
+    useBodyWeightDeficitLimit: profile.useBodyWeightDeficitLimit,
+    minimumGoal,
+    minimumGoalFromBmr: Math.ceil(bmr * 0.8),
+    enforceSexMinimumCalories: profile.enforceSexMinimumCalories,
+    deficit,
+    wasAdjusted,
+    notice: wasAdjusted
+      ? "Das gewuenschte Defizit ueberschreitet den empfohlenen Bereich. Das Kalorienziel wurde automatisch angepasst."
+      : "",
+  };
+}
+
+function normalizeWorkoutCreditFactors(input = {}, fallback = defaultAdaptiveGoalProfile.workoutCreditFactors) {
+  return {
+    strength: clampNumber(input?.strength, 0, 1, fallback?.strength ?? 0.4),
+    running: clampNumber(input?.running, 0, 1, fallback?.running ?? 0.7),
+    cycling: clampNumber(input?.cycling, 0, 1, fallback?.cycling ?? 0.7),
+    walking: clampNumber(input?.walking, 0, 1, fallback?.walking ?? 0.8),
+    default: clampNumber(input?.default, 0, 1, fallback?.default ?? 0.35),
+  };
 }
