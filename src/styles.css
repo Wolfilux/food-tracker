@@ -456,6 +456,128 @@ h1 {
   gap: 2px;
 }
 
+.adaptive-goal-panel {
+  gap: 18px;
+}
+
+.adaptive-goal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toggle-control {
+  display: flex;
+  min-height: 52px;
+  flex-direction: row;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(36, 64, 58, 0.06);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: var(--radius);
+  font-weight: 800;
+}
+
+.toggle-control input {
+  width: 18px;
+  height: 18px;
+}
+
+.adaptive-goal-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.adaptive-metric {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: rgba(238, 245, 240, 0.92);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: var(--radius);
+}
+
+.adaptive-metric span,
+.adaptive-week-budget strong,
+.adaptive-history-list span {
+  color: var(--color-muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.adaptive-metric strong {
+  font-size: 1.08rem;
+  line-height: 1.05;
+}
+
+.adaptive-feedback-card {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  background: #fff3df;
+  border: 1px solid rgba(213, 81, 42, 0.22);
+  border-radius: var(--radius);
+}
+
+.adaptive-feedback-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.adaptive-feedback-card strong {
+  font-size: 1.05rem;
+}
+
+.adaptive-feedback-card span,
+.adaptive-feedback-card small,
+.adaptive-history-list small {
+  color: var(--color-muted);
+  font-weight: 750;
+}
+
+.adaptive-feedback-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.adaptive-week-budget {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.adaptive-week-budget span,
+.adaptive-history-list div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  background: rgba(255, 250, 240, 0.78);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+}
+
+.adaptive-week-budget span {
+  text-align: center;
+  font-weight: 900;
+}
+
+.adaptive-week-budget small {
+  color: var(--color-muted);
+  font-weight: 800;
+}
+
+.adaptive-history-list {
+  display: grid;
+  gap: 8px;
+}
+
 .macro-target-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2541,6 +2663,20 @@ button:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .adaptive-goal-grid,
+  .adaptive-goal-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adaptive-week-budget {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .adaptive-feedback-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .calorie-timing-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2578,6 +2714,12 @@ button:focus-visible {
 
   h1 {
     font-size: clamp(2rem, 13vw, 3.1rem);
+  }
+
+  .adaptive-goal-grid,
+  .adaptive-goal-summary,
+  .adaptive-week-budget {
+    grid-template-columns: 1fr;
   }
 
   .intro {

@@ -6,6 +6,17 @@ import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
 import { seedFoods } from "./food-data.js";
 import { getGarminActivitiesForWeek, getGarminDailySummary } from "./garmin-service.js";
+import {
+  adaptiveMinimumCalorieGoal,
+  calculateAdaptiveMaintenance,
+  calculateDailyGoal,
+  calculateInitialTdee,
+  calculateTargetDeficit,
+  calculateWeeklyFeedback,
+  defaultAdaptiveGoalProfile,
+  normalizeAdaptiveGoalProfile,
+  rollingWeightAverage,
+} from "./adaptive-goals.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbPath = join(here, "..", "data", "food-tracker.sqlite");
@@ -461,6 +472,44 @@ export function createFoodApiMiddleware() {
       }
     }
 
+    if (url.pathname === "/api/adaptive-goal" && request.method === "GET") {
+      try {
+        sendJson(response, { goal: getAdaptiveGoalOverview(url.searchParams.get("date")) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/adaptive-goal/profile") {
+      if (request.method === "PUT") {
+        try {
+          sendJson(response, { profile: saveAdaptiveGoalProfile(await readJsonBody(request)) });
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
+    }
+
+    if (url.pathname === "/api/adaptive-goal/weights" && request.method === "POST") {
+      try {
+        sendJson(response, { weight: saveAdaptiveWeightLog(await readJsonBody(request)) }, 201);
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/adaptive-goal/recommendation" && request.method === "POST") {
+      try {
+        sendJson(response, { goal: handleAdaptiveGoalRecommendation(await readJsonBody(request)) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/export" && request.method === "GET") {
       sendJson(response, buildExportPayload());
       return;
@@ -845,6 +894,300 @@ export function saveGarminConfig(input) {
     );
 
   return getPublicGarminConfig();
+}
+
+export function getAdaptiveGoalOverview(dateInput = todayInBerlin()) {
+  const date = normalizeGarminDate(dateInput);
+  const profile = getAdaptiveGoalProfile();
+  const nutritionConfig = getNutritionConfig();
+  const weightLogs = listAdaptiveWeightLogs();
+  const latestWeight = weightLogs.filter((log) => log.date <= date).at(-1);
+  const profileForCalculation = normalizeAdaptiveGoalProfile({
+    ...profile,
+    currentWeightKg: latestWeight?.weightKg ?? profile.currentWeightKg,
+  }, profile);
+  const dailyCalories = listDailyCalories(addDays(date, -27), date);
+  const adaptiveMaintenance = calculateAdaptiveMaintenance(dailyCalories, weightLogs, date);
+  const weekStart = getWeekStart(date);
+  const garminActivities = getGarminCachedActivities(weekStart)?.activities ?? [];
+  const todayActivities = garminActivities.filter((activity) => activity.date === date);
+  const garminSummary = getGarminCachedSummary(date);
+  const calculation = calculateDailyGoal({
+    profile: profileForCalculation,
+    adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
+    summary: profileForCalculation.garminEnabled ? garminSummary : undefined,
+    activities: profileForCalculation.garminEnabled ? todayActivities : [],
+  });
+  const feedback = calculateWeeklyFeedback(profileForCalculation, adaptiveMaintenance);
+  const proposedCalorieGoal = Math.max(
+    adaptiveMinimumCalorieGoal,
+    Math.round((profileForCalculation.manualOverrideCalories || calculation.recommendedToday) + feedback.adjustmentCalories),
+  );
+
+  return {
+    date,
+    profile: profileForCalculation,
+    isConfigured: Boolean(profile.enabled),
+    bmr: calculation.bmr,
+    initialTdee: calculateInitialTdee(profileForCalculation),
+    targetDeficit: calculateTargetDeficit(profileForCalculation),
+    adaptiveMaintenance,
+    dailyGoal: {
+      ...calculation,
+      source: profileForCalculation.manualOverrideCalories > 0 ? "manual-override" : adaptiveMaintenance.available ? "adaptive" : "initial",
+    },
+    weekBudget: buildAdaptiveWeekBudget(weekStart, profileForCalculation, adaptiveMaintenance, garminActivities),
+    feedback: {
+      ...feedback,
+      proposedCalorieGoal,
+      oldCalorieGoal: profileForCalculation.manualOverrideCalories || calculation.recommendedToday,
+    },
+    weightTrend: {
+      todayAverage: rollingWeightAverage(weightLogs, date),
+      previousAverage: rollingWeightAverage(weightLogs, addDays(date, -7)),
+      logs: weightLogs.slice(-35),
+    },
+    history: listAdaptiveGoalHistory(),
+    compatibility: {
+      nutritionGoal: nutritionConfig.goal,
+      legacyConfiguredGoal: nutritionConfig.calorieGoal,
+      note: "Adaptive Ziele ersetzen die alte Tagesziel-Logik nur, wenn das Profil aktiviert ist.",
+    },
+  };
+}
+
+export function getAdaptiveGoalProfile() {
+  const row = getFoodDatabase()
+    .prepare([
+      "SELECT enabled, age, sex, height_cm, current_weight_kg, target_weight_kg, weekly_loss_kg,",
+      "  activity_level, garmin_enabled, training_types_json, manual_override_calories",
+      "FROM adaptive_goal_profile WHERE id = 'default'",
+    ].join("\n"))
+    .get();
+
+  if (!row) return defaultAdaptiveGoalProfile;
+
+  return normalizeAdaptiveGoalProfile({
+    enabled: row.enabled === 1,
+    age: row.age,
+    sex: row.sex,
+    heightCm: row.height_cm,
+    currentWeightKg: row.current_weight_kg,
+    targetWeightKg: row.target_weight_kg,
+    weeklyLossKg: row.weekly_loss_kg,
+    activityLevel: row.activity_level,
+    garminEnabled: row.garmin_enabled === 1,
+    trainingTypes: safeJsonArray(row.training_types_json),
+    manualOverrideCalories: row.manual_override_calories,
+  });
+}
+
+export function saveAdaptiveGoalProfile(input) {
+  const current = getAdaptiveGoalProfile();
+  const profile = normalizeAdaptiveGoalProfile(input, current);
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO adaptive_goal_profile (",
+      "  id, enabled, age, sex, height_cm, current_weight_kg, target_weight_kg, weekly_loss_kg,",
+      "  activity_level, garmin_enabled, training_types_json, manual_override_calories, updated_at",
+      ")",
+      "VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+      "ON CONFLICT(id) DO UPDATE SET",
+      "  enabled = excluded.enabled,",
+      "  age = excluded.age,",
+      "  sex = excluded.sex,",
+      "  height_cm = excluded.height_cm,",
+      "  current_weight_kg = excluded.current_weight_kg,",
+      "  target_weight_kg = excluded.target_weight_kg,",
+      "  weekly_loss_kg = excluded.weekly_loss_kg,",
+      "  activity_level = excluded.activity_level,",
+      "  garmin_enabled = excluded.garmin_enabled,",
+      "  training_types_json = excluded.training_types_json,",
+      "  manual_override_calories = excluded.manual_override_calories,",
+      "  updated_at = excluded.updated_at",
+    ].join("\n"))
+    .run(
+      profile.enabled ? 1 : 0,
+      profile.age,
+      profile.sex,
+      profile.heightCm,
+      profile.currentWeightKg,
+      profile.targetWeightKg,
+      profile.weeklyLossKg,
+      profile.activityLevel,
+      profile.garminEnabled ? 1 : 0,
+      JSON.stringify(profile.trainingTypes),
+      profile.manualOverrideCalories,
+    );
+
+  if (profile.currentWeightKg > 0) {
+    saveAdaptiveWeightLog({ date: todayInBerlin(), weightKg: profile.currentWeightKg });
+  }
+
+  return getAdaptiveGoalProfile();
+}
+
+export function saveAdaptiveWeightLog(input) {
+  const date = normalizeGarminDate(input?.date);
+  const weightKg = Number(input?.weightKg);
+  if (!Number.isFinite(weightKg) || weightKg < 35 || weightKg > 250) {
+    throw new Error("Invalid weight");
+  }
+
+  const now = new Date().toISOString();
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO adaptive_weight_logs (date, weight_kg, created_at, updated_at)",
+      "VALUES (?, ?, ?, ?)",
+      "ON CONFLICT(date) DO UPDATE SET",
+      "  weight_kg = excluded.weight_kg,",
+      "  updated_at = excluded.updated_at",
+    ].join("\n"))
+    .run(date, Math.round(weightKg * 10) / 10, now, now);
+
+  return { date, weightKg: Math.round(weightKg * 10) / 10 };
+}
+
+export function handleAdaptiveGoalRecommendation(input) {
+  const action = input?.action === "accept" ? "accept" : "reject";
+  const date = normalizeGarminDate(input?.date);
+  const overview = getAdaptiveGoalOverview(date);
+  const oldGoal = overview.feedback.oldCalorieGoal;
+  const newGoal = action === "accept" ? overview.feedback.proposedCalorieGoal : oldGoal;
+  const reason = String(input?.reason ?? overview.feedback.message ?? "Adaptive Empfehlung").slice(0, 500);
+
+  if (action === "accept") {
+    const profile = getAdaptiveGoalProfile();
+    saveAdaptiveGoalProfile({
+      ...profile,
+      manualOverrideCalories: newGoal,
+    });
+  }
+
+  insertAdaptiveGoalHistory({
+    action,
+    oldCalorieGoal: oldGoal,
+    newCalorieGoal: newGoal,
+    reason,
+    details: {
+      feedback: overview.feedback,
+      adaptiveMaintenance: overview.adaptiveMaintenance,
+    },
+  });
+
+  return getAdaptiveGoalOverview(date);
+}
+
+function buildAdaptiveWeekBudget(weekStart, profile, adaptiveMaintenance, garminActivities) {
+  const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const activitiesByDate = groupGarminActivitiesByDate(garminActivities);
+  const days = dates.map((date) => {
+    const calculation = calculateDailyGoal({
+      profile,
+      adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
+      summary: profile.garminEnabled ? getGarminCachedSummary(date) : undefined,
+      activities: profile.garminEnabled ? activitiesByDate.get(date) ?? [] : [],
+    });
+    return {
+      date,
+      basisTarget: calculation.basisTarget,
+      activityAdjustment: calculation.activityAdjustment,
+      finalGoal: calculation.finalGoal,
+    };
+  });
+
+  return {
+    weekStart,
+    weekEnd: addDays(weekStart, 6),
+    days,
+    totalCalories: days.reduce((sum, day) => sum + day.finalGoal, 0),
+  };
+}
+
+function listDailyCalories(startDate, endDate) {
+  const rows = getFoodDatabase()
+    .prepare([
+      "SELECT date(consumed_at) AS date,",
+      "  SUM(CASE",
+      "    WHEN quantity_unit = 'ml' AND COALESCE(alcohol_vol_percent, 0) > 0 THEN COALESCE(NULLIF(alcohol_calories, 0), quantity_value * (alcohol_vol_percent / 100.0) * ? * ?)",
+      "    WHEN quantity_unit = 'kg' THEN (quantity_value * 1000.0 / 100.0) * calories_per_100g",
+      "    ELSE (quantity_value / 100.0) * calories_per_100g",
+      "  END) AS calories,",
+      "  COUNT(*) AS entry_count",
+      "FROM entries",
+      "WHERE date(consumed_at) BETWEEN ? AND ?",
+      "GROUP BY date(consumed_at)",
+      "ORDER BY date ASC",
+    ].join("\n"))
+    .all(ethanolDensityGPerMl, ethanolCaloriesPerGram, startDate, endDate);
+
+  return rows.map((row) => ({
+    date: row.date,
+    calories: Math.round(Number(row.calories ?? 0)),
+    entryCount: Number(row.entry_count ?? 0),
+  }));
+}
+
+function listAdaptiveWeightLogs() {
+  return getFoodDatabase()
+    .prepare("SELECT date, weight_kg FROM adaptive_weight_logs ORDER BY date ASC")
+    .all()
+    .map((row) => ({ date: row.date, weightKg: Number(row.weight_kg) }));
+}
+
+function listAdaptiveGoalHistory() {
+  return getFoodDatabase()
+    .prepare([
+      "SELECT id, created_at, action, old_calorie_goal, new_calorie_goal, reason, details_json",
+      "FROM adaptive_goal_history",
+      "ORDER BY created_at DESC",
+      "LIMIT 30",
+    ].join("\n"))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      action: row.action,
+      oldCalorieGoal: row.old_calorie_goal,
+      newCalorieGoal: row.new_calorie_goal,
+      reason: row.reason,
+      details: safeJsonObject(row.details_json),
+    }));
+}
+
+function insertAdaptiveGoalHistory({ action, oldCalorieGoal, newCalorieGoal, reason, details }) {
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO adaptive_goal_history (id, created_at, action, old_calorie_goal, new_calorie_goal, reason, details_json)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ].join("\n"))
+    .run(
+      randomUUID(),
+      new Date().toISOString(),
+      action,
+      Math.round(oldCalorieGoal),
+      Math.round(newCalorieGoal),
+      reason,
+      JSON.stringify(details ?? {}),
+    );
+}
+
+function safeJsonArray(value) {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value ?? "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export function listEntries() {
@@ -1476,6 +1819,36 @@ function initializeDatabase(database) {
     "  activities_json TEXT NOT NULL,",
     "  fetched_at TEXT NOT NULL",
     ");",
+    "CREATE TABLE IF NOT EXISTS adaptive_goal_profile (",
+    "  id TEXT PRIMARY KEY,",
+    "  enabled INTEGER NOT NULL DEFAULT 0,",
+    "  age INTEGER NOT NULL,",
+    "  sex TEXT NOT NULL,",
+    "  height_cm REAL NOT NULL,",
+    "  current_weight_kg REAL NOT NULL,",
+    "  target_weight_kg REAL NOT NULL,",
+    "  weekly_loss_kg REAL NOT NULL,",
+    "  activity_level TEXT NOT NULL,",
+    "  garmin_enabled INTEGER NOT NULL DEFAULT 0,",
+    "  training_types_json TEXT NOT NULL DEFAULT '[]',",
+    "  manual_override_calories INTEGER NOT NULL DEFAULT 0,",
+    "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ");",
+    "CREATE TABLE IF NOT EXISTS adaptive_weight_logs (",
+    "  date TEXT PRIMARY KEY,",
+    "  weight_kg REAL NOT NULL,",
+    "  created_at TEXT NOT NULL,",
+    "  updated_at TEXT NOT NULL",
+    ");",
+    "CREATE TABLE IF NOT EXISTS adaptive_goal_history (",
+    "  id TEXT PRIMARY KEY,",
+    "  created_at TEXT NOT NULL,",
+    "  action TEXT NOT NULL,",
+    "  old_calorie_goal INTEGER NOT NULL,",
+    "  new_calorie_goal INTEGER NOT NULL,",
+    "  reason TEXT NOT NULL,",
+    "  details_json TEXT NOT NULL DEFAULT '{}'",
+    ");",
     "CREATE TABLE IF NOT EXISTS entries (",
     "  id TEXT PRIMARY KEY,",
     "  food_key TEXT,",
@@ -1540,8 +1913,10 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "garmin_config", "credential_iv", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "credential_tag", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(database, "garmin_config", "auto_sync_minutes", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "adaptive_goal_profile", "manual_override_calories", "INTEGER NOT NULL DEFAULT 0");
   database.exec("CREATE INDEX IF NOT EXISTS idx_weekly_ai_analyses_week_start ON weekly_ai_analyses(week_start DESC);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_adaptive_goal_history_created_at ON adaptive_goal_history(created_at DESC);");
   seedFoodRecords(database);
 }
 

@@ -188,6 +188,8 @@ type GarminDailySummary = {
   totalKilocalories?: number;
   activeKilocalories?: number;
   bmrKilocalories?: number;
+  steps?: number;
+  totalSteps?: number;
   consumedKilocalories?: number;
   remainingKilocalories?: number;
   error?: string;
@@ -216,6 +218,93 @@ type GarminActivityWeek = {
   activities: GarminActivity[];
   error?: string;
   fetchedAt?: string;
+};
+
+type AdaptiveGoalProfile = {
+  enabled: boolean;
+  age: number;
+  sex: "male" | "female" | "other";
+  heightCm: number;
+  currentWeightKg: number;
+  targetWeightKg: number;
+  weeklyLossKg: number;
+  activityLevel: "sedentary" | "light" | "moderate" | "active" | "very-active";
+  garminEnabled: boolean;
+  trainingTypes: string[];
+  manualOverrideCalories: number;
+};
+
+type AdaptiveGoalOverview = {
+  date: string;
+  profile: AdaptiveGoalProfile;
+  isConfigured: boolean;
+  bmr: number;
+  initialTdee: number;
+  targetDeficit: number;
+  adaptiveMaintenance: {
+    available: boolean;
+    validDayCount: number;
+    requiredDayCount?: number;
+    observedDays?: number;
+    averageCalories?: number;
+    weightDeltaKg?: number;
+    calorieDeltaPerDay?: number;
+    adaptiveMaintenance?: number;
+    message: string;
+    startAverage?: { date: string; averageKg: number; sampleCount: number };
+    latestAverage?: { date: string; averageKg: number; sampleCount: number };
+  };
+  dailyGoal: {
+    bmr: number;
+    initialTdee: number;
+    adaptiveMaintenance: number;
+    targetDeficit: number;
+    targetLossKgPerWeek: number;
+    basisTarget: number;
+    activityAdjustment: number;
+    recommendedToday: number;
+    finalGoal: number;
+    hasManualOverride: boolean;
+    minimumCalorieGoal: number;
+    source: string;
+    activity: {
+      strategy: string;
+      steps: number;
+      stepBonus: number;
+      workoutBonus: number;
+      rawBonus: number;
+      cappedBonus: number;
+      cap: number;
+      note: string;
+    };
+  };
+  weekBudget: {
+    weekStart: string;
+    weekEnd: string;
+    days: { date: string; basisTarget: number; activityAdjustment: number; finalGoal: number }[];
+    totalCalories: number;
+  };
+  feedback: {
+    status: "insufficient-data" | "on-track" | "too-slow" | "too-fast";
+    adjustmentCalories: number;
+    observedLossKgPerWeek?: number;
+    proposedCalorieGoal: number;
+    oldCalorieGoal: number;
+    message: string;
+  };
+  weightTrend: {
+    todayAverage: { date: string; averageKg: number; sampleCount: number } | null;
+    previousAverage: { date: string; averageKg: number; sampleCount: number } | null;
+    logs: { date: string; weightKg: number }[];
+  };
+  history: {
+    id: string;
+    createdAt: string;
+    action: string;
+    oldCalorieGoal: number;
+    newCalorieGoal: number;
+    reason: string;
+  }[];
 };
 
 const defaultGarminActivityWeek = (weekStart = selectedFallbackWeekStart()): GarminActivityWeek => ({
@@ -362,6 +451,19 @@ const defaultNutritionConfig: NutritionConfig = {
   goal: "maintenance",
 };
 const minimumCalorieGoal = 800;
+const defaultAdaptiveGoalProfile: AdaptiveGoalProfile = {
+  enabled: false,
+  age: 35,
+  sex: "male",
+  heightCm: 180,
+  currentWeightKg: 90,
+  targetWeightKg: 82,
+  weeklyLossKg: 0.5,
+  activityLevel: "light",
+  garminEnabled: false,
+  trainingTypes: [],
+  manualOverrideCalories: 0,
+};
 const mealFavoritesStorageKey = "food-tracker:meal-favorites";
 const mealTemplateFavoritesStorageKey = "food-tracker-template-favorites";
 
@@ -425,6 +527,14 @@ const garminAutoSyncOptions = [
   { value: 30, label: "Alle 30 Minuten" },
   { value: 45, label: "Alle 45 Minuten" },
   { value: 60, label: "Alle 60 Minuten" },
+] as const;
+
+const adaptiveActivityLevelOptions = [
+  { value: "sedentary", label: "Sitzend" },
+  { value: "light", label: "Leicht aktiv" },
+  { value: "moderate", label: "Moderat" },
+  { value: "active", label: "Aktiv" },
+  { value: "very-active", label: "Sehr aktiv" },
 ] as const;
 
 const macroPresets: Record<NutritionGoal, MacroPreset> = {
@@ -765,6 +875,12 @@ function App() {
     authValue: "",
     autoSyncMinutes: defaultGarminConfig.autoSyncMinutes,
   });
+  const [adaptiveGoal, setAdaptiveGoal] = useState<AdaptiveGoalOverview | null>(null);
+  const [adaptiveDraft, setAdaptiveDraft] = useState<AdaptiveGoalProfile>(defaultAdaptiveGoalProfile);
+  const [adaptiveWeightDraft, setAdaptiveWeightDraft] = useState(String(defaultAdaptiveGoalProfile.currentWeightKg));
+  const [adaptiveTrainingDraft, setAdaptiveTrainingDraft] = useState("");
+  const [adaptiveGoalState, setAdaptiveGoalState] = useState<"idle" | "loading" | "saving" | "saved" | "error">("idle");
+  const [adaptiveGoalError, setAdaptiveGoalError] = useState("");
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [nutritionConfigLoadError, setNutritionConfigLoadError] = useState("");
   const [nutritionConfigAutoSaveEnabled, setNutritionConfigAutoSaveEnabled] = useState(false);
@@ -900,7 +1016,10 @@ function App() {
   const usageMap = useMemo(() => buildUsageMap(entries), [entries]);
   const selectedPreset = macroPresets[nutritionConfig.goal];
   const hasGarminCredentials = Boolean(garminConfig.username && garminConfig.hasCredential);
-  const calorieGoalDetails = buildCalorieGoalDetails(garminSummary, nutritionConfig);
+  const adaptiveDailyGoal = adaptiveGoal?.profile.enabled ? adaptiveGoal.dailyGoal : null;
+  const calorieGoalDetails = adaptiveDailyGoal
+    ? buildAdaptiveCalorieGoalDetails(adaptiveDailyGoal)
+    : buildCalorieGoalDetails(garminSummary, nutritionConfig);
   const effectiveCalorieGoal = calorieGoalDetails.effectiveGoal;
   const macroTargets = useMemo(
     () => calculateMacroTargets(effectiveCalorieGoal, selectedPreset),
@@ -1025,6 +1144,7 @@ function App() {
         analysisAiConfigResult,
         weeklyEmailConfigResult,
         garminConfigResult,
+        adaptiveGoalResult,
         mealsResult,
         mealFavoriteKeysResult,
       ] = await Promise.allSettled([
@@ -1034,6 +1154,7 @@ function App() {
         fetchAnalysisAiConfig(),
         fetchWeeklyEmailConfig(),
         fetchGarminConfig(),
+        fetchAdaptiveGoal(todayLocal()),
         fetchMealTemplates(),
         fetchMealFavoriteKeys(),
       ]);
@@ -1067,6 +1188,12 @@ function App() {
         setGarminConfig(garminConfigResult.value);
         setGarminDraft({ username: garminConfigResult.value.username, authValue: "", autoSyncMinutes: garminConfigResult.value.autoSyncMinutes });
       }
+      if (adaptiveGoalResult.status === "fulfilled") {
+        setAdaptiveGoal(adaptiveGoalResult.value);
+        setAdaptiveDraft(adaptiveGoalResult.value.profile);
+        setAdaptiveWeightDraft(String(adaptiveGoalResult.value.profile.currentWeightKg));
+        setAdaptiveTrainingDraft(adaptiveGoalResult.value.profile.trainingTypes.join(", "));
+      }
       if (configResult.status === "fulfilled") {
         applyNutritionConfig(configResult.value, true);
         setNutritionConfigLoadError("");
@@ -1083,6 +1210,30 @@ function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isConfigLoaded) return;
+    let isMounted = true;
+    void fetchAdaptiveGoal(selectedDate)
+      .then((goal) => {
+        if (!isMounted) return;
+        setAdaptiveGoal(goal);
+        setAdaptiveDraft(goal.profile);
+        setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
+        setAdaptiveTrainingDraft(goal.profile.trainingTypes.join(", "));
+        setAdaptiveGoalState("idle");
+        setAdaptiveGoalError("");
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        setAdaptiveGoalState("error");
+        setAdaptiveGoalError(error instanceof Error ? error.message : "Adaptive Ziele konnten nicht geladen werden.");
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isConfigLoaded, selectedDate]);
 
   useEffect(() => {
     if (!isConfigLoaded || !nutritionConfigAutoSaveEnabled) return;
@@ -1499,6 +1650,46 @@ function App() {
     } catch (error) {
       setGarminConfigError(error instanceof Error ? error.message : "Garmin-Konfiguration konnte nicht gespeichert werden.");
       setGarminConfigState("error");
+    }
+  }
+
+  async function saveAdaptiveGoalSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAdaptiveGoalError("");
+    setAdaptiveGoalState("saving");
+    try {
+      const profile = await saveAdaptiveGoalProfile({
+        ...adaptiveDraft,
+        trainingTypes: adaptiveTrainingDraft.split(",").map((item) => item.trim()).filter(Boolean),
+      });
+      const weightValue = Number(adaptiveWeightDraft.replace(",", "."));
+      if (Number.isFinite(weightValue) && weightValue > 0) {
+        await saveAdaptiveWeight(selectedDate, weightValue);
+      }
+      const goal = await fetchAdaptiveGoal(selectedDate);
+      setAdaptiveDraft(profile);
+      setAdaptiveGoal(goal);
+      setAdaptiveGoalState("saved");
+    } catch (error) {
+      setAdaptiveGoalError(error instanceof Error ? error.message : "Adaptive Ziele konnten nicht gespeichert werden.");
+      setAdaptiveGoalState("error");
+    }
+  }
+
+  async function applyAdaptiveRecommendation(action: "accept" | "reject") {
+    if (!adaptiveGoal) return;
+    setAdaptiveGoalError("");
+    setAdaptiveGoalState("saving");
+    try {
+      const goal = await updateAdaptiveRecommendation(action, selectedDate, adaptiveGoal.feedback.message);
+      setAdaptiveGoal(goal);
+      setAdaptiveDraft(goal.profile);
+      setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
+      setAdaptiveTrainingDraft(goal.profile.trainingTypes.join(", "));
+      setAdaptiveGoalState("saved");
+    } catch (error) {
+      setAdaptiveGoalError(error instanceof Error ? error.message : "Empfehlung konnte nicht gespeichert werden.");
+      setAdaptiveGoalState("error");
     }
   }
 
@@ -2187,7 +2378,7 @@ function App() {
         <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
           <div className="goal-card__top">
             <Target size={22} aria-hidden="true" />
-            <span>{calorieGoalDetails.usesGarminActiveCalories ? "Ziel + Garmin aktiv" : "Tagesziel"}</span>
+            <span>{adaptiveDailyGoal ? "Adaptives Tagesziel" : calorieGoalDetails.usesGarminActiveCalories ? "Ziel + Garmin aktiv" : "Tagesziel"}</span>
           </div>
           <div className={dailyRemainingCalories < 0 ? "goal-card__remaining goal-card__remaining--over" : "goal-card__remaining"}>
             <span>Heute noch offen</span>
@@ -2209,10 +2400,21 @@ function App() {
               : `${Math.abs(heroCalorieBudget.remainingCalories).toLocaleString("de-DE")} kcal drueber`}
           </small>
           <small className="goal-card__note">
-            Basis {calorieGoalDetails.baseGoal.toLocaleString("de-DE")} kcal
-            {calorieGoalDetails.usesGarminActiveCalories ? ` · Aktiv +${calorieGoalDetails.activeCalories.toLocaleString("de-DE")} kcal` : ""}
-            {nutritionConfig.calorieGoalOffset !== 0 ? ` · ${formatCalorieGoalOffset(nutritionConfig.calorieGoalOffset)}` : " · kein Offset"}
+            {adaptiveDailyGoal
+              ? `Basis ${adaptiveDailyGoal.basisTarget.toLocaleString("de-DE")} kcal · Aktiv +${adaptiveDailyGoal.activityAdjustment.toLocaleString("de-DE")} kcal · Defizit ${adaptiveDailyGoal.targetDeficit.toLocaleString("de-DE")} kcal`
+              : `Basis ${calorieGoalDetails.baseGoal.toLocaleString("de-DE")} kcal${calorieGoalDetails.usesGarminActiveCalories ? ` · Aktiv +${calorieGoalDetails.activeCalories.toLocaleString("de-DE")} kcal` : ""}${nutritionConfig.calorieGoalOffset !== 0 ? ` · ${formatCalorieGoalOffset(nutritionConfig.calorieGoalOffset)}` : " · kein Offset"}`}
           </small>
+          {adaptiveDailyGoal && (
+            <small className="goal-card__note">
+              Erhalt {adaptiveDailyGoal.adaptiveMaintenance.toLocaleString("de-DE")} kcal · empfohlen {adaptiveDailyGoal.recommendedToday.toLocaleString("de-DE")} kcal
+              {adaptiveDailyGoal.hasManualOverride ? ` · manuell ${adaptiveDailyGoal.finalGoal.toLocaleString("de-DE")} kcal` : ""}
+            </small>
+          )}
+          {adaptiveDailyGoal && (
+            <small className="goal-card__note">
+              {activityStrategyLabel(adaptiveDailyGoal.activity.strategy)} · Bonus gedeckelt bei {adaptiveDailyGoal.activity.cap.toLocaleString("de-DE")} kcal
+            </small>
+          )}
           {garminSummary?.configured && (
             <small className={garminSummary.error ? "goal-card__note goal-card__note--error" : "goal-card__note"}>
               {garminSummary.error
@@ -2392,6 +2594,137 @@ function App() {
 
       {activeView === "settings" && (
         <section className="settings-page" aria-label="Nutrition configuration page">
+          <form className="config-panel config-panel--page adaptive-goal-panel" aria-label="Adaptive calorie goals" onSubmit={saveAdaptiveGoalSettings}>
+            <div className="config-copy">
+              <p className="eyebrow eyebrow--dark">
+                <Target size={16} aria-hidden="true" />
+                Adaptive Ziele
+              </p>
+              <h2>Kalorienziel</h2>
+              <p>{adaptiveGoal?.adaptiveMaintenance.message ?? "Profil speichern, um BMR, TDEE und Tagesziel berechnen zu lassen."}</p>
+            </div>
+            <div className="config-controls adaptive-goal-grid">
+              <label className="toggle-control">
+                <input
+                  type="checkbox"
+                  checked={adaptiveDraft.enabled}
+                  onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, enabled: event.target.checked })}
+                />
+                <span>Adaptive Ziele aktiv</span>
+              </label>
+              <NumberInput label="Alter" min={13} step={1} value={adaptiveDraft.age} onChange={(age) => setAdaptiveDraft({ ...adaptiveDraft, age })} />
+              <label>
+                Geschlecht
+                <select value={adaptiveDraft.sex} onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, sex: event.target.value as AdaptiveGoalProfile["sex"] })}>
+                  <option value="male">Maennlich</option>
+                  <option value="female">Weiblich</option>
+                  <option value="other">Divers</option>
+                </select>
+              </label>
+              <NumberInput label="Groesse cm" min={120} step={1} value={adaptiveDraft.heightCm} onChange={(heightCm) => setAdaptiveDraft({ ...adaptiveDraft, heightCm })} />
+              <NumberInput label="Aktuelles Gewicht kg" min={35} step={0.1} value={adaptiveDraft.currentWeightKg} onChange={(currentWeightKg) => {
+                setAdaptiveDraft({ ...adaptiveDraft, currentWeightKg });
+                setAdaptiveWeightDraft(String(currentWeightKg));
+              }} />
+              <NumberInput label="Zielgewicht kg" min={35} step={0.1} value={adaptiveDraft.targetWeightKg} onChange={(targetWeightKg) => setAdaptiveDraft({ ...adaptiveDraft, targetWeightKg })} />
+              <NumberInput label="Abnahme kg/Woche" min={0.1} step={0.1} value={adaptiveDraft.weeklyLossKg} onChange={(weeklyLossKg) => setAdaptiveDraft({ ...adaptiveDraft, weeklyLossKg })} />
+              <label>
+                Aktivitaetsniveau
+                <select value={adaptiveDraft.activityLevel} onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, activityLevel: event.target.value as AdaptiveGoalProfile["activityLevel"] })}>
+                  {adaptiveActivityLevelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="toggle-control">
+                <input
+                  type="checkbox"
+                  checked={adaptiveDraft.garminEnabled}
+                  onChange={(event) => setAdaptiveDraft({ ...adaptiveDraft, garminEnabled: event.target.checked })}
+                />
+                <span>Garmin fuer Aktivitaet nutzen</span>
+              </label>
+              <label>
+                Trainingstypen
+                <input
+                  value={adaptiveTrainingDraft}
+                  onChange={(event) => setAdaptiveTrainingDraft(event.target.value)}
+                  placeholder="Laufen, Rad, Kraft"
+                />
+              </label>
+              <label>
+                Gewicht heute
+                <input
+                  inputMode="decimal"
+                  value={adaptiveWeightDraft}
+                  onChange={(event) => setAdaptiveWeightDraft(event.target.value)}
+                />
+              </label>
+              <NumberInput label="Manuelles Ziel" min={0} step={50} value={adaptiveDraft.manualOverrideCalories} onChange={(manualOverrideCalories) => setAdaptiveDraft({ ...adaptiveDraft, manualOverrideCalories })} />
+              <button className="primary-button" type="submit" disabled={adaptiveGoalState === "saving"}>
+                {adaptiveGoalState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
+                Adaptiv speichern
+              </button>
+            </div>
+            {adaptiveGoal && (
+              <div className="adaptive-goal-summary">
+                <AdaptiveMetric label="BMR" value={adaptiveGoal.bmr} suffix="kcal" />
+                <AdaptiveMetric label="TDEE initial" value={adaptiveGoal.initialTdee} suffix="kcal" />
+                <AdaptiveMetric label="Defizit" value={adaptiveGoal.targetDeficit} suffix="kcal" />
+                <AdaptiveMetric label="Heute" value={adaptiveGoal.dailyGoal.finalGoal} suffix="kcal" />
+                <AdaptiveMetric label="Aktivitaet" value={adaptiveGoal.dailyGoal.activityAdjustment} suffix="kcal" />
+                <AdaptiveMetric label="Wochenbudget" value={adaptiveGoal.weekBudget.totalCalories} suffix="kcal" />
+              </div>
+            )}
+            {adaptiveGoal && (
+              <div className="adaptive-feedback-card">
+                <div>
+                  <strong>{adaptiveFeedbackLabel(adaptiveGoal.feedback.status)}</strong>
+                  <span>{adaptiveGoal.feedback.message}</span>
+                  {adaptiveGoal.feedback.observedLossKgPerWeek !== undefined && (
+                    <small>Trend {adaptiveGoal.feedback.observedLossKgPerWeek.toLocaleString("de-DE")} kg/Woche · Vorschlag {formatSignedNumber(adaptiveGoal.feedback.adjustmentCalories)} kcal</small>
+                  )}
+                  {adaptiveGoal.dailyGoal.hasManualOverride && <small>Manueller Override aktiv; adaptive Empfehlungen koennen eingeschraenkt sein.</small>}
+                </div>
+                <div className="adaptive-feedback-card__actions">
+                  <button className="secondary-button secondary-button--dark" type="button" disabled={adaptiveGoalState === "saving" || adaptiveGoal.feedback.status === "insufficient-data"} onClick={() => void applyAdaptiveRecommendation("accept")}>
+                    <Check size={17} aria-hidden="true" />
+                    Akzeptieren
+                  </button>
+                  <button className="secondary-button" type="button" disabled={adaptiveGoalState === "saving"} onClick={() => void applyAdaptiveRecommendation("reject")}>
+                    <X size={17} aria-hidden="true" />
+                    Ablehnen
+                  </button>
+                </div>
+              </div>
+            )}
+            {adaptiveGoal && (
+              <div className="adaptive-week-budget" aria-label="Wochenbudget adaptive Ziele">
+                {adaptiveGoal.weekBudget.days.map((day) => (
+                  <span key={day.date}>
+                    <strong>{formatWeekdayShort(day.date)}</strong>
+                    {day.finalGoal.toLocaleString("de-DE")}
+                    <small>+{day.activityAdjustment.toLocaleString("de-DE")}</small>
+                  </span>
+                ))}
+              </div>
+            )}
+            {adaptiveGoal && adaptiveGoal.history.length > 0 && (
+              <div className="adaptive-history-list" aria-label="Zielhistorie">
+                {adaptiveGoal.history.slice(0, 5).map((item) => (
+                  <div key={item.id}>
+                    <span>{formatTime(item.createdAt)} · {item.action === "accept" ? "akzeptiert" : "abgelehnt"}</span>
+                    <strong>{item.oldCalorieGoal.toLocaleString("de-DE")} {"->"} {item.newCalorieGoal.toLocaleString("de-DE")} kcal</strong>
+                    <small>{item.reason}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className={adaptiveGoalState === "error" ? "config-status config-status--error" : "config-status"}>
+              {adaptiveGoalState === "saved" && "Adaptive Zielwerte gespeichert."}
+              {adaptiveGoalState === "loading" && "Adaptive Zielwerte werden geladen."}
+              {adaptiveGoalState === "error" && (adaptiveGoalError || "Adaptive Zielwerte konnten nicht geladen werden.")}
+              {adaptiveGoalState === "idle" && "Mindestziel wird automatisch respektiert; Anpassungen brauchen deine Freigabe."}
+            </p>
+          </form>
           <section className="config-panel config-panel--page" aria-label="Nutrition configuration">
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
@@ -3979,6 +4312,15 @@ function MacroTarget({ label, grams, calories, percent }: { label: string; grams
   );
 }
 
+function AdaptiveMetric({ label, value, suffix }: { label: string; value: number; suffix: string }) {
+  return (
+    <article className="adaptive-metric">
+      <span>{label}</span>
+      <strong>{Math.round(value).toLocaleString("de-DE")} <small>{suffix}</small></strong>
+    </article>
+  );
+}
+
 function AnalysisItems({ items }: { items: FoodImageAnalysisItem[] }) {
   if (items.length < 2) return null;
   return (
@@ -4274,8 +4616,30 @@ function buildCalorieGoalDetails(garminSummary: GarminDailySummary | null | unde
   };
 }
 
+function buildAdaptiveCalorieGoalDetails(dailyGoal: AdaptiveGoalOverview["dailyGoal"]) {
+  return {
+    activeCalories: dailyGoal.activityAdjustment,
+    baseGoal: dailyGoal.basisTarget,
+    effectiveGoal: dailyGoal.finalGoal,
+    usesGarminActiveCalories: dailyGoal.activityAdjustment > 0,
+  };
+}
+
 function formatCalorieGoalOffset(offset: number) {
   return offset > 0 ? `+${offset.toLocaleString("de-DE")} kcal Überschuss` : `${offset.toLocaleString("de-DE")} kcal Defizit`;
+}
+
+function activityStrategyLabel(strategy: string) {
+  if (strategy === "garmin-total-activity") return "Garmin Gesamtaktivitaet";
+  if (strategy === "garmin-active-calories") return "Garmin aktive Kalorien";
+  return "Schritte + Training anteilig";
+}
+
+function adaptiveFeedbackLabel(status: AdaptiveGoalOverview["feedback"]["status"]) {
+  if (status === "too-slow") return "Zu langsam";
+  if (status === "too-fast") return "Zu schnell";
+  if (status === "on-track") return "Passt";
+  return "Daten unzureichend";
 }
 
 function summarizeEntries(entries: FoodEntry[]): DayTotals {
@@ -4496,6 +4860,46 @@ async function saveGarminConfig(config: GarminConfigDraft): Promise<GarminConfig
   const data = (await response.json()) as Partial<GarminConfig> & { error?: string };
   if (!response.ok) throw new Error(data.error ?? "Garmin-Konfiguration konnte nicht gespeichert werden.");
   return normalizeGarminConfig(data);
+}
+
+async function fetchAdaptiveGoal(date: string): Promise<AdaptiveGoalOverview> {
+  const params = new URLSearchParams({ date });
+  const response = await fetch(`/api/adaptive-goal?${params.toString()}`);
+  const data = (await response.json()) as { goal?: AdaptiveGoalOverview; error?: string };
+  if (!response.ok || !data.goal) throw new Error(data.error ?? "Adaptive Ziele konnten nicht geladen werden.");
+  return data.goal;
+}
+
+async function saveAdaptiveGoalProfile(profile: AdaptiveGoalProfile): Promise<AdaptiveGoalProfile> {
+  const response = await fetch("/api/adaptive-goal/profile", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  const data = (await response.json()) as { profile?: AdaptiveGoalProfile; error?: string };
+  if (!response.ok || !data.profile) throw new Error(data.error ?? "Adaptives Profil konnte nicht gespeichert werden.");
+  return data.profile;
+}
+
+async function saveAdaptiveWeight(date: string, weightKg: number) {
+  const response = await fetch("/api/adaptive-goal/weights", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ date, weightKg }),
+  });
+  const data = (await response.json()) as { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Gewicht konnte nicht gespeichert werden.");
+}
+
+async function updateAdaptiveRecommendation(action: "accept" | "reject", date: string, reason: string): Promise<AdaptiveGoalOverview> {
+  const response = await fetch("/api/adaptive-goal/recommendation", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action, date, reason }),
+  });
+  const data = (await response.json()) as { goal?: AdaptiveGoalOverview; error?: string };
+  if (!response.ok || !data.goal) throw new Error(data.error ?? "Empfehlung konnte nicht gespeichert werden.");
+  return data.goal;
 }
 
 async function fetchAiModels(provider: string, capability: "photo" | "analysis" = "photo"): Promise<string[]> {
@@ -5072,6 +5476,8 @@ function normalizeGarminDailySummary(summary: Partial<GarminDailySummary>): Garm
     totalKilocalories: optionalNumber(summary.totalKilocalories),
     activeKilocalories: optionalNumber(summary.activeKilocalories),
     bmrKilocalories: optionalNumber(summary.bmrKilocalories),
+    steps: optionalNumber(summary.steps),
+    totalSteps: optionalNumber(summary.totalSteps),
     consumedKilocalories: optionalNumber(summary.consumedKilocalories),
     remainingKilocalories: optionalNumber(summary.remainingKilocalories),
     error: summary.error ? String(summary.error) : undefined,

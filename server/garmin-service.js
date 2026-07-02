@@ -148,6 +148,8 @@ function normalizeGarminSummary(summary, date) {
     totalKilocalories,
     activeKilocalories,
     bmrKilocalories,
+    steps: finiteNumber(summary?.totalSteps) ?? finiteNumber(summary?.steps),
+    totalSteps: finiteNumber(summary?.totalSteps) ?? finiteNumber(summary?.steps),
     consumedKilocalories: finiteNumber(summary?.consumedKilocalories),
     remainingKilocalories: finiteNumber(summary?.remainingKilocalories),
     fetchedAt: new Date().toISOString(),
