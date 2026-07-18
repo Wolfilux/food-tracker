@@ -5,6 +5,14 @@ export type HeaderCalorieMetric = {
   value: number;
 };
 
+export type HeaderCalorieProgress = {
+  consumedCalories: number;
+  goalCalories: number;
+  remainingCalories: number;
+  progressPercent: number;
+  isOverGoal: boolean;
+};
+
 export function buildHeaderCalorieMetrics({
   baseCalories,
   activeCalories,
@@ -36,4 +44,21 @@ export function formatHeaderDate(value: string) {
 export function formatHeaderCalorieValue(metric: HeaderCalorieMetric) {
   const prefix = metric.label === "Aktiv" && metric.value > 0 ? "+" : "";
   return `${prefix}${metric.value.toLocaleString("de-DE")} kcal`;
+}
+
+export function buildHeaderCalorieProgress(consumedCalories: number, goalCalories: number): HeaderCalorieProgress {
+  const consumed = Math.round(consumedCalories);
+  const goal = Math.round(goalCalories);
+  const remaining = goal - consumed;
+  const progressPercent = goal > 0
+    ? Math.max(0, Math.min(100, Math.round((consumed / goal) * 100)))
+    : 0;
+
+  return {
+    consumedCalories: consumed,
+    goalCalories: goal,
+    remainingCalories: remaining,
+    progressPercent,
+    isOverGoal: remaining < 0,
+  };
 }

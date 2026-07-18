@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { formatDateTime, formatTime, nowLocal, todayLocal } from "./time";
 import { classifySwipeIntent, dayOffsetForSwipe, type SwipeIntent } from "./day-swipe";
-import { buildHeaderCalorieMetrics, formatHeaderCalorieValue, formatHeaderDate } from "./header-summary";
+import { buildHeaderCalorieMetrics, buildHeaderCalorieProgress, formatHeaderCalorieValue, formatHeaderDate } from "./header-summary";
 
 type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
@@ -1135,6 +1135,7 @@ function App() {
     deficitCalories: adaptiveDailyGoal ? -adaptiveDailyGoal.targetDeficit : nutritionConfig.calorieGoalOffset,
     totalCalories: effectiveCalorieGoal,
   });
+  const headerCalorieProgress = buildHeaderCalorieProgress(totals.calories, effectiveCalorieGoal);
   const weekAnalysis = useMemo(
     () => buildWeekAnalysis(weekDates, entries, nutritionConfig, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}, weekGarminActivities[selectedWeekStart]?.activities ?? []),
     [entries, hasGarminCredentials, nutritionConfig, selectedPreset, selectedWeekStart, weekDates, weekGarminActivities, weekGarminSummaries],
@@ -2558,7 +2559,7 @@ function App() {
             <time dateTime={selectedDate}>{formatHeaderDate(selectedDate)}</time>
           </div>
         </div>
-        <div className="goal-card" aria-label="Kalorienziel: Basis, Aktiv, Defizit und Gesamt">
+        <div className="goal-card" aria-label="Kalorienziel und Tagesfortschritt">
           <div className="goal-card__metrics">
             {headerCalorieMetrics.map((metric) => (
               <div className={metric.label === "Gesamt" ? "goal-card__metric goal-card__metric--total" : "goal-card__metric"} key={metric.label}>
@@ -2566,6 +2567,29 @@ function App() {
                 <strong>{formatHeaderCalorieValue(metric)}</strong>
               </div>
             ))}
+          </div>
+          <div className={headerCalorieProgress.isOverGoal ? "goal-card__progress goal-card__progress--over" : "goal-card__progress"}>
+            <div className="goal-card__progress-summary">
+              <span>Offen</span>
+              <strong>
+                {Math.abs(headerCalorieProgress.remainingCalories).toLocaleString("de-DE")} kcal
+              </strong>
+              <small>{headerCalorieProgress.isOverGoal ? "über Tagesziel" : "bis Tagesziel"}</small>
+            </div>
+            <div
+              className="progress-track"
+              role="progressbar"
+              aria-label="Kalorien verbraucht"
+              aria-valuemin={0}
+              aria-valuemax={headerCalorieProgress.goalCalories}
+              aria-valuenow={Math.min(headerCalorieProgress.consumedCalories, headerCalorieProgress.goalCalories)}
+              aria-valuetext={`${headerCalorieProgress.consumedCalories.toLocaleString("de-DE")} von ${headerCalorieProgress.goalCalories.toLocaleString("de-DE")} kcal`}
+            >
+              <span style={{ width: `${headerCalorieProgress.progressPercent}%` }} />
+            </div>
+            <small className="goal-card__progress-detail">
+              {headerCalorieProgress.consumedCalories.toLocaleString("de-DE")} kcal gegessen · {headerCalorieProgress.progressPercent}% von {headerCalorieProgress.goalCalories.toLocaleString("de-DE")} kcal
+            </small>
           </div>
           {hasGarminCredentials && (
             <button className="secondary-button goal-card__garmin-button" type="button" disabled={garminState === "loading" || weekGarminActivityState === "loading"} onClick={() => void refreshGarminSummary()}>

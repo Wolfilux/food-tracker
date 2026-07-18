@@ -243,6 +243,50 @@ h1 {
   color: #f8e7bb;
 }
 
+.goal-card__progress {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(36, 64, 58, 0.16);
+}
+
+.goal-card__progress-summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.goal-card__progress-summary span {
+  color: #236245;
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.goal-card__progress-summary strong {
+  font-size: 1.28rem;
+  line-height: 1;
+}
+
+.goal-card__progress-summary small,
+.goal-card__progress-detail {
+  color: var(--color-muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.goal-card__progress--over .goal-card__progress-summary span,
+.goal-card__progress--over .goal-card__progress-summary strong {
+  color: var(--color-danger);
+}
+
+.goal-card__progress--over .progress-track span {
+  background: var(--color-danger);
+}
+
 .goal-card__top,
 .section-heading,
 .food-actions {
@@ -2856,6 +2900,14 @@ button:focus-visible {
 
   .goal-card {
     padding: 14px;
+  }
+
+  .goal-card__progress-summary {
+    grid-template-columns: auto 1fr;
+  }
+
+  .goal-card__progress-summary small {
+    grid-column: 1 / -1;
   }
 
   .goal-card__remaining strong {
