@@ -119,6 +119,23 @@ button:disabled {
   justify-content: center;
 }
 
+.hero-date {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  width: fit-content;
+  margin-top: 18px;
+  padding: 9px 12px;
+  color: #fff8eb;
+  background: rgba(16, 24, 20, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 850;
+  text-transform: capitalize;
+  backdrop-filter: blur(8px);
+}
+
 .eyebrow {
   display: inline-flex;
   gap: 8px;
@@ -178,6 +195,52 @@ h1 {
   color: var(--color-ink);
   background: rgba(255, 248, 235, 0.95);
   box-shadow: var(--shadow-soft);
+}
+
+.goal-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.goal-card__metric {
+  min-width: 0;
+  padding: 11px 12px;
+  background: rgba(36, 64, 58, 0.07);
+  border: 1px solid rgba(36, 64, 58, 0.12);
+  border-radius: 7px;
+}
+
+.goal-card__metric span,
+.goal-card__metric strong {
+  display: block;
+}
+
+.goal-card__metric span {
+  margin-bottom: 3px;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.goal-card__metric strong {
+  overflow: hidden;
+  font-size: clamp(0.95rem, 2.2vw, 1.14rem);
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-card__metric--total {
+  color: #fff8eb;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.goal-card__metric--total span {
+  color: #f8e7bb;
 }
 
 .goal-card__top,
@@ -2770,6 +2833,11 @@ button:focus-visible {
   .eyebrow {
     margin-bottom: 12px;
     font-size: 0.76rem;
+  }
+
+  .hero-date {
+    margin-top: 12px;
+    font-size: 0.88rem;
   }
 
   h1 {

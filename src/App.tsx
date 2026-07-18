@@ -37,8 +37,9 @@ import {
   Wine,
   X,
 } from "lucide-react";
-import { formatDateTime, formatTime, nowLocal, todayLocal, toBerlinDateTimeInputValue } from "./time";
+import { formatDateTime, formatTime, nowLocal, todayLocal } from "./time";
 import { classifySwipeIntent, dayOffsetForSwipe, type SwipeIntent } from "./day-swipe";
+import { buildHeaderCalorieMetrics, formatHeaderCalorieValue, formatHeaderDate } from "./header-summary";
 
 type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
@@ -1121,7 +1122,6 @@ function App() {
     () => calculateMacroTargets(effectiveCalorieGoal, selectedPreset),
     [effectiveCalorieGoal, selectedPreset],
   );
-  const progress = Math.min(100, Math.round((totals.calories / effectiveCalorieGoal) * 100));
   const dailyRemainingCalories = effectiveCalorieGoal - totals.calories;
   const calorieIdeasKey = `${selectedDate}:${dailyRemainingCalories}`;
   const hasCurrentCalorieIdeas = calorieIdeasContext === calorieIdeasKey;
@@ -1129,10 +1129,12 @@ function App() {
     () => buildCalorieTimingPoints(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints),
     [dayEntries, effectiveCalorieGoal],
   );
-  const heroCalorieBudget = useMemo(
-    () => buildCurrentCalorieTimingBudget(dayEntries, effectiveCalorieGoal, calorieTimingCheckpoints, selectedDate),
-    [dayEntries, effectiveCalorieGoal, selectedDate],
-  );
+  const headerCalorieMetrics = buildHeaderCalorieMetrics({
+    baseCalories: adaptiveDailyGoal ? adaptiveDailyGoal.maintenance : calorieGoalDetails.baseGoal,
+    activeCalories: calorieGoalDetails.activeCalories,
+    deficitCalories: adaptiveDailyGoal ? -adaptiveDailyGoal.targetDeficit : nutritionConfig.calorieGoalOffset,
+    totalCalories: effectiveCalorieGoal,
+  });
   const weekAnalysis = useMemo(
     () => buildWeekAnalysis(weekDates, entries, nutritionConfig, selectedPreset, hasGarminCredentials ? weekGarminSummaries : {}, weekGarminActivities[selectedWeekStart]?.activities ?? []),
     [entries, hasGarminCredentials, nutritionConfig, selectedPreset, selectedWeekStart, weekDates, weekGarminActivities, weekGarminSummaries],
@@ -2551,54 +2553,20 @@ function App() {
             Tagesprotokoll
           </p>
           <h1>Food Tracker</h1>
+          <div className="hero-date">
+            <CalendarDays size={20} aria-hidden="true" />
+            <time dateTime={selectedDate}>{formatHeaderDate(selectedDate)}</time>
+          </div>
         </div>
-        <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
-          <div className="goal-card__top">
-            <Target size={22} aria-hidden="true" />
-            <span>{adaptiveDailyGoal ? "Adaptives Tagesziel" : calorieGoalDetails.usesGarminActiveCalories ? "Ziel + Garmin aktiv" : "Tagesziel"}</span>
+        <div className="goal-card" aria-label="Kalorienziel: Basis, Aktiv, Defizit und Gesamt">
+          <div className="goal-card__metrics">
+            {headerCalorieMetrics.map((metric) => (
+              <div className={metric.label === "Gesamt" ? "goal-card__metric goal-card__metric--total" : "goal-card__metric"} key={metric.label}>
+                <span>{metric.label}</span>
+                <strong>{formatHeaderCalorieValue(metric)}</strong>
+              </div>
+            ))}
           </div>
-          <div className={dailyRemainingCalories < 0 ? "goal-card__remaining goal-card__remaining--over" : "goal-card__remaining"}>
-            <span>Heute noch offen</span>
-            <strong>
-              {dailyRemainingCalories >= 0
-                ? dailyRemainingCalories.toLocaleString("de-DE")
-                : Math.abs(dailyRemainingCalories).toLocaleString("de-DE")}
-              {" "}kcal
-            </strong>
-            <small>{dailyRemainingCalories >= 0 ? "frei bis Tagesziel" : "ueber Tagesziel"}</small>
-          </div>
-          <div className="progress-track">
-            <span style={{ width: `${progress}%` }} />
-          </div>
-          <small>{totals.calories.toLocaleString("de-DE")} kcal gegessen · {progress}% von {effectiveCalorieGoal.toLocaleString("de-DE")} kcal</small>
-          <small className={heroCalorieBudget.remainingCalories < 0 ? "goal-card__timing delta--over" : "goal-card__timing delta--under"}>
-            Bis {heroCalorieBudget.time}: {heroCalorieBudget.remainingCalories >= 0
-              ? `${heroCalorieBudget.remainingCalories.toLocaleString("de-DE")} kcal frei`
-              : `${Math.abs(heroCalorieBudget.remainingCalories).toLocaleString("de-DE")} kcal drueber`}
-          </small>
-          <small className="goal-card__note">
-            {adaptiveDailyGoal
-              ? `Basis ${adaptiveDailyGoal.basisTarget.toLocaleString("de-DE")} kcal · Aktiv +${adaptiveDailyGoal.activityAdjustment.toLocaleString("de-DE")} kcal · Defizit ${adaptiveDailyGoal.targetDeficit.toLocaleString("de-DE")} kcal`
-              : `Basis ${calorieGoalDetails.baseGoal.toLocaleString("de-DE")} kcal${calorieGoalDetails.usesGarminActiveCalories ? ` · Aktiv +${calorieGoalDetails.activeCalories.toLocaleString("de-DE")} kcal` : ""}${nutritionConfig.calorieGoalOffset !== 0 ? ` · ${formatCalorieGoalOffset(nutritionConfig.calorieGoalOffset)}` : " · kein Offset"}`}
-          </small>
-          {adaptiveDailyGoal && (
-            <small className="goal-card__note">
-              Erhalt {adaptiveDailyGoal.adaptiveMaintenance.toLocaleString("de-DE")} kcal · empfohlen {adaptiveDailyGoal.recommendedToday.toLocaleString("de-DE")} kcal
-              {adaptiveDailyGoal.hasManualOverride ? ` · manuell ${adaptiveDailyGoal.finalGoal.toLocaleString("de-DE")} kcal` : ""}
-            </small>
-          )}
-          {adaptiveDailyGoal && (
-            <small className="goal-card__note">
-              {activityStrategyLabel(adaptiveDailyGoal.activity.strategy)} · Bonus gedeckelt bei {adaptiveDailyGoal.activity.cap.toLocaleString("de-DE")} kcal
-            </small>
-          )}
-          {garminSummary?.configured && (
-            <small className={garminSummary.error ? "goal-card__note goal-card__note--error" : "goal-card__note"}>
-              {garminSummary.error
-                ? "Garmin Sync fehlgeschlagen"
-                : `Aktiv ${formatOptionalCalories(garminSummary.activeKilocalories)}`}
-            </small>
-          )}
           {hasGarminCredentials && (
             <button className="secondary-button goal-card__garmin-button" type="button" disabled={garminState === "loading" || weekGarminActivityState === "loading"} onClick={() => void refreshGarminSummary()}>
               {garminState === "loading" || weekGarminActivityState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
@@ -4313,10 +4281,6 @@ type CalorieTimingPoint = CalorieTimingCheckpoint & {
   delta: number;
 };
 
-type CurrentCalorieTimingBudget = CalorieTimingPoint & {
-  remainingCalories: number;
-};
-
 function CalorieTimingPlan({
   date,
   calorieGoal,
@@ -4813,32 +4777,6 @@ function buildCalorieTimingPoints(
   });
 }
 
-function buildCurrentCalorieTimingBudget(
-  entries: FoodEntry[],
-  calorieGoal: number,
-  checkpoints: CalorieTimingCheckpoint[],
-  selectedDate: string,
-): CurrentCalorieTimingBudget {
-  const now = new Date();
-  const currentTime = selectedDate === todayLocal()
-    ? toBerlinDateTimeInputValue(now).slice(11, 16)
-    : "21:00";
-  const checkpoint = checkpoints.find((point) => currentTime <= point.time) ?? checkpoints[checkpoints.length - 1];
-  const targetCalories = Math.round(calorieGoal * checkpoint.percent);
-  const actualCalories = entries
-    .filter((entry) => entry.consumedAt.slice(11, 16) <= currentTime)
-    .reduce((sum, entry) => sum + caloriesFor(entry), 0);
-  const delta = Math.round(actualCalories - targetCalories);
-
-  return {
-    ...checkpoint,
-    targetCalories,
-    actualCalories,
-    delta,
-    remainingCalories: Math.round(targetCalories - actualCalories),
-  };
-}
-
 function buildCalorieGoalDetails(garminSummary: GarminDailySummary | null | undefined, nutritionConfig: NutritionConfig) {
   const activeCalories = garminSummary?.configured && Number.isFinite(garminSummary.activeKilocalories)
     ? Math.round(garminSummary.activeKilocalories ?? 0)
@@ -4866,12 +4804,6 @@ function buildAdaptiveCalorieGoalDetails(dailyGoal: AdaptiveGoalOverview["dailyG
 
 function formatCalorieGoalOffset(offset: number) {
   return offset > 0 ? `+${offset.toLocaleString("de-DE")} kcal Überschuss` : `${offset.toLocaleString("de-DE")} kcal Defizit`;
-}
-
-function activityStrategyLabel(strategy: string) {
-  if (strategy === "garmin-total-activity") return "Garmin Gesamtaktivitaet";
-  if (strategy === "garmin-active-calories") return "Garmin aktive Kalorien";
-  return "Schritte + Training anteilig";
 }
 
 function adaptiveFeedbackLabel(status: AdaptiveGoalOverview["feedback"]["status"]) {
