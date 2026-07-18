@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarcodeFormat, BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import {
   Activity,
@@ -38,6 +38,7 @@ import {
   X,
 } from "lucide-react";
 import { formatDateTime, formatTime, nowLocal, todayLocal, toBerlinDateTimeInputValue } from "./time";
+import { classifySwipeIntent, dayOffsetForSwipe, type SwipeIntent } from "./day-swipe";
 
 type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
@@ -88,6 +89,29 @@ type EntryEditDialogState = {
   foodName: string;
   draft: FoodDraft;
 };
+
+type DaySwipeSession = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  intent: SwipeIntent;
+};
+
+const interactiveSwipeTargetSelector = [
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "label",
+  "[contenteditable='true']",
+  "[role='button']",
+  "[role='link']",
+].join(",");
+
+function isInteractiveSwipeTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest(interactiveSwipeTargetSelector));
+}
 
 type MealEditDialogState = {
   mealId: string;
@@ -1014,6 +1038,8 @@ function App() {
   const [reanalyzingEntryId, setReanalyzingEntryId] = useState<string | null>(null);
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const [heroSwipeDirection, setHeroSwipeDirection] = useState<"next" | "previous" | null>(null);
+  const [daySwipeAnnouncement, setDaySwipeAnnouncement] = useState("");
   const quantityInputRef = useRef<HTMLInputElement>(null);
   const entryFormRef = useRef<HTMLFormElement>(null);
   const barcodeVideoRef = useRef<HTMLVideoElement>(null);
@@ -1023,6 +1049,8 @@ function App() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const mealRefs = useRef<Record<string, HTMLElement | null>>({});
+  const heroPanelRef = useRef<HTMLElement>(null);
+  const heroSwipeRef = useRef<DaySwipeSession | null>(null);
   const selectedWeekStart = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
   const weekDates = useMemo(() => buildWeekDates(selectedWeekStart), [selectedWeekStart]);
 
@@ -1040,6 +1068,12 @@ function App() {
     document.addEventListener("keydown", handleDialogKeyDown);
     return () => document.removeEventListener("keydown", handleDialogKeyDown);
   }, [entryEditDialog, mealEditDialog, savingEntryEditId, savingMealId]);
+
+  useEffect(() => {
+    if (!heroSwipeDirection) return undefined;
+    const animationTimeout = window.setTimeout(() => setHeroSwipeDirection(null), 260);
+    return () => window.clearTimeout(animationTimeout);
+  }, [heroSwipeDirection]);
 
   const dayEntries = useMemo(
     () => entries.filter((entry) => entry.consumedAt.slice(0, 10) === selectedDate),
@@ -2423,13 +2457,94 @@ function App() {
     }
   }
 
+  function resetHeroSwipe() {
+    heroSwipeRef.current = null;
+    heroPanelRef.current?.style.removeProperty("--hero-swipe-offset");
+    if (heroPanelRef.current) delete heroPanelRef.current.dataset.swiping;
+  }
+
+  function handleHeroPointerDown(event: ReactPointerEvent<HTMLElement>) {
+    if (
+      event.pointerType !== "touch"
+      || !event.isPrimary
+      || isInteractiveSwipeTarget(event.target)
+    ) {
+      return;
+    }
+
+    heroSwipeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      intent: "pending",
+    };
+  }
+
+  function handleHeroPointerMove(event: ReactPointerEvent<HTMLElement>) {
+    const swipe = heroSwipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - swipe.startX;
+    const deltaY = event.clientY - swipe.startY;
+    swipe.intent = classifySwipeIntent(deltaX, deltaY, swipe.intent);
+
+    if (swipe.intent === "vertical") {
+      resetHeroSwipe();
+      return;
+    }
+
+    if (swipe.intent !== "horizontal") return;
+
+    event.preventDefault();
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    event.currentTarget.dataset.swiping = "true";
+    const feedbackOffset = Math.max(-42, Math.min(42, deltaX * 0.35));
+    event.currentTarget.style.setProperty("--hero-swipe-offset", `${feedbackOffset}px`);
+  }
+
+  function finishHeroSwipe(event: ReactPointerEvent<HTMLElement>, cancelled = false) {
+    const swipe = heroSwipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - swipe.startX;
+    const deltaY = event.clientY - swipe.startY;
+    const dayOffset = !cancelled && swipe.intent === "horizontal"
+      ? dayOffsetForSwipe(deltaX, deltaY)
+      : 0;
+
+    resetHeroSwipe();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (dayOffset === 0) return;
+
+    event.preventDefault();
+    const nextDate = addDays(selectedDate, dayOffset);
+    setHeroSwipeDirection(dayOffset > 0 ? "next" : "previous");
+    setSelectedDate(nextDate);
+    setDaySwipeAnnouncement(`${dayOffset > 0 ? "Nächster" : "Vorheriger"} Tag: ${formatDateLabel(nextDate)}`);
+  }
+
   const activeMealEditGroup = mealEditDialog
     ? mealGroups.find((group) => group.id === mealEditDialog.mealId) ?? null
     : null;
 
   return (
     <main className="app-shell">
-      <section className="hero-panel">
+      <section
+        className={`hero-panel${heroSwipeDirection ? ` hero-panel--day-${heroSwipeDirection}` : ""}`}
+        ref={heroPanelRef}
+        onPointerDown={handleHeroPointerDown}
+        onPointerMove={handleHeroPointerMove}
+        onPointerUp={finishHeroSwipe}
+        onPointerCancel={(event) => finishHeroSwipe(event, true)}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) setHeroSwipeDirection(null);
+        }}
+      >
         <div className="hero-copy">
           <p className="eyebrow">
             <ShieldCheck size={16} aria-hidden="true" />
@@ -2492,6 +2607,7 @@ function App() {
           )}
         </div>
       </section>
+      <p className="visually-hidden" role="status" aria-live="polite">{daySwipeAnnouncement}</p>
 
       <nav className="view-tabs" aria-label="App-Ansichten">
         <button className={activeView === "tracker" ? "view-tab view-tab--active" : "view-tab"} type="button" onClick={() => setActiveView("tracker")}>

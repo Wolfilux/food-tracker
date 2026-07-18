@@ -12,6 +12,7 @@
     "smoke:timezone": "node scripts/timezone-smoke.mjs",
     "smoke:alcohol": "node scripts/alcohol-smoke.mjs",
     "smoke:adaptive-goal": "node scripts/adaptive-goal-smoke.mjs",
+    "test:swipe": "node --test scripts/day-swipe.test.mjs",
     "security:scan": "bash scripts/security-scan.sh"
   },
   "dependencies": {
