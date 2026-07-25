@@ -1184,10 +1184,26 @@ h1 {
   border-top: 1px solid rgba(23, 33, 27, 0.12);
 }
 
+.goal-card__garmin-sync {
+  display: grid;
+  gap: 7px;
+  margin-top: 0.25rem;
+}
+
 .goal-card__garmin-button {
   width: 100%;
   justify-content: center;
-  margin-top: 0.25rem;
+}
+
+.goal-card__garmin-status {
+  color: #236245;
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.goal-card__garmin-status--error {
+  color: var(--color-danger);
 }
 
 .calorie-timing-card__head {

@@ -40,6 +40,7 @@ import {
 import { formatDateTime, formatTime, nowLocal, todayLocal } from "./time";
 import { classifySwipeIntent, dayOffsetForSwipe, type SwipeIntent } from "./day-swipe";
 import { buildHeaderCalorieMetrics, buildHeaderCalorieProgress, formatHeaderCalorieValue, formatHeaderDate } from "./header-summary";
+import { formatGarminWeightImportStatus, type GarminWeightConflict } from "./garmin-weight-status";
 
 type Unit = "g" | "kg" | "ml";
 type AppView = "tracker" | "analysis" | "settings";
@@ -222,6 +223,7 @@ type GarminWeightImportResult = {
   received: number;
   imported: number;
   skippedManual: number;
+  conflicts: GarminWeightConflict[];
   fetchedAt: string;
   weights: WeightEntry[];
 };
@@ -1432,19 +1434,31 @@ function App() {
 
     setGarminState("loading");
     setWeekGarminActivityState("loading");
+    setGarminWeightState("loading");
+    setGarminWeightMessage("");
     try {
-      const [summary, activityWeek] = await Promise.all([
+      const [summary, activityWeek, weightResult] = await Promise.all([
         fetchGarminDailySummary(selectedDate, true),
         fetchGarminActivitiesForWeek(selectedWeekStart, true),
+        importGarminWeights(selectedDate, selectedDate),
       ]);
+      const goal = await fetchAdaptiveGoal(selectedDate);
       setGarminSummary(summary);
       setWeekGarminActivities((currentWeeks) => ({ ...currentWeeks, [activityWeek.weekStart]: activityWeek }));
+      setWeightEntries(weightResult.weights);
+      setAdaptiveGoal(goal);
+      setAdaptiveDraft(goal.profile);
+      setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
       setGarminState(summary.error ? "error" : "done");
       setWeekGarminActivityState(activityWeek.error ? "error" : "done");
-    } catch {
+      setGarminWeightState("done");
+      setGarminWeightMessage(formatGarminWeightImportStatus(weightResult, selectedDate));
+    } catch (error) {
       setGarminSummary(null);
       setGarminState("error");
       setWeekGarminActivityState("error");
+      setGarminWeightState("error");
+      setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht importiert werden.");
     }
   }, [hasGarminCredentials, selectedDate, selectedWeekStart]);
 
@@ -1852,11 +1866,7 @@ function App() {
       setAdaptiveDraft(goal.profile);
       setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
       setGarminWeightState("done");
-      setGarminWeightMessage(
-        result.received === 0
-          ? "Garmin hat im gewählten Zeitraum keine Gewichtswerte geliefert."
-          : `${result.imported} Garmin-Tage importiert${result.skippedManual > 0 ? ` · ${result.skippedManual} manuelle Werte beibehalten` : ""}.`,
-      );
+      setGarminWeightMessage(formatGarminWeightImportStatus(result, endDate));
     } catch (error) {
       setGarminWeightState("error");
       setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht importiert werden.");
@@ -2683,10 +2693,17 @@ function App() {
             </small>
           </div>
           {hasGarminCredentials && (
-            <button className="secondary-button goal-card__garmin-button" type="button" disabled={garminState === "loading" || weekGarminActivityState === "loading"} onClick={() => void refreshGarminSummary()}>
-              {garminState === "loading" || weekGarminActivityState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
-              Garmin aktualisieren
-            </button>
+            <div className="goal-card__garmin-sync">
+              <button className="secondary-button goal-card__garmin-button" type="button" disabled={garminState === "loading" || weekGarminActivityState === "loading" || garminWeightState === "loading"} onClick={() => void refreshGarminSummary()}>
+                {garminState === "loading" || weekGarminActivityState === "loading" || garminWeightState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+                Garmin aktualisieren
+              </button>
+              {garminWeightMessage && (
+                <small className={garminWeightState === "error" ? "goal-card__garmin-status goal-card__garmin-status--error" : "goal-card__garmin-status"} role="status" aria-live="polite">
+                  {garminWeightMessage}
+                </small>
+              )}
+            </div>
           )}
         </div>
       </section>

@@ -100,6 +100,8 @@ test("persists chronological weight entries and protects manual values from Garm
   });
 
   assert.equal(skipped.skipped, "manual-entry");
+  assert.equal(skipped.receivedWeightKg, 82.3);
+  assert.equal(skipped.weightKg, 82.4);
   assert.deepEqual(databaseModule.listWeightEntries().map(({ date, weightKg, source }) => ({ date, weightKg, source })), [
     { date: "2026-07-22", weightKg: 83.1, source: "garmin" },
     { date: "2026-07-24", weightKg: 82.4, source: "manual" },
@@ -112,4 +114,46 @@ test("persists chronological weight entries and protects manual values from Garm
     () => databaseModule.saveAdaptiveWeightLog({ date: "2026-07-25", weightKg: 300 }),
     /Invalid weight/,
   );
+});
+
+test("Garmin import reports the protected manual value and received Garmin value", async (context) => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "food-tracker-weight-import-"));
+  context.after(async () => {
+    await rm(dataDirectory, { recursive: true });
+  });
+  process.env.FOOD_TRACKER_DATA_DIR = dataDirectory;
+
+  const databaseModule = await import(`./food-db.js?weight-import-test=${Date.now()}`);
+  databaseModule.saveGarminConfig({
+    username: "garmin@example.test",
+    authValue: "test-credential",
+    autoSyncMinutes: 0,
+  });
+  databaseModule.saveAdaptiveWeightLog({
+    date: "2026-07-25",
+    weightKg: 125,
+  });
+
+  const result = await databaseModule.importGarminWeights(
+    { startDate: "2026-07-25", endDate: "2026-07-25" },
+    {
+      getGarminWeightRange: async () => ({
+        source: "garmin-connect",
+        fetchedAt: "2026-07-25T06:38:49.965Z",
+        weights: [
+          { date: "2026-07-25", weightKg: 114.3, source: "garmin", externalId: "garmin-today" },
+        ],
+      }),
+    },
+  );
+
+  assert.equal(result.received, 1);
+  assert.equal(result.imported, 0);
+  assert.equal(result.skippedManual, 1);
+  assert.deepEqual(result.conflicts, [
+    { date: "2026-07-25", garminWeightKg: 114.3, manualWeightKg: 125 },
+  ]);
+  assert.deepEqual(result.weights.map(({ date, weightKg, source }) => ({ date, weightKg, source })), [
+    { date: "2026-07-25", weightKg: 125, source: "manual" },
+  ]);
 });

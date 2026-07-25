@@ -1107,10 +1107,14 @@ export function saveAdaptiveWeightLog(input) {
   const externalId = source === "garmin" ? String(input?.externalId ?? "").slice(0, 120) : "";
   const now = new Date().toISOString();
   const existing = getFoodDatabase()
-    .prepare("SELECT source FROM adaptive_weight_logs WHERE date = ?")
+    .prepare("SELECT date, weight_kg, source, created_at, updated_at FROM adaptive_weight_logs WHERE date = ?")
     .get(date);
   if (source === "garmin" && existing?.source === "manual") {
-    return { date, weightKg: undefined, source, skipped: "manual-entry" };
+    return {
+      ...weightEntryFromRow(existing),
+      skipped: "manual-entry",
+      receivedWeightKg: Math.round(weightKg * 10) / 10,
+    };
   }
 
   getFoodDatabase()
@@ -1155,7 +1159,7 @@ export function listWeightEntries(fromInput, toInput) {
     .map(weightEntryFromRow);
 }
 
-async function importGarminWeights(input = {}) {
+export async function importGarminWeights(input = {}, dependencies = {}) {
   const endDate = input?.endDate ? normalizeWeightDate(input.endDate) : todayInBerlin();
   const startDate = input?.startDate ? normalizeWeightDate(input.startDate) : addDays(endDate, -364);
   if (startDate > endDate || daysBetween(startDate, endDate) > 366) {
@@ -1164,7 +1168,8 @@ async function importGarminWeights(input = {}) {
 
   const config = getGarminConfigRecord();
   if (!config.username || !config.authValue) throw new Error("Garmin is not configured");
-  const result = await getGarminWeightRange(startDate, endDate, {
+  const fetchGarminWeights = dependencies.getGarminWeightRange ?? getGarminWeightRange;
+  const result = await fetchGarminWeights(startDate, endDate, {
     username: config.username,
     authValue: config.authValue,
   });
@@ -1172,10 +1177,19 @@ async function importGarminWeights(input = {}) {
 
   let imported = 0;
   let skippedManual = 0;
+  const conflicts = [];
   for (const weight of result.weights) {
     const stored = saveAdaptiveWeightLog(weight);
-    if (stored.skipped === "manual-entry") skippedManual += 1;
-    else imported += 1;
+    if (stored.skipped === "manual-entry") {
+      skippedManual += 1;
+      conflicts.push({
+        date: stored.date,
+        garminWeightKg: stored.receivedWeightKg,
+        manualWeightKg: stored.weightKg,
+      });
+    } else {
+      imported += 1;
+    }
   }
 
   return {
@@ -1186,6 +1200,7 @@ async function importGarminWeights(input = {}) {
     received: result.weights.length,
     imported,
     skippedManual,
+    conflicts,
     fetchedAt: result.fetchedAt,
     weights: listWeightEntries(),
   };
