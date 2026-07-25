@@ -2338,6 +2338,7 @@ async function sendWeeklyAnalysisEmail(weekStart) {
     port: smtpConfig.port,
     secure: smtpConfig.secure,
     auth: smtpConfig.user || smtpConfig.pass ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
+    tls: smtpConfig.tlsServername ? { servername: smtpConfig.tlsServername } : undefined,
   });
   await transporter.sendMail({
     from: smtpConfig.from,
@@ -3317,6 +3318,7 @@ function getSmtpConfig() {
     user: String(process.env.SMTP_USER ?? "").trim(),
     pass: String(process.env.SMTP_PASS ?? ""),
     from: String(process.env.SMTP_FROM ?? "Food Tracker <food-tracker@localhost>").trim(),
+    tlsServername: String(process.env.SMTP_TLS_SERVERNAME ?? "").trim(),
   };
 }
 

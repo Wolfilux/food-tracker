@@ -111,9 +111,11 @@ SMTP_SECURE=false
 SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=Food Tracker <food-tracker@example.com>
+SMTP_TLS_SERVERNAME=
 ```
 
 Wenn `SMTP_HOST`, Empfaengeradresse oder KI-Key fehlen, laeuft der Scheduler weiter und ueberspringt nur den Mailversand.
+`SMTP_TLS_SERVERNAME` kann gesetzt werden, wenn ein interner Relay per IP angesprochen wird, das STARTTLS-Zertifikat aber fuer einen DNS-Namen ausgestellt ist.
 Der Readiness-Endpunkt `/api/config/weekly-email/status` zeigt ohne Secrets, ob Zieladresse, SMTP und Analyse-Key vorhanden sind und wann zuletzt versendet wurde.
 
 Optionale SoGO-/CalDAV-Kalenderanbindung fuer die Wochenanalyse:
