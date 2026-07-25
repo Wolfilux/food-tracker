@@ -12,8 +12,10 @@
     "smoke:timezone": "node scripts/timezone-smoke.mjs",
     "smoke:alcohol": "node scripts/alcohol-smoke.mjs",
     "smoke:adaptive-goal": "node scripts/adaptive-goal-smoke.mjs",
+    "test": "node --test scripts/*.test.mjs server/*.test.mjs",
     "test:swipe": "node --test scripts/day-swipe.test.mjs",
     "test:header": "node --test scripts/header-summary.test.mjs",
+    "test:weight": "node --test server/weight-tracking.test.mjs",
     "security:scan": "bash scripts/security-scan.sh"
   },
   "dependencies": {
@@ -28,11 +30,11 @@
     "vite": "^7.3.6"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9.39.1",
+    "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "globals": "^16.5.0",
     "typescript-eslint": "^8.48.0"

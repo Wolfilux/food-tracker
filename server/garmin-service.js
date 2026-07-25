@@ -5,7 +5,8 @@ import Garmin from "@gooin/garmin-connect";
 
 const { GarminConnect } = Garmin;
 const here = dirname(fileURLToPath(import.meta.url));
-const tokenDir = join(here, "..", "data", "garmin-tokens");
+const dataDirectory = process.env.FOOD_TRACKER_DATA_DIR || join(here, "..", "data");
+const tokenDir = join(dataDirectory, "garmin-tokens");
 
 let clientPromise;
 let clientIdentity = "";
@@ -95,6 +96,41 @@ export async function getGarminActivitiesForWeek(weekStartString, credentials = 
   }
 }
 
+export async function getGarminWeightRange(startDateString, endDateString, credentials = {}) {
+  const startDate = normalizeDate(startDateString);
+  const endDate = normalizeDate(endDateString);
+  const username = String(credentials.username ?? "").trim();
+  const garminPass = String(credentials.authValue ?? "").trim();
+
+  if (!username || !garminPass) {
+    return {
+      configured: false,
+      startDate,
+      endDate,
+      source: "garmin-connect",
+      weights: [],
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const client = await getGarminClient(username, garminPass);
+    const payload = await client.getWeightRange(startDate, endDate, true);
+    return normalizeGarminWeightRange(payload, startDate, endDate);
+  } catch (error) {
+    clientPromise = undefined;
+    return {
+      configured: true,
+      startDate,
+      endDate,
+      source: "garmin-connect",
+      weights: [],
+      error: error instanceof Error ? error.message : "Garmin weight sync failed",
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+}
+
 async function getGarminClient(username, password) {
   const identity = username;
   if (!clientPromise || clientIdentity !== identity) {
@@ -175,6 +211,48 @@ function normalizeGarminActivity(activity) {
     averageHeartRate: finiteNumber(activity?.averageHR),
     maxHeartRate: finiteNumber(activity?.maxHR),
   };
+}
+
+export function normalizeGarminWeightRange(payload, startDate, endDate) {
+  const byDate = new Map();
+  const summaries = Array.isArray(payload?.dailyWeightSummaries) ? payload.dailyWeightSummaries : [];
+
+  for (const summary of summaries) {
+    const metrics = Array.isArray(summary?.allWeightMetrics) ? summary.allWeightMetrics : [];
+    const latestMetric = summary?.latestWeight ?? metrics.at(-1);
+    const date = normalizeWeightDate(summary?.summaryDate ?? latestMetric?.calendarDate);
+    const weightKg = normalizeWeightKg(latestMetric?.weight);
+    if (!date || weightKg === undefined || date < startDate || date > endDate) continue;
+
+    byDate.set(date, {
+      date,
+      weightKg,
+      source: "garmin",
+      externalId: latestMetric?.samplePk === undefined ? "" : String(latestMetric.samplePk),
+    });
+  }
+
+  return {
+    configured: true,
+    startDate,
+    endDate,
+    source: "garmin-connect",
+    weights: [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeWeightDate(value) {
+  const raw = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function normalizeWeightKg(value) {
+  const grams = Number(value);
+  if (!Number.isFinite(grams)) return undefined;
+  const weightKg = grams / 1000;
+  if (weightKg < 35 || weightKg > 250) return undefined;
+  return Math.round(weightKg * 10) / 10;
 }
 
 function addDays(date, days) {

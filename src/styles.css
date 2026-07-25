@@ -410,6 +410,105 @@ h1 {
   min-height: 360px;
 }
 
+.weight-entry-card {
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) auto;
+  gap: 12px 24px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 18px;
+  background:
+    linear-gradient(118deg, rgba(36, 64, 58, 0.13), transparent 48%),
+    var(--color-surface);
+  border: 1px solid rgba(36, 64, 58, 0.2);
+  border-left: 5px solid var(--color-accent);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 26px rgba(23, 33, 27, 0.08);
+}
+
+.weight-entry-card__copy {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  min-width: 0;
+}
+
+.weight-entry-card__copy .eyebrow {
+  margin-bottom: 5px;
+}
+
+.weight-entry-card__copy h2 {
+  margin-bottom: 3px;
+  font-size: clamp(1.25rem, 2.4vw, 1.65rem);
+  line-height: 1.08;
+}
+
+.weight-entry-card__copy span:not(.weight-entry-card__icon) {
+  color: var(--color-muted);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.weight-entry-card__icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #fff8eb;
+  background: var(--color-primary);
+  border-radius: 50%;
+}
+
+.weight-entry-card__fields {
+  display: grid;
+  grid-template-columns: 150px 170px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.weight-entry-card__fields label {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.weight-entry-card__fields .primary-button {
+  min-height: 48px;
+  white-space: nowrap;
+}
+
+.weight-input {
+  position: relative;
+}
+
+.weight-input input {
+  padding-right: 42px;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.weight-input span {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.weight-entry-card__status {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  color: #236245;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.weight-entry-card__status--error {
+  color: var(--color-danger);
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -880,6 +979,151 @@ h1 {
 .analysis-summary-card small {
   color: #627064;
   font-size: 0.82rem;
+}
+
+.weight-trend-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(36, 64, 58, 0.08), transparent 44%),
+    var(--color-surface);
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: var(--radius);
+}
+
+.weight-trend-card__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.weight-trend-card__head .eyebrow {
+  margin-bottom: 7px;
+}
+
+.weight-trend-card__head strong,
+.weight-trend-card__head span {
+  display: block;
+}
+
+.weight-trend-card__head strong {
+  font-size: clamp(1.55rem, 3vw, 2.2rem);
+  line-height: 1;
+}
+
+.weight-trend-card__head span {
+  margin-top: 5px;
+  color: var(--color-muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.weight-trend-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 28px;
+  color: var(--color-muted);
+  background: rgba(238, 245, 240, 0.68);
+  border: 1px dashed rgba(36, 64, 58, 0.24);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.weight-trend-empty strong {
+  color: var(--color-ink);
+  font-size: 1.08rem;
+}
+
+.weight-trend-empty span {
+  max-width: 440px;
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.weight-chart-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  scrollbar-width: thin;
+}
+
+.weight-chart {
+  display: block;
+  width: 100%;
+  min-width: 620px;
+  height: auto;
+  background: rgba(255, 253, 247, 0.82);
+}
+
+.weight-chart__grid {
+  stroke: rgba(36, 64, 58, 0.13);
+  stroke-width: 1;
+  stroke-dasharray: 5 6;
+}
+
+.weight-chart__axis {
+  fill: var(--color-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.weight-chart__line {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.weight-chart__point {
+  fill: var(--color-accent);
+  stroke: #fffdf7;
+  stroke-width: 3;
+}
+
+.weight-chart__point--garmin {
+  fill: var(--color-primary);
+}
+
+.weight-trend-card__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.weight-trend-card__foot > span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.weight-trend-card__foot .config-status {
+  flex: 1 1 320px;
+  margin: 0;
+  text-align: right;
+}
+
+.weight-source-dot {
+  width: 9px;
+  height: 9px;
+  background: var(--color-accent);
+  border-radius: 50%;
+}
+
+.weight-source-dot--garmin {
+  background: var(--color-primary);
 }
 
 .calorie-timing-card {
@@ -2787,8 +3031,13 @@ button:focus-visible {
   .hero-panel,
   .config-panel,
   .analysis-toolbar,
+  .weight-entry-card,
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .weight-entry-card__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   }
 
   .entry-form {
@@ -2942,6 +3191,38 @@ button:focus-visible {
   .quantity-grid,
   .photo-actions {
     grid-template-columns: 1fr;
+  }
+
+  .weight-entry-card {
+    padding: 15px;
+  }
+
+  .weight-entry-card__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .weight-entry-card__fields .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .weight-trend-card__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .weight-trend-card__head .secondary-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .weight-trend-card__foot .config-status {
+    flex-basis: 100%;
+    text-align: left;
+  }
+
+  .weight-chart {
+    min-width: 560px;
   }
 
   .calorie-ideas-card__head {

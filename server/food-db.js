@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
 import { seedFoods } from "./food-data.js";
-import { getGarminActivitiesForWeek, getGarminDailySummary } from "./garmin-service.js";
+import { getGarminActivitiesForWeek, getGarminDailySummary, getGarminWeightRange } from "./garmin-service.js";
 import {
   adaptiveMinimumCalorieGoal,
   buildCoachMode,
@@ -21,8 +21,9 @@ import {
 } from "./adaptive-goals.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(here, "..", "data", "food-tracker.sqlite");
-const secretPath = join(here, "..", "data", "food-tracker.secret.key");
+const dataDirectory = process.env.FOOD_TRACKER_DATA_DIR || join(here, "..", "data");
+const dbPath = join(dataDirectory, "food-tracker.sqlite");
+const secretPath = join(dataDirectory, "food-tracker.secret.key");
 const defaultNutritionConfig = {
   calorieGoal: 2200,
   calorieGoalOffset: 0,
@@ -456,6 +457,37 @@ export function createFoodApiMiddleware() {
         refresh: url.searchParams.get("refresh") === "1",
       }) });
       return;
+    }
+
+    if (url.pathname === "/api/weights/garmin-import" && request.method === "POST") {
+      try {
+        sendJson(response, { result: await importGarminWeights(await readJsonBody(request)) });
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/weights") {
+      if (request.method === "GET") {
+        try {
+          sendJson(response, {
+            weights: listWeightEntries(url.searchParams.get("from"), url.searchParams.get("to")),
+          });
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
+
+      if (request.method === "POST") {
+        try {
+          sendJson(response, { weight: saveAdaptiveWeightLog(await readJsonBody(request)) }, 201);
+        } catch (error) {
+          sendJson(response, { error: error.message }, 400);
+        }
+        return;
+      }
     }
 
     if (url.pathname === "/api/config/garmin") {
@@ -1065,24 +1097,98 @@ export function saveAdaptiveGoalProfile(input) {
 }
 
 export function saveAdaptiveWeightLog(input) {
-  const date = normalizeGarminDate(input?.date);
+  const date = normalizeWeightDate(input?.date);
   const weightKg = Number(input?.weightKg);
   if (!Number.isFinite(weightKg) || weightKg < 35 || weightKg > 250) {
     throw new Error("Invalid weight");
   }
 
+  const source = input?.source === "garmin" ? "garmin" : "manual";
+  const externalId = source === "garmin" ? String(input?.externalId ?? "").slice(0, 120) : "";
   const now = new Date().toISOString();
+  const existing = getFoodDatabase()
+    .prepare("SELECT source FROM adaptive_weight_logs WHERE date = ?")
+    .get(date);
+  if (source === "garmin" && existing?.source === "manual") {
+    return { date, weightKg: undefined, source, skipped: "manual-entry" };
+  }
+
   getFoodDatabase()
     .prepare([
-      "INSERT INTO adaptive_weight_logs (date, weight_kg, created_at, updated_at)",
-      "VALUES (?, ?, ?, ?)",
+      "INSERT INTO adaptive_weight_logs (date, weight_kg, source, external_id, created_at, updated_at)",
+      "VALUES (?, ?, ?, ?, ?, ?)",
       "ON CONFLICT(date) DO UPDATE SET",
       "  weight_kg = excluded.weight_kg,",
+      "  source = excluded.source,",
+      "  external_id = excluded.external_id,",
       "  updated_at = excluded.updated_at",
     ].join("\n"))
-    .run(date, Math.round(weightKg * 10) / 10, now, now);
+    .run(date, Math.round(weightKg * 10) / 10, source, externalId, now, now);
 
-  return { date, weightKg: Math.round(weightKg * 10) / 10 };
+  return weightEntryFromRow(
+    getFoodDatabase()
+      .prepare("SELECT date, weight_kg, source, created_at, updated_at FROM adaptive_weight_logs WHERE date = ?")
+      .get(date),
+  );
+}
+
+export function listWeightEntries(fromInput, toInput) {
+  const from = fromInput ? normalizeWeightDate(fromInput) : "";
+  const to = toInput ? normalizeWeightDate(toInput) : "";
+  if (from && to && from > to) throw new Error("Invalid weight date range");
+
+  const clauses = [];
+  const parameters = [];
+  if (from) {
+    clauses.push("date >= ?");
+    parameters.push(from);
+  }
+  if (to) {
+    clauses.push("date <= ?");
+    parameters.push(to);
+  }
+
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+  return getFoodDatabase()
+    .prepare(`SELECT date, weight_kg, source, created_at, updated_at FROM adaptive_weight_logs${where} ORDER BY date ASC`)
+    .all(...parameters)
+    .map(weightEntryFromRow);
+}
+
+async function importGarminWeights(input = {}) {
+  const endDate = input?.endDate ? normalizeWeightDate(input.endDate) : todayInBerlin();
+  const startDate = input?.startDate ? normalizeWeightDate(input.startDate) : addDays(endDate, -364);
+  if (startDate > endDate || daysBetween(startDate, endDate) > 366) {
+    throw new Error("Garmin weight import supports a maximum range of 367 days");
+  }
+
+  const config = getGarminConfigRecord();
+  if (!config.username || !config.authValue) throw new Error("Garmin is not configured");
+  const result = await getGarminWeightRange(startDate, endDate, {
+    username: config.username,
+    authValue: config.authValue,
+  });
+  if (result.error) throw new Error(result.error);
+
+  let imported = 0;
+  let skippedManual = 0;
+  for (const weight of result.weights) {
+    const stored = saveAdaptiveWeightLog(weight);
+    if (stored.skipped === "manual-entry") skippedManual += 1;
+    else imported += 1;
+  }
+
+  return {
+    configured: true,
+    source: result.source,
+    startDate,
+    endDate,
+    received: result.weights.length,
+    imported,
+    skippedManual,
+    fetchedAt: result.fetchedAt,
+    weights: listWeightEntries(),
+  };
 }
 
 export function handleAdaptiveGoalRecommendation(input) {
@@ -1200,10 +1306,17 @@ function listDailyCalories(startDate, endDate) {
 }
 
 function listAdaptiveWeightLogs() {
-  return getFoodDatabase()
-    .prepare("SELECT date, weight_kg FROM adaptive_weight_logs ORDER BY date ASC")
-    .all()
-    .map((row) => ({ date: row.date, weightKg: Number(row.weight_kg) }));
+  return listWeightEntries().map(({ date, weightKg }) => ({ date, weightKg }));
+}
+
+function weightEntryFromRow(row) {
+  return {
+    date: row.date,
+    weightKg: Number(row.weight_kg),
+    source: row.source === "garmin" ? "garmin" : "manual",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function listAdaptiveGoalHistory() {
@@ -1446,6 +1559,7 @@ export function buildExportPayload() {
     mealFavorites: listMealFavoriteKeys(),
     mealTemplates: listMealTemplates(),
     weeklyAiAnalyses: listStoredWeeklyAnalyses(),
+    weights: listWeightEntries(),
     entries: listEntries(),
   };
 }
@@ -1463,6 +1577,7 @@ export function importFoodTrackerData(input) {
   const warnings = [];
   let nutritionConfigImported = false;
   let aiConfigImported = false;
+  let weightsImported = 0;
 
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -1500,6 +1615,14 @@ export function importFoodTrackerData(input) {
       }
     }
 
+    if (Array.isArray(input.weights)) {
+      database.prepare("DELETE FROM adaptive_weight_logs").run();
+      for (const weight of input.weights.slice(0, 10000)) {
+        saveAdaptiveWeightLog(weight);
+        weightsImported += 1;
+      }
+    }
+
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -1512,6 +1635,7 @@ export function importFoodTrackerData(input) {
 
   return {
     entriesImported: entries.length,
+    weightsImported,
     nutritionConfigImported,
     aiConfigImported,
     warnings,
@@ -1993,6 +2117,8 @@ function initializeDatabase(database) {
   addColumnIfMissing(database, "adaptive_goal_profile", "use_body_weight_deficit_limit", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "adaptive_goal_profile", "enforce_sex_minimum_calories", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "adaptive_goal_profile", "workout_credit_factors_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(database, "adaptive_weight_logs", "source", "TEXT NOT NULL DEFAULT 'manual'");
+  addColumnIfMissing(database, "adaptive_weight_logs", "external_id", "TEXT NOT NULL DEFAULT ''");
   database.exec("CREATE INDEX IF NOT EXISTS idx_weekly_ai_analyses_week_start ON weekly_ai_analyses(week_start DESC);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_entries_meal_id ON entries(meal_id);");
   database.exec("CREATE INDEX IF NOT EXISTS idx_adaptive_goal_history_created_at ON adaptive_goal_history(created_at DESC);");
@@ -2053,6 +2179,7 @@ async function runGarminScheduledSync() {
     await Promise.all([
       fetchAndStoreGarminDailySummary(date, config),
       fetchAndStoreGarminActivities(getWeekStart(date), config),
+      importGarminWeights({ startDate: addDays(date, -34), endDate: date }),
     ]);
   } finally {
     garminSchedulerRunning = false;
@@ -3417,6 +3544,20 @@ function normalizeGarminDate(value) {
   const raw = String(value ?? "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   return todayInBerlin();
+}
+
+function normalizeWeightDate(value) {
+  const raw = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error("Invalid weight date");
+  const parsed = new Date(`${raw}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw) {
+    throw new Error("Invalid weight date");
+  }
+  return raw;
+}
+
+function daysBetween(startDate, endDate) {
+  return Math.round((Date.parse(`${endDate}T12:00:00Z`) - Date.parse(`${startDate}T12:00:00Z`)) / 86_400_000);
 }
 
 function todayInBerlin() {

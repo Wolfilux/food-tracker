@@ -23,6 +23,8 @@ Die vorgeschlagene Branching- und Release-Strategie steht in
 ## Features
 
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
+- Mobile Gewichtserfassung im Tagesprotokoll mit Datumswahl und Tageswert-Update
+- Chronologischer Gewichtsverlauf in der Analyse mit manuellen und optional importierten Garmin-Werten
 - Tagesziel mit Kalorien- und Makro-Fortschritt
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
 - Versionierter BLS-Import fuer generische/rohe Lebensmittel und deutsche Naehrwerte
@@ -33,7 +35,7 @@ Die vorgeschlagene Branching- und Release-Strategie steht in
 - Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
-- Optionaler Garmin-Connect-Abruf fuer Tagesverbrauch, Sportaktivitaeten und dynamisches Kalorienziel
+- Optionaler Garmin-Connect-Pull fuer Tagesverbrauch, Sportaktivitaeten, Gewicht und dynamisches Kalorienziel
 - Backup-Import und -Export ueber die Weboberflaeche
 - Progressive Web App fuer iPhone Home-Screen-Nutzung
 
@@ -59,6 +61,7 @@ Wichtige Checks vor Aenderungen am Release-Branch:
 ```bash
 npm run lint
 npm run build
+npm test
 npm run security:scan
 ```
 
@@ -176,6 +179,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 
 ### Tagesprotokoll
 
+- Im gut sichtbaren Gewichtsbereich Datum und Koerpergewicht in kg eintragen. Pro Tag wird genau ein Wert gespeichert; erneutes Speichern aktualisiert ihn.
 - Im Tab `Protokoll` Lebensmittel suchen oder manuell erfassen.
 - Menge, Einheit und Uhrzeit pruefen.
 - Eintrag speichern.
@@ -184,6 +188,8 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 ### Analyse
 
 - Im Tab `Analyse` die Woche wechseln.
+- Das Gewichtsdiagramm zeigt alle gespeicherten Werte chronologisch. Punkte unterscheiden manuelle Eingaben und Garmin-Importe.
+- `Garmin-Gewicht importieren` liest die letzten 365 Tage aus Garmin Connect. Bereits vorhandene manuelle Tageswerte werden nicht ueberschrieben.
 - Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
 - Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
 - `KI-Analyse` erzeugt eine Ampel und strukturierte Abschnitte zu Kurzfazit, Mustern, Timing, Makros, Alkohol, konkreten Lebensmittelempfehlungen, Garmin-Sportkontext und Plan fuer die kommende Woche.
@@ -210,6 +216,18 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 4. App vom Home-Screen starten.
 
 Die PWA nutzt `display: standalone`, iOS-Meta-Tags, Touch-Icons, sichere Viewport-Inset-Abstaende und einen Service Worker fuer App-Shell-Caching. API-Aufrufe bleiben online und werden nicht gecached.
+
+## Garmin-Gewicht: Moeglichkeiten und Grenzen
+
+Die installierte Integration `@gooin/garmin-connect` stellt mit `getWeightRange` einen lesenden Zugriff auf Garmin-Connect-Gewichtswerte bereit. Food Tracker nutzt diese Schnittstelle als Pull-Import:
+
+- Manueller Import in `Analyse -> Gewichtsentwicklung`: maximal 365 Tage pro Abruf.
+- Server-Auto-Sync: bei aktiviertem Garmin-Auto-Abruf werden zusaetzlich die letzten 35 Tage nachgezogen.
+- Garmin liefert Gewicht in Gramm; Food Tracker validiert, konvertiert und speichert in kg mit einer Nachkommastelle.
+- Manuelle Food-Tracker-Werte haben fuer dasselbe Datum Vorrang und werden durch Garmin nicht ersetzt.
+- Garmin-Zugangsdaten bleiben wie beim bestehenden Kalorien-/Aktivitaetsabruf serverseitig verschluesselt.
+
+Es gibt bewusst keinen Push zu Garmin. Obwohl die Bibliothek technisch auch eine `updateWeight`-Methode anbietet, ruft Food Tracker sie nirgends auf. In Food Tracker eingegebene Gewichte bleiben lokal; die Garmin-Erweiterung liest ausschliesslich Werte aus Garmin Connect. Garmin Connect ist eine inoffizielle, nicht von Garmin garantierte Webschnittstelle, daher koennen Login, MFA oder API-Aenderungen einen Pull voruebergehend verhindern.
 
 ## Roadmap
 

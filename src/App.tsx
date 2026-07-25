@@ -201,9 +201,29 @@ type GarminConfigDraft = {
 
 type ImportResult = {
   entriesImported: number;
+  weightsImported?: number;
   nutritionConfigImported: boolean;
   aiConfigImported: boolean;
   warnings: string[];
+};
+
+type WeightEntry = {
+  date: string;
+  weightKg: number;
+  source: "manual" | "garmin";
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type GarminWeightImportResult = {
+  source: string;
+  startDate: string;
+  endDate: string;
+  received: number;
+  imported: number;
+  skippedManual: number;
+  fetchedAt: string;
+  weights: WeightEntry[];
 };
 
 type GarminDailySummary = {
@@ -968,6 +988,13 @@ function App() {
   const [adaptiveTrainingDraft, setAdaptiveTrainingDraft] = useState("");
   const [adaptiveGoalState, setAdaptiveGoalState] = useState<"idle" | "loading" | "saving" | "saved" | "error">("idle");
   const [adaptiveGoalError, setAdaptiveGoalError] = useState("");
+  const [weightEntries, setWeightEntries] = useState<WeightEntry[]>([]);
+  const [weightDateDraft, setWeightDateDraft] = useState(todayLocal());
+  const [weightKgDraft, setWeightKgDraft] = useState("");
+  const [weightState, setWeightState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [weightMessage, setWeightMessage] = useState("");
+  const [garminWeightState, setGarminWeightState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [garminWeightMessage, setGarminWeightMessage] = useState("");
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [nutritionConfigLoadError, setNutritionConfigLoadError] = useState("");
   const [nutritionConfigAutoSaveEnabled, setNutritionConfigAutoSaveEnabled] = useState(false);
@@ -1244,6 +1271,7 @@ function App() {
         weeklyEmailConfigResult,
         garminConfigResult,
         adaptiveGoalResult,
+        weightsResult,
         mealsResult,
         mealFavoriteKeysResult,
       ] = await Promise.allSettled([
@@ -1254,6 +1282,7 @@ function App() {
         fetchWeeklyEmailConfig(),
         fetchGarminConfig(),
         fetchAdaptiveGoal(todayLocal()),
+        fetchWeights(),
         fetchMealTemplates(),
         fetchMealFavoriteKeys(),
       ]);
@@ -1292,6 +1321,11 @@ function App() {
         setAdaptiveDraft(adaptiveGoalResult.value.profile);
         setAdaptiveWeightDraft(String(adaptiveGoalResult.value.profile.currentWeightKg));
         setAdaptiveTrainingDraft(adaptiveGoalResult.value.profile.trainingTypes.join(", "));
+      }
+      if (weightsResult.status === "fulfilled") {
+        setWeightEntries(weightsResult.value);
+        const todayWeight = weightsResult.value.find((weight) => weight.date === todayLocal());
+        if (todayWeight) setWeightKgDraft(String(todayWeight.weightKg).replace(".", ","));
       }
       if (configResult.status === "fulfilled") {
         applyNutritionConfig(configResult.value, true);
@@ -1772,6 +1806,60 @@ function App() {
     } catch (error) {
       setAdaptiveGoalError(error instanceof Error ? error.message : "Adaptive Ziele konnten nicht gespeichert werden.");
       setAdaptiveGoalState("error");
+    }
+  }
+
+  async function saveWeightEntry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const weightKg = Number(weightKgDraft.replace(",", "."));
+    if (!Number.isFinite(weightKg) || weightKg < 35 || weightKg > 250) {
+      setWeightState("error");
+      setWeightMessage("Bitte ein Gewicht zwischen 35 und 250 kg eingeben.");
+      return;
+    }
+
+    setWeightState("saving");
+    setWeightMessage("");
+    try {
+      const savedWeight = await saveWeight(weightDateDraft, weightKg);
+      setWeightEntries((currentEntries) => [
+        ...currentEntries.filter((entry) => entry.date !== savedWeight.date),
+        savedWeight,
+      ].sort((left, right) => left.date.localeCompare(right.date)));
+      setWeightKgDraft(String(savedWeight.weightKg).replace(".", ","));
+      const goal = await fetchAdaptiveGoal(selectedDate);
+      setAdaptiveGoal(goal);
+      setAdaptiveDraft(goal.profile);
+      setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
+      setWeightState("saved");
+      setWeightMessage(`${savedWeight.weightKg.toLocaleString("de-DE")} kg für ${formatDateLabel(savedWeight.date)} gespeichert.`);
+    } catch (error) {
+      setWeightState("error");
+      setWeightMessage(error instanceof Error ? error.message : "Gewicht konnte nicht gespeichert werden.");
+    }
+  }
+
+  async function importGarminWeightHistory() {
+    const endDate = todayLocal();
+    const startDate = addDays(endDate, -364);
+    setGarminWeightState("loading");
+    setGarminWeightMessage("");
+    try {
+      const result = await importGarminWeights(startDate, endDate);
+      setWeightEntries(result.weights);
+      const goal = await fetchAdaptiveGoal(selectedDate);
+      setAdaptiveGoal(goal);
+      setAdaptiveDraft(goal.profile);
+      setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
+      setGarminWeightState("done");
+      setGarminWeightMessage(
+        result.received === 0
+          ? "Garmin hat im gewählten Zeitraum keine Gewichtswerte geliefert."
+          : `${result.imported} Garmin-Tage importiert${result.skippedManual > 0 ? ` · ${result.skippedManual} manuelle Werte beibehalten` : ""}.`,
+      );
+    } catch (error) {
+      setGarminWeightState("error");
+      setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht importiert werden.");
     }
   }
 
@@ -2401,12 +2489,14 @@ function App() {
     setImportExportMessage("");
     try {
       const result = await importBackupFile(file);
-      const [entriesResponse, configResponse, aiConfigResponse] = await Promise.all([
+      const [entriesResponse, configResponse, aiConfigResponse, weightsResponse] = await Promise.all([
         fetchEntries(),
         fetchNutritionConfig(),
         fetchAiConfig(),
+        fetchWeights(),
       ]);
       setEntries(entriesResponse);
+      setWeightEntries(weightsResponse);
       applyNutritionConfig(configResponse, true);
       setNutritionConfigLoadError("");
       setAiConfig(aiConfigResponse);
@@ -2415,6 +2505,7 @@ function App() {
       setImportExportState("done");
       setImportExportMessage([
         `${result.entriesImported.toLocaleString("de-DE")} Eintraege importiert.`,
+        result.weightsImported ? `${result.weightsImported.toLocaleString("de-DE")} Gewichtswerte importiert.` : "",
         result.nutritionConfigImported ? "Ziele uebernommen." : "",
         result.aiConfigImported ? "AI-Modell uebernommen." : "",
         ...(result.warnings ?? []),
@@ -2660,6 +2751,14 @@ function App() {
             <AnalysisSummaryMetric label="Kohlenhydrate" actual={weekSummary.carbs} target={weekSummary.carbsTarget} suffix="g" />
             <AnalysisSummaryMetric label="Fett" actual={weekSummary.fat} target={weekSummary.fatTarget} suffix="g" />
           </section>
+
+          <WeightTrendCard
+            entries={weightEntries}
+            hasGarminCredentials={hasGarminCredentials}
+            garminState={garminWeightState}
+            garminMessage={garminWeightMessage}
+            onGarminImport={() => void importGarminWeightHistory()}
+          />
 
           <GarminActivitiesCard
             week={selectedWeekGarminActivities}
@@ -3254,6 +3353,66 @@ function App() {
 
       {activeView === "tracker" && (
         <>
+      <form className="weight-entry-card" aria-label="Körpergewicht erfassen" onSubmit={saveWeightEntry}>
+        <div className="weight-entry-card__copy">
+          <span className="weight-entry-card__icon" aria-hidden="true"><Scale size={22} /></span>
+          <div>
+            <p className="eyebrow eyebrow--dark">Gewicht</p>
+            <h2>Körpergewicht erfassen</h2>
+            <span>Ein Wert pro Tag · manuelle Eingabe hat Vorrang vor Garmin.</span>
+          </div>
+        </div>
+        <div className="weight-entry-card__fields">
+          <label>
+            Datum
+            <input
+              type="date"
+              value={weightDateDraft}
+              max={todayLocal()}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                setWeightDateDraft(nextDate);
+                const existing = weightEntries.find((entry) => entry.date === nextDate);
+                setWeightKgDraft(existing ? String(existing.weightKg).replace(".", ",") : "");
+                setWeightState("idle");
+                setWeightMessage("");
+              }}
+              required
+            />
+          </label>
+          <label>
+            Gewicht in kg
+            <div className="weight-input">
+              <input
+                inputMode="decimal"
+                type="text"
+                value={weightKgDraft}
+                onChange={(event) => {
+                  setWeightKgDraft(event.target.value);
+                  setWeightState("idle");
+                  setWeightMessage("");
+                }}
+                placeholder="z. B. 82,4"
+                aria-describedby="weight-entry-status"
+                required
+              />
+              <span>kg</span>
+            </div>
+          </label>
+          <button className="primary-button" type="submit" disabled={weightState === "saving"}>
+            {weightState === "saving" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}
+            Speichern
+          </button>
+        </div>
+        <p
+          id="weight-entry-status"
+          className={weightState === "error" ? "weight-entry-card__status weight-entry-card__status--error" : "weight-entry-card__status"}
+          role="status"
+        >
+          {weightMessage || "Heute ist vorausgewählt; vorhandene Tageswerte werden aktualisiert."}
+        </p>
+      </form>
+
       <section className="metric-grid" aria-label="Tagessummen">
         <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
         <Metric icon={<Wine />} label="Alkohol" value={totals.alcoholCalories} suffix="kcal" />
@@ -4363,6 +4522,143 @@ function CalorieTimingPlan({
   );
 }
 
+function WeightTrendCard({
+  entries,
+  hasGarminCredentials,
+  garminState,
+  garminMessage,
+  onGarminImport,
+}: {
+  entries: WeightEntry[];
+  hasGarminCredentials: boolean;
+  garminState: "idle" | "loading" | "done" | "error";
+  garminMessage: string;
+  onGarminImport: () => void;
+}) {
+  const points = [...entries].sort((left, right) => left.date.localeCompare(right.date));
+  const latest = points.at(-1);
+  const first = points[0];
+  const delta = latest && first ? Math.round((latest.weightKg - first.weightKg) * 10) / 10 : 0;
+  const width = 900;
+  const height = 300;
+  const padding = { top: 26, right: 22, bottom: 42, left: 62 };
+  const weights = points.map((point) => point.weightKg);
+  const rawMin = weights.length > 0 ? Math.min(...weights) : 0;
+  const rawMax = weights.length > 0 ? Math.max(...weights) : 0;
+  const spread = Math.max(1, rawMax - rawMin);
+  const minWeight = Math.floor((rawMin - spread * 0.18) * 2) / 2;
+  const maxWeight = Math.ceil((rawMax + spread * 0.18) * 2) / 2;
+  const startTimestamp = first ? Date.parse(`${first.date}T12:00:00Z`) : 0;
+  const endTimestamp = latest ? Date.parse(`${latest.date}T12:00:00Z`) : startTimestamp;
+  const timeSpan = Math.max(1, endTimestamp - startTimestamp);
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const coordinates = points.map((point) => {
+    const timestamp = Date.parse(`${point.date}T12:00:00Z`);
+    return {
+      ...point,
+      x: padding.left + ((timestamp - startTimestamp) / timeSpan) * chartWidth,
+      y: padding.top + ((maxWeight - point.weightKg) / Math.max(0.1, maxWeight - minWeight)) * chartHeight,
+    };
+  });
+  const linePoints = coordinates.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const dateLabels = [...new Set(
+    Array.from({ length: Math.min(5, points.length) }, (_, index) => {
+      const pointIndex = points.length === 1 ? 0 : Math.round((index / (Math.min(5, points.length) - 1)) * (points.length - 1));
+      return points[pointIndex]?.date;
+    }).filter(Boolean),
+  )] as string[];
+
+  return (
+    <article className="weight-trend-card">
+      <div className="weight-trend-card__head">
+        <div>
+          <p className="eyebrow eyebrow--dark">
+            <Scale size={16} aria-hidden="true" />
+            Gewichtsentwicklung
+          </p>
+          <strong>{latest ? `${latest.weightKg.toLocaleString("de-DE")} kg` : "Noch kein Verlauf"}</strong>
+          <span>
+            {latest && first
+              ? `${points.length} ${points.length === 1 ? "Tag" : "Tage"} · ${formatSignedDecimal(delta)} kg seit ${formatDateLabel(first.date)}`
+              : "Erfasse dein erstes Gewicht im Protokoll."}
+          </span>
+        </div>
+        {hasGarminCredentials && (
+          <button className="secondary-button" type="button" disabled={garminState === "loading"} onClick={onGarminImport}>
+            {garminState === "loading" ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+            Garmin-Gewicht importieren
+          </button>
+        )}
+      </div>
+
+      {points.length === 0 ? (
+        <div className="weight-trend-empty">
+          <Scale size={34} aria-hidden="true" />
+          <strong>Noch keine Gewichtsdaten</strong>
+          <span>Nach der ersten Eingabe erscheint hier deine chronologische Entwicklung.</span>
+        </div>
+      ) : (
+        <div className="weight-chart-scroll">
+          <svg
+            className="weight-chart"
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-labelledby="weight-chart-title weight-chart-description"
+          >
+            <title id="weight-chart-title">Gewichtsverlauf</title>
+            <desc id="weight-chart-description">
+              {`${points.length} Gewichtswerte von ${first?.date} bis ${latest?.date}, zuletzt ${latest?.weightKg} Kilogramm.`}
+            </desc>
+            {Array.from({ length: 5 }, (_, index) => {
+              const ratio = index / 4;
+              const y = padding.top + ratio * chartHeight;
+              const weight = maxWeight - ratio * (maxWeight - minWeight);
+              return (
+                <g key={index}>
+                  <line className="weight-chart__grid" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+                  <text className="weight-chart__axis" x={padding.left - 12} y={y + 4} textAnchor="end">
+                    {weight.toLocaleString("de-DE", { maximumFractionDigits: 1 })}
+                  </text>
+                </g>
+              );
+            })}
+            {dateLabels.map((date) => {
+              const timestamp = Date.parse(`${date}T12:00:00Z`);
+              const x = padding.left + ((timestamp - startTimestamp) / timeSpan) * chartWidth;
+              return (
+                <text className="weight-chart__axis" x={x} y={height - 12} textAnchor="middle" key={date}>
+                  {formatCompactDate(date)}
+                </text>
+              );
+            })}
+            {coordinates.length > 1 && <polyline className="weight-chart__line" points={linePoints} />}
+            {coordinates.map((point) => (
+              <circle
+                className={point.source === "garmin" ? "weight-chart__point weight-chart__point--garmin" : "weight-chart__point"}
+                cx={point.x}
+                cy={point.y}
+                r={coordinates.length === 1 ? 7 : 4.5}
+                key={point.date}
+              >
+                <title>{`${formatDateLabel(point.date)}: ${point.weightKg.toLocaleString("de-DE")} kg · ${point.source === "garmin" ? "Garmin" : "manuell"}`}</title>
+              </circle>
+            ))}
+          </svg>
+        </div>
+      )}
+
+      <div className="weight-trend-card__foot">
+        <span><i className="weight-source-dot" /> Manuell</span>
+        <span><i className="weight-source-dot weight-source-dot--garmin" /> Garmin Pull-Import</span>
+        <small className={garminState === "error" ? "config-status config-status--error" : "config-status"}>
+          {garminMessage || (hasGarminCredentials ? "Garmin-Import liest bis zu 365 Tage; manuelle Werte bleiben erhalten." : "Garmin ist nicht verbunden. Manuelle Erfassung funktioniert unabhängig.")}
+        </small>
+      </div>
+    </article>
+  );
+}
+
 function WeeklyBarChart({ title, suffix, points }: { title: string; suffix: string; points: WeeklyChartPoint[] }) {
   const chartMax = Math.max(1, ...points.flatMap((point) => [point.actual, point.target])) * 1.12;
   const totalDelta = Math.round(points.reduce((sum, point) => point.countsInWeek ? sum + point.actual - point.target : sum, 0));
@@ -5077,13 +5373,36 @@ async function saveAdaptiveGoalProfile(profile: AdaptiveGoalProfile): Promise<Ad
 }
 
 async function saveAdaptiveWeight(date: string, weightKg: number) {
-  const response = await fetch("/api/adaptive-goal/weights", {
+  await saveWeight(date, weightKg);
+}
+
+async function fetchWeights(): Promise<WeightEntry[]> {
+  const response = await fetch("/api/weights");
+  const data = (await response.json()) as { weights?: WeightEntry[]; error?: string };
+  if (!response.ok || !Array.isArray(data.weights)) throw new Error(data.error ?? "Gewichte konnten nicht geladen werden.");
+  return data.weights;
+}
+
+async function saveWeight(date: string, weightKg: number): Promise<WeightEntry> {
+  const response = await fetch("/api/weights", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ date, weightKg }),
   });
-  const data = (await response.json()) as { error?: string };
-  if (!response.ok) throw new Error(data.error ?? "Gewicht konnte nicht gespeichert werden.");
+  const data = (await response.json()) as { weight?: WeightEntry; error?: string };
+  if (!response.ok || !data.weight) throw new Error(data.error ?? "Gewicht konnte nicht gespeichert werden.");
+  return data.weight;
+}
+
+async function importGarminWeights(startDate: string, endDate: string): Promise<GarminWeightImportResult> {
+  const response = await fetch("/api/weights/garmin-import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ startDate, endDate }),
+  });
+  const data = (await response.json()) as { result?: GarminWeightImportResult; error?: string };
+  if (!response.ok || !data.result) throw new Error(data.error ?? "Garmin-Gewicht konnte nicht importiert werden.");
+  return data.result;
 }
 
 async function updateAdaptiveRecommendation(action: "accept" | "reject", date: string, reason: string): Promise<AdaptiveGoalOverview> {
@@ -5843,6 +6162,18 @@ function formatDateLabel(value: string) {
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatCompactDate(value: string) {
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(new Date(`${value}T12:00:00`));
+}
+
+function formatSignedDecimal(value: number) {
+  if (value === 0) return "±0";
+  return `${value > 0 ? "+" : ""}${value.toLocaleString("de-DE", { maximumFractionDigits: 1 })}`;
 }
 
 function formatWeekdayShort(value: string) {
