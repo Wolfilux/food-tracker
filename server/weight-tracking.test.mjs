@@ -156,4 +156,43 @@ test("Garmin import reports the protected manual value and received Garmin value
   assert.deepEqual(result.weights.map(({ date, weightKg, source }) => ({ date, weightKg, source })), [
     { date: "2026-07-25", weightKg: 125, source: "manual" },
   ]);
+
+  const adopted = await databaseModule.importGarminWeights(
+    { startDate: "2026-07-25", endDate: "2026-07-25", overwriteManual: true },
+    {
+      getGarminWeightRange: async () => ({
+        source: "garmin-connect",
+        fetchedAt: "2026-07-25T06:40:00.000Z",
+        weights: [
+          { date: "2026-07-25", weightKg: 114.3, source: "garmin", externalId: "garmin-today" },
+        ],
+      }),
+    },
+  );
+
+  assert.equal(adopted.imported, 1);
+  assert.equal(adopted.skippedManual, 0);
+  assert.equal(adopted.overwrittenManual, 1);
+  assert.deepEqual(adopted.conflicts, []);
+  assert.deepEqual(adopted.weights.map(({ date, weightKg, source }) => ({ date, weightKg, source })), [
+    { date: "2026-07-25", weightKg: 114.3, source: "garmin" },
+  ]);
+});
+
+test("Garmin manual overwrite is limited to one explicit date", async (context) => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "food-tracker-weight-overwrite-range-"));
+  context.after(async () => {
+    await rm(dataDirectory, { recursive: true });
+  });
+  process.env.FOOD_TRACKER_DATA_DIR = dataDirectory;
+
+  const databaseModule = await import(`./food-db.js?weight-overwrite-range-test=${Date.now()}`);
+  await assert.rejects(
+    databaseModule.importGarminWeights({
+      startDate: "2026-07-24",
+      endDate: "2026-07-25",
+      overwriteManual: true,
+    }),
+    /single date/,
+  );
 });

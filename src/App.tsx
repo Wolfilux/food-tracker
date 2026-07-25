@@ -223,6 +223,7 @@ type GarminWeightImportResult = {
   received: number;
   imported: number;
   skippedManual: number;
+  overwrittenManual: number;
   conflicts: GarminWeightConflict[];
   fetchedAt: string;
   weights: WeightEntry[];
@@ -997,6 +998,7 @@ function App() {
   const [weightMessage, setWeightMessage] = useState("");
   const [garminWeightState, setGarminWeightState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [garminWeightMessage, setGarminWeightMessage] = useState("");
+  const [garminWeightConflict, setGarminWeightConflict] = useState<GarminWeightConflict | null>(null);
   const [isConfigLoaded, setConfigLoaded] = useState(false);
   const [nutritionConfigLoadError, setNutritionConfigLoadError] = useState("");
   const [nutritionConfigAutoSaveEnabled, setNutritionConfigAutoSaveEnabled] = useState(false);
@@ -1436,6 +1438,7 @@ function App() {
     setWeekGarminActivityState("loading");
     setGarminWeightState("loading");
     setGarminWeightMessage("");
+    setGarminWeightConflict(null);
     try {
       const [summary, activityWeek, weightResult] = await Promise.all([
         fetchGarminDailySummary(selectedDate, true),
@@ -1453,6 +1456,7 @@ function App() {
       setWeekGarminActivityState(activityWeek.error ? "error" : "done");
       setGarminWeightState("done");
       setGarminWeightMessage(formatGarminWeightImportStatus(weightResult, selectedDate));
+      setGarminWeightConflict(weightResult.conflicts.find((conflict) => conflict.date === selectedDate) ?? null);
     } catch (error) {
       setGarminSummary(null);
       setGarminState("error");
@@ -1858,6 +1862,7 @@ function App() {
     const startDate = addDays(endDate, -364);
     setGarminWeightState("loading");
     setGarminWeightMessage("");
+    setGarminWeightConflict(null);
     try {
       const result = await importGarminWeights(startDate, endDate);
       setWeightEntries(result.weights);
@@ -1867,9 +1872,36 @@ function App() {
       setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
       setGarminWeightState("done");
       setGarminWeightMessage(formatGarminWeightImportStatus(result, endDate));
+      setGarminWeightConflict(result.conflicts.find((conflict) => conflict.date === selectedDate) ?? null);
     } catch (error) {
       setGarminWeightState("error");
       setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht importiert werden.");
+    }
+  }
+
+  async function adoptGarminWeight(conflict: GarminWeightConflict) {
+    setGarminWeightState("loading");
+    setGarminWeightMessage("");
+    try {
+      const result = await importGarminWeights(conflict.date, conflict.date, true);
+      const adopted = result.weights.find((weight) => weight.date === conflict.date);
+      if (!adopted || adopted.source !== "garmin") {
+        throw new Error("Garmin-Gewicht konnte nicht übernommen werden.");
+      }
+      setWeightEntries(result.weights);
+      const goal = await fetchAdaptiveGoal(selectedDate);
+      setAdaptiveGoal(goal);
+      setAdaptiveDraft(goal.profile);
+      setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
+      if (weightDateDraft === conflict.date) {
+        setWeightKgDraft(String(adopted.weightKg).replace(".", ","));
+      }
+      setGarminWeightConflict(null);
+      setGarminWeightState("done");
+      setGarminWeightMessage(`Garmin-Wert ${adopted.weightKg.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg für ${formatDateLabel(adopted.date)} übernommen.`);
+    } catch (error) {
+      setGarminWeightState("error");
+      setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht übernommen werden.");
     }
   }
 
@@ -2702,6 +2734,16 @@ function App() {
                 <small className={garminWeightState === "error" ? "goal-card__garmin-status goal-card__garmin-status--error" : "goal-card__garmin-status"} role="status" aria-live="polite">
                   {garminWeightMessage}
                 </small>
+              )}
+              {garminWeightConflict && (
+                <button
+                  className="goal-card__garmin-apply"
+                  type="button"
+                  disabled={garminWeightState === "loading"}
+                  onClick={() => void adoptGarminWeight(garminWeightConflict)}
+                >
+                  {garminWeightConflict.garminWeightKg.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg von Garmin übernehmen
+                </button>
               )}
             </div>
           )}
@@ -5411,11 +5453,11 @@ async function saveWeight(date: string, weightKg: number): Promise<WeightEntry> 
   return data.weight;
 }
 
-async function importGarminWeights(startDate: string, endDate: string): Promise<GarminWeightImportResult> {
+async function importGarminWeights(startDate: string, endDate: string, overwriteManual = false): Promise<GarminWeightImportResult> {
   const response = await fetch("/api/weights/garmin-import", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ startDate, endDate }),
+    body: JSON.stringify({ startDate, endDate, overwriteManual }),
   });
   const data = (await response.json()) as { result?: GarminWeightImportResult; error?: string };
   if (!response.ok || !data.result) throw new Error(data.error ?? "Garmin-Gewicht konnte nicht importiert werden.");

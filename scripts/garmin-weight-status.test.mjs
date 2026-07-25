@@ -47,4 +47,7 @@ test("the prominent Garmin refresh imports weight and renders its status", async
   assert.match(appSource, /importGarminWeights\(selectedDate, selectedDate\)/);
   assert.match(appSource, /goal-card__garmin-status/);
   assert.match(appSource, /formatGarminWeightImportStatus\(weightResult, selectedDate\)/);
+  assert.match(appSource, /adoptGarminWeight\(garminWeightConflict\)/);
+  assert.match(appSource, /kg von Garmin übernehmen/);
+  assert.match(appSource, /importGarminWeights\(conflict\.date, conflict\.date, true\)/);
 });

@@ -1096,7 +1096,7 @@ export function saveAdaptiveGoalProfile(input) {
   return getAdaptiveGoalProfile();
 }
 
-export function saveAdaptiveWeightLog(input) {
+export function saveAdaptiveWeightLog(input, options = {}) {
   const date = normalizeWeightDate(input?.date);
   const weightKg = Number(input?.weightKg);
   if (!Number.isFinite(weightKg) || weightKg < 35 || weightKg > 250) {
@@ -1109,7 +1109,7 @@ export function saveAdaptiveWeightLog(input) {
   const existing = getFoodDatabase()
     .prepare("SELECT date, weight_kg, source, created_at, updated_at FROM adaptive_weight_logs WHERE date = ?")
     .get(date);
-  if (source === "garmin" && existing?.source === "manual") {
+  if (source === "garmin" && existing?.source === "manual" && options.overwriteManual !== true) {
     return {
       ...weightEntryFromRow(existing),
       skipped: "manual-entry",
@@ -1162,8 +1162,12 @@ export function listWeightEntries(fromInput, toInput) {
 export async function importGarminWeights(input = {}, dependencies = {}) {
   const endDate = input?.endDate ? normalizeWeightDate(input.endDate) : todayInBerlin();
   const startDate = input?.startDate ? normalizeWeightDate(input.startDate) : addDays(endDate, -364);
+  const overwriteManual = input?.overwriteManual === true;
   if (startDate > endDate || daysBetween(startDate, endDate) > 366) {
     throw new Error("Garmin weight import supports a maximum range of 367 days");
+  }
+  if (overwriteManual && startDate !== endDate) {
+    throw new Error("Manual weight overwrite requires a single date");
   }
 
   const config = getGarminConfigRecord();
@@ -1177,9 +1181,13 @@ export async function importGarminWeights(input = {}, dependencies = {}) {
 
   let imported = 0;
   let skippedManual = 0;
+  let overwrittenManual = 0;
   const conflicts = [];
   for (const weight of result.weights) {
-    const stored = saveAdaptiveWeightLog(weight);
+    const previous = overwriteManual
+      ? getFoodDatabase().prepare("SELECT source FROM adaptive_weight_logs WHERE date = ?").get(weight.date)
+      : undefined;
+    const stored = saveAdaptiveWeightLog(weight, { overwriteManual });
     if (stored.skipped === "manual-entry") {
       skippedManual += 1;
       conflicts.push({
@@ -1189,6 +1197,7 @@ export async function importGarminWeights(input = {}, dependencies = {}) {
       });
     } else {
       imported += 1;
+      if (previous?.source === "manual") overwrittenManual += 1;
     }
   }
 
@@ -1200,6 +1209,7 @@ export async function importGarminWeights(input = {}, dependencies = {}) {
     received: result.weights.length,
     imported,
     skippedManual,
+    overwrittenManual,
     conflicts,
     fetchedAt: result.fetchedAt,
     weights: listWeightEntries(),

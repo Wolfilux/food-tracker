@@ -1206,6 +1206,28 @@ h1 {
   color: var(--color-danger);
 }
 
+.goal-card__garmin-apply {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  color: #fff8eb;
+  background: #236245;
+  border: 1px solid rgba(255, 248, 235, 0.28);
+  border-radius: 7px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.goal-card__garmin-apply:hover:not(:disabled) {
+  background: #174b34;
+}
+
+.goal-card__garmin-apply:focus-visible {
+  outline: 3px solid rgba(213, 139, 49, 0.72);
+  outline-offset: 2px;
+}
+
 .calorie-timing-card__head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
