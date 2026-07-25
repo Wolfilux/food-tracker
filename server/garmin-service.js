@@ -219,17 +219,17 @@ export function normalizeGarminWeightRange(payload, startDate, endDate) {
 
   for (const summary of summaries) {
     const metrics = Array.isArray(summary?.allWeightMetrics) ? summary.allWeightMetrics : [];
-    const latestMetric = summary?.latestWeight ?? metrics.at(-1);
-    const date = normalizeWeightDate(summary?.summaryDate ?? latestMetric?.calendarDate);
-    const weightKg = normalizeWeightKg(latestMetric?.weight);
-    if (!date || weightKg === undefined || date < startDate || date > endDate) continue;
+    const latestMetric = summary?.latestWeight ?? metrics.at(-1) ?? summary?.totalAverage;
+    addNormalizedWeight(byDate, latestMetric, summary?.summaryDate, startDate, endDate);
+  }
 
-    byDate.set(date, {
-      date,
-      weightKg,
-      source: "garmin",
-      externalId: latestMetric?.samplePk === undefined ? "" : String(latestMetric.samplePk),
-    });
+  const dayMetrics = Array.isArray(payload?.dateWeightList) ? payload.dateWeightList : [];
+  for (const metric of dayMetrics) {
+    addNormalizedWeight(byDate, metric, metric?.calendarDate, startDate, endDate);
+  }
+
+  if (dayMetrics.length === 0 && payload?.totalAverage) {
+    addNormalizedWeight(byDate, payload.totalAverage, payload?.startDate ?? payload?.endDate, startDate, endDate);
   }
 
   return {
@@ -242,15 +242,28 @@ export function normalizeGarminWeightRange(payload, startDate, endDate) {
   };
 }
 
+function addNormalizedWeight(byDate, metric, fallbackDate, startDate, endDate) {
+  const date = normalizeWeightDate(fallbackDate ?? metric?.calendarDate);
+  const weightKg = normalizeWeightKg(metric?.weight ?? metric?.weightKg);
+  if (!date || weightKg === undefined || date < startDate || date > endDate) return;
+
+  byDate.set(date, {
+    date,
+    weightKg,
+    source: "garmin",
+    externalId: metric?.samplePk === undefined ? "" : String(metric.samplePk),
+  });
+}
+
 function normalizeWeightDate(value) {
   const raw = String(value ?? "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
 }
 
 function normalizeWeightKg(value) {
-  const grams = Number(value);
-  if (!Number.isFinite(grams)) return undefined;
-  const weightKg = grams / 1000;
+  const rawWeight = Number(value);
+  if (!Number.isFinite(rawWeight)) return undefined;
+  const weightKg = rawWeight >= 35 && rawWeight <= 250 ? rawWeight : rawWeight / 1000;
   if (weightKg < 35 || weightKg > 250) return undefined;
   return Math.round(weightKg * 10) / 10;
 }
