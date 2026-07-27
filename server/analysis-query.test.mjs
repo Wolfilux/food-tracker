@@ -82,12 +82,14 @@ test("preserves multiple explicit rolling ranges in one comparison", () => {
 
 test("resolves named months and month comparisons", () => {
   const june = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni?", options);
+  const eatenInJune = resolveExplicitAnalysisPlan("Was habe ich im Juni gegessen?", options);
   const previousYearJune = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni letzten Jahres?", options);
   const genitivePreviousYearJune = resolveExplicitAnalysisPlan("Wie war Juni des Vorjahres?", options);
   assert.deepEqual(june.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2026-06-01",
     to: "2026-06-30",
   }]);
+  assert.deepEqual(eatenInJune.focus, ["nutrition"]);
   assert.deepEqual(previousYearJune.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2025-06-01",
     to: "2025-06-30",
