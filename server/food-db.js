@@ -2545,8 +2545,9 @@ function buildAnalysisPeriodContext(period, plan) {
     const dateEntries = entriesByDate.get(date) ?? [];
     const totals = summarizeEntryTotals(dateEntries);
     const dateActivities = activitiesByDate.get(date) ?? [];
-    const activityTotals = summarizeGarminActivities(dateActivities);
     const garminSummary = getGarminCachedSummary(date);
+    const activityTotals = summarizeAnalysisActivity(dateActivities, garminSummary);
+    const garminSummaryAvailable = Boolean(garminSummary);
     const calorieTarget = calculateAnalysisCalorieBenchmark({
       date,
       nutritionConfig,
@@ -2565,8 +2566,8 @@ function buildAnalysisPeriodContext(period, plan) {
       calorieTarget,
       macroTargets,
       activityTotals,
-      activityDataAvailable: cachedActivityWeeks.has(getWeekStart(date)),
-      garminSummaryAvailable: garminConfigured && Boolean(garminSummary),
+      activityDataAvailable: cachedActivityWeeks.has(getWeekStart(date)) || garminSummaryAvailable,
+      garminSummaryAvailable,
       weight: weightsByDate.get(date),
     };
   });
@@ -2678,7 +2679,8 @@ function summarizeAnalysisDays(days) {
     count: sum.count + day.activityTotals.count,
     calories: sum.calories + day.activityTotals.calories,
     durationMinutes: sum.durationMinutes + day.activityTotals.durationMinutes,
-  }), { count: 0, calories: 0, durationMinutes: 0 });
+    steps: sum.steps + day.activityTotals.steps,
+  }), { count: 0, calories: 0, durationMinutes: 0, steps: 0 });
   const divisor = loggedDays.length || 1;
   const targetDivisor = targetDays.length || 1;
   const targetCoverageComplete = loggedDays.length > 0 && targetDays.length === loggedDays.length;
@@ -2707,6 +2709,7 @@ function summarizeAnalysisDays(days) {
       count: activityTotals.count,
       calories: Math.round(activityTotals.calories),
       durationMinutes: Math.round(activityTotals.durationMinutes),
+      steps: Math.round(activityTotals.steps),
       daysAvailable: activityDays.length,
       daysMissing: days.length - activityDays.length,
     },
@@ -2745,6 +2748,7 @@ function buildAnalysisDayContext(day, focus) {
       ...(day.activityDataAvailable ? {
         activityCalories: Math.round(day.activityTotals.calories),
         activityMinutes: Math.round(day.activityTotals.durationMinutes),
+        activitySteps: Math.round(day.activityTotals.steps),
       } : { activityDataAvailable: false }),
     } : {}),
     ...(focus.includes("weight") ? { weightKg: day.weight?.weightKg } : {}),
@@ -3477,6 +3481,23 @@ function summarizeGarminActivities(activities) {
     durationMinutes: sum.durationMinutes + Number(activity.durationSeconds ?? activity.movingDurationSeconds ?? 0) / 60,
     distanceMeters: sum.distanceMeters + Number(activity.distanceMeters ?? 0),
   }), { count: 0, calories: 0, durationMinutes: 0, distanceMeters: 0 });
+}
+
+function summarizeAnalysisActivity(activities, garminSummary) {
+  const activityTotals = summarizeGarminActivities(activities);
+  const summaryActiveCalories = optionalNonNegativeNumber(garminSummary?.activeKilocalories);
+  const summarySteps = optionalNonNegativeNumber(garminSummary?.steps ?? garminSummary?.totalSteps);
+  return {
+    ...activityTotals,
+    calories: summaryActiveCalories ?? activityTotals.calories,
+    steps: summarySteps ?? 0,
+  };
+}
+
+function optionalNonNegativeNumber(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : undefined;
 }
 
 function compactGarminActivity(activity) {

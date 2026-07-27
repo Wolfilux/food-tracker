@@ -146,7 +146,7 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     "VALUES (?, ?, ?)",
   ].join("\n")).run(
     "2026-06-08",
-    JSON.stringify({ date: "2026-06-08", configured: true, activeKilocalories: 500 }),
+    JSON.stringify({ date: "2026-06-08", configured: true, activeKilocalories: 500, steps: 8500 }),
     "2026-06-09T00:00:00.000Z",
   );
   const partialTargetContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
@@ -157,6 +157,27 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal("currentProteinBenchmark" in partialTargetAverages, false);
   assert.equal("currentCarbsBenchmark" in partialTargetAverages, false);
   assert.equal("currentFatBenchmark" in partialTargetAverages, false);
+
+  const dailySummaryActivityPlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Garmin-Tagessummary", from: "2026-06-08", to: "2026-06-14" }],
+    focus: ["activity"],
+    includeDailyDetails: true,
+  }, {
+    anchorWeekStart: "2026-06-08",
+    today: "2026-07-27",
+  });
+  const dailySummaryActivityContext = databaseModule.buildAnalysisDataContext(
+    dailySummaryActivityPlan,
+    { userKey: "default" },
+  );
+  assert.equal(dailySummaryActivityContext.dataPresence.activityCount, 0);
+  assert.equal(dailySummaryActivityContext.dataPresence.activityDaysAvailable, 1);
+  assert.equal(dailySummaryActivityContext.dataPresence.hasAnyData, true);
+  assert.equal(dailySummaryActivityContext.periods[0].summary.activity.calories, 500);
+  assert.equal(dailySummaryActivityContext.periods[0].summary.activity.steps, 8500);
+  assert.equal(dailySummaryActivityContext.periods[0].summary.activity.daysMissing, 6);
+  assert.equal(dailySummaryActivityContext.periods[0].days[0].activityCalories, 500);
+  assert.equal(dailySummaryActivityContext.periods[0].days[0].activitySteps, 8500);
 
   databaseModule.getFoodDatabase().prepare([
     "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
