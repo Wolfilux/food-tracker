@@ -2562,6 +2562,10 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
   const cachedActivityWeek = includeDayValues ? getGarminCachedActivities(getWeekStart(date)) : null;
   const weekActivities = cachedActivityWeek?.activities ?? [];
   const activities = weekActivities.filter((activity) => String(activity.date ?? "").slice(0, 10) === date);
+  const activityDateCovered = includeDayValues && (
+    activities.length > 0
+    || listCachedActivitiesForRange(date, date).coveredDates.includes(date)
+  );
   const workoutCalories = Math.round(summarizeGarminActivities(activities).calories);
   const dailyIntake = includeDayValues ? listDailyCalories(date, date)[0] : undefined;
   const intakeCalories = dailyIntake?.calories ?? 0;
@@ -2595,6 +2599,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
       configured: garminConfigured,
       dailySummaryAvailable: includeDayValues ? garminSummaryAvailable : undefined,
       activityWeekCacheAvailable: includeDayValues ? Boolean(cachedActivityWeek) : undefined,
+      activityDateCovered: includeDayValues ? activityDateCovered : undefined,
       allDayActiveCalories: includeDayValues ? activeCalories : undefined,
       allDayActiveCaloriesSource: "Garmin-Tagessumme activeKilocalories",
       totalCalories: includeDayValues && garminSummaryAvailable
@@ -2680,7 +2685,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
     && profile.garminEnabled
     && garminConfigured
     && !garminSummaryAvailable
-    && !cachedActivityWeek;
+    && !activityDateCovered;
   const calculation = calculateDailyGoal({
     profile,
     adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
@@ -2688,6 +2693,8 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
     activities: profile.garminEnabled ? activities : [],
   });
   const estimatedMaintenanceToday = calculation.maintenance + calculation.activityAdjustment;
+  const calorieTargetAvailable = includeDayValues
+    && (calculation.hasManualOverride || !missingRequiredGarminData);
   return {
     ...common,
     mode: "adaptive",
@@ -2726,7 +2733,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
       unavailableReason: !includeDayValues
         ? "Der Referenztag liegt außerhalb der angefragten Zeiträume; Tageswerte wurden bewusst nicht geladen."
         : missingRequiredGarminData
-        ? "Garmin ist aktiviert, aber Tagessumme und Aktivitätswochen-Cache fehlen; Aktivität ist unbekannt statt 0."
+        ? "Garmin ist aktiviert, aber Tagessumme und Tagesabdeckung im Aktivitätscache fehlen; Aktivität und Energiebilanz sind unbekannt statt 0."
         : intakeEntryCount === 0
         ? "Keine Kalorienaufnahme protokolliert; Zielwerte sind verfügbar, die Energiebilanz jedoch nicht."
         : undefined,
@@ -2744,7 +2751,8 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
       activityCap: calculation.activity.cap,
       activityNote: calculation.activity.note,
       recommendedToday: includeDayValues && !missingRequiredGarminData ? calculation.recommendedToday : undefined,
-      finalCalorieTarget: includeDayValues && !missingRequiredGarminData ? calculation.finalGoal : undefined,
+      calorieTargetAvailable,
+      finalCalorieTarget: calorieTargetAvailable ? calculation.finalGoal : undefined,
       hasManualOverride: calculation.hasManualOverride,
       estimatedMaintenanceToday: includeDayValues && !missingRequiredGarminData
         ? estimatedMaintenanceToday
@@ -2752,7 +2760,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
       estimatedEnergyBalanceCalories: includeDayValues && !missingRequiredGarminData && intakeEntryCount > 0
         ? Math.round(estimatedMaintenanceToday - intakeCalories)
         : undefined,
-      targetDeltaCalories: includeDayValues && !missingRequiredGarminData && intakeEntryCount > 0
+      targetDeltaCalories: calorieTargetAvailable && intakeEntryCount > 0
         ? Math.round(calculation.finalGoal - intakeCalories)
         : undefined,
     },

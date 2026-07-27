@@ -336,7 +336,31 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(adaptiveMissingGarminEnergy.results.dayValuesAvailable, false);
   assert.equal(adaptiveMissingGarminEnergy.results.finalCalorieTarget, undefined);
   assert.equal(adaptiveMissingGarminEnergy.results.estimatedEnergyBalanceCalories, undefined);
-  assert.match(adaptiveMissingGarminEnergy.results.unavailableReason, /Aktivität ist unbekannt statt 0/);
+  assert.match(adaptiveMissingGarminEnergy.results.unavailableReason, /Aktivität.*unbekannt statt 0/);
+  const adaptiveUncoveredCacheEnergy = databaseModule.buildEnergyCalculationContext("2026-06-19");
+  assert.equal(adaptiveUncoveredCacheEnergy.garmin.activityWeekCacheAvailable, true);
+  assert.equal(adaptiveUncoveredCacheEnergy.garmin.activityDateCovered, false);
+  assert.equal(adaptiveUncoveredCacheEnergy.results.dayValuesAvailable, false);
+
+  databaseModule.createEntry({
+    foodName: "Override-Test",
+    quantityValue: 100,
+    quantityUnit: "g",
+    caloriesPer100g: 100,
+    consumedAt: "2026-06-09T12:00",
+  });
+  databaseModule.saveAdaptiveGoalProfile({
+    ...originalAdaptiveProfile,
+    enabled: true,
+    garminEnabled: true,
+    manualOverrideCalories: 1750,
+  });
+  const adaptiveManualOverrideEnergy = databaseModule.buildEnergyCalculationContext("2026-06-09");
+  assert.equal(adaptiveManualOverrideEnergy.results.dayValuesAvailable, false);
+  assert.equal(adaptiveManualOverrideEnergy.results.calorieTargetAvailable, true);
+  assert.equal(adaptiveManualOverrideEnergy.results.finalCalorieTarget, 1750);
+  assert.equal(adaptiveManualOverrideEnergy.results.targetDeltaCalories, 1650);
+  assert.equal(adaptiveManualOverrideEnergy.results.estimatedEnergyBalanceCalories, undefined);
   databaseModule.saveAdaptiveGoalProfile({
     ...originalAdaptiveProfile,
     enabled: false,
