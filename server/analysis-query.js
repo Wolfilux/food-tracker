@@ -81,7 +81,8 @@ export function resolveExplicitAnalysisPlan(question, options) {
   const focus = inferFocus(normalizedQuestion);
   const periods = [];
 
-  const weeksMatches = [...normalizedQuestion.matchAll(/\b(?:letzte[nr]?|vergangene[nr]?)\s+(\d{1,2})\s+wochen?\b/g)];
+  const weeksMatches = [...normalizedQuestion.matchAll(/\b(?:letzte[nr]?|vergangene[nr]?)\s+(\d{1,2})\s+wochen?\b(?!\s+davor)/g)];
+  const precedingWeeksMatch = normalizedQuestion.match(/\b(?:letzte[nr]?\s+)?(\d{1,2})\s+wochen?\s+davor\b/);
   for (const [matchIndex, weeksMatch] of weeksMatches.slice(0, analysisQueryLimits.maxPeriods).entries()) {
     const weekCount = Number(weeksMatch[1]);
     if (weekCount >= 1 && weekCount <= 52) {
@@ -92,12 +93,15 @@ export function resolveExplicitAnalysisPlan(question, options) {
       };
       periods.push(currentPeriod);
       if (matchIndex === 0 && /\b(?:davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/.test(normalizedQuestion)) {
+        const precedingWeekCount = Number(precedingWeeksMatch?.[1] ?? weekCount);
         const previousTo = addDays(currentPeriod.from, -1);
-        periods.push({
-          label: `${weekCount} Wochen davor`,
-          from: addDays(previousTo, -(weekCount * 7) + 1),
-          to: previousTo,
-        });
+        if (precedingWeekCount >= 1 && precedingWeekCount <= 52) {
+          periods.push({
+            label: `${precedingWeekCount} Wochen davor`,
+            from: addDays(previousTo, -(precedingWeekCount * 7) + 1),
+            to: previousTo,
+          });
+        }
       }
     }
   }
@@ -130,33 +134,31 @@ export function resolveExplicitAnalysisPlan(question, options) {
     });
   }
 
-  if (periods.length === 0) {
-    const monthMatches = [...normalizedQuestion.matchAll(/\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/g)];
-    const wantsMonths = monthMatches.length > 1
-      || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
-    if (wantsMonths) {
-      const resolvedMonths = resolveMonthPeriods(monthMatches, anchorEnd);
-      const continuousMonthRange = monthMatches.length >= 2
-        && (/\bbis\b/.test(normalizedQuestion)
-          || /\bzwischen\b.*\bund\b/.test(normalizedQuestion));
-      if (continuousMonthRange) {
-        const first = resolvedMonths[0];
-        const last = resolvedMonths[1];
-        if (!monthMatches[0][2] && !monthMatches[1][2] && first.from > last.from) {
-          first.year -= 1;
-          first.from = firstDayOfMonth(first.year, first.month);
-          first.to = lastDayOfMonth(first.year, first.month);
-          first.label = `${capitalize(monthMatches[0][1])} ${first.year}`;
-        }
-        periods.push({
-          label: `${first.label} bis ${last.label}`,
-          from: first.from,
-          to: last.to,
-        });
-      } else {
-        for (const period of resolvedMonths.slice(0, analysisQueryLimits.maxPeriods)) {
-          periods.push({ label: period.label, from: period.from, to: period.to });
-        }
+  const monthMatches = [...normalizedQuestion.matchAll(/\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/g)];
+  const wantsMonths = monthMatches.length > 1
+    || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
+  if (wantsMonths) {
+    const resolvedMonths = resolveMonthPeriods(monthMatches, anchorEnd);
+    const continuousMonthRange = monthMatches.length >= 2
+      && (/\bbis\b/.test(normalizedQuestion)
+        || /\bzwischen\b.*\bund\b/.test(normalizedQuestion));
+    if (continuousMonthRange) {
+      const first = resolvedMonths[0];
+      const last = resolvedMonths[1];
+      if (!monthMatches[0][2] && !monthMatches[1][2] && first.from > last.from) {
+        first.year -= 1;
+        first.from = firstDayOfMonth(first.year, first.month);
+        first.to = lastDayOfMonth(first.year, first.month);
+        first.label = `${capitalize(monthMatches[0][1])} ${first.year}`;
+      }
+      periods.push({
+        label: `${first.label} bis ${last.label}`,
+        from: first.from,
+        to: last.to,
+      });
+    } else {
+      for (const period of resolvedMonths.slice(0, analysisQueryLimits.maxPeriods)) {
+        periods.push({ label: period.label, from: period.from, to: period.to });
       }
     }
   }

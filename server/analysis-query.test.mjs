@@ -38,6 +38,18 @@ test("adds the preceding rolling range when the question asks for a comparison",
   ]);
 });
 
+test("honors a differently sized preceding rolling range", () => {
+  const plan = resolveExplicitAnalysisPlan(
+    "Vergleiche die letzten 4 Wochen mit den 8 Wochen davor",
+    options,
+  );
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
+    { label: "8 Wochen davor", from: "2026-05-04", to: "2026-06-28" },
+  ]);
+});
+
 test("preserves multiple explicit rolling ranges in one comparison", () => {
   const plan = resolveExplicitAnalysisPlan(
     "Vergleiche die letzten 4 Wochen mit den letzten 8 Wochen",
@@ -63,6 +75,20 @@ test("resolves named months and month comparisons", () => {
     { from: "2026-06-01", to: "2026-06-30" },
   ]);
   assert.equal(comparison.includeDailyDetails, false);
+});
+
+test("keeps named months in mixed month and week comparisons", () => {
+  const rolling = resolveExplicitAnalysisPlan("Vergleiche die letzten 4 Wochen mit Juni", options);
+  const isoWeek = resolveExplicitAnalysisPlan("Vergleiche KW 20 mit Juni", options);
+
+  assert.deepEqual(rolling.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2026-06-29", to: "2026-07-26" },
+    { from: "2026-06-01", to: "2026-06-30" },
+  ]);
+  assert.deepEqual(isoWeek.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2026-05-11", to: "2026-05-17" },
+    { from: "2026-06-01", to: "2026-06-30" },
+  ]);
 });
 
 test("keeps intervening months in a continuous named-month range", () => {
