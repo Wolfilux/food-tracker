@@ -107,6 +107,23 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(missingGarminContext.periods[0].days[0].calorieTargetAvailable, false);
 
   databaseModule.getFoodDatabase().prepare([
+    "INSERT INTO garmin_daily_summary (date, summary_json, fetched_at)",
+    "VALUES (?, ?, ?)",
+  ].join("\n")).run(
+    "2026-06-08",
+    JSON.stringify({ date: "2026-06-08", configured: true, activeKilocalories: 500 }),
+    "2026-06-09T00:00:00.000Z",
+  );
+  const partialTargetContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
+  const partialTargetAverages = partialTargetContext.periods[0].summary.averagesPerLoggedDay;
+  assert.equal(partialTargetAverages.targetDaysAvailable, 1);
+  assert.equal(partialTargetAverages.targetDaysMissing, 1);
+  assert.equal("calorieTarget" in partialTargetAverages, false);
+  assert.equal("proteinTarget" in partialTargetAverages, false);
+  assert.equal("carbsTarget" in partialTargetAverages, false);
+  assert.equal("fatTarget" in partialTargetAverages, false);
+
+  databaseModule.getFoodDatabase().prepare([
     "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
     "VALUES (?, ?, ?, ?)",
   ].join("\n")).run("2026-05-04", "2026-05-10", "[]", "2026-05-11T00:00:00.000Z");
@@ -147,9 +164,32 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     model: "gpt-4o-mini",
   });
   const originalFetch = globalThis.fetch;
-  let requestBody;
+  const requestBodies = [];
   globalThis.fetch = async (_url, options) => {
-    requestBody = JSON.parse(String(options?.body ?? "{}"));
+    const requestBody = JSON.parse(String(options?.body ?? "{}"));
+    requestBodies.push(requestBody);
+    if (requestBody.tools) {
+      return new globalThis.Response(JSON.stringify({
+        choices: [{
+          message: {
+            tool_calls: [{
+              type: "function",
+              function: {
+                name: "query_tracker_data",
+                arguments: JSON.stringify({
+                  periods: [{ label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" }],
+                  focus: ["nutrition", "weight"],
+                  includeDailyDetails: true,
+                }),
+              },
+            }],
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new globalThis.Response(JSON.stringify({
       choices: [{ message: { content: "Im Juni sind zwei protokollierte Tage vorhanden." } }],
     }), {
@@ -169,10 +209,26 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(answer.period.periods[0].from, "2026-06-01");
     assert.equal(answer.period.periods[0].to, "2026-06-30");
     assert.equal(answer.period.defaulted, false);
-    const prompt = requestBody.messages.at(-1).content;
+    const prompt = requestBodies.at(-1).messages.at(-1).content;
     assert.match(prompt, /Skyr mit Beeren/);
     assert.equal(prompt.includes("Nicht im Zeitraum"), false);
     assert.equal(prompt.includes("another-user"), false);
+
+    requestBodies.length = 0;
+    const followUp = await databaseModule.answerAnalysisQuestion({
+      question: "Und im Vergleich dazu?",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Juni?" },
+        { role: "assistant", content: answer.answer },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.match(requestBodies[0].messages.at(-2).content, /Ausgewerteter Zeitraum: Juni 2026/);
+    assert.equal(followUp.period.periods[0].from, "2026-06-01");
+    assert.equal(followUp.period.defaulted, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

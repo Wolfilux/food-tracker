@@ -2281,7 +2281,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
     availableTo: coverage.to,
   };
   let queryPlan = resolveExplicitAnalysisPlan(question, planOptions);
-  if (!queryPlan && !hasAnalysisTimeReference(question)) {
+  if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
     queryPlan = inferDefaultAnalysisPlan(question, planOptions);
   }
   if (!queryPlan) {
@@ -2559,6 +2559,7 @@ function summarizeAnalysisDays(days) {
   }), { count: 0, calories: 0, durationMinutes: 0 });
   const divisor = loggedDays.length || 1;
   const targetDivisor = targetDays.length || 1;
+  const targetCoverageComplete = loggedDays.length > 0 && targetDays.length === loggedDays.length;
   const weightDays = days.filter((day) => day.weight);
 
   return {
@@ -2567,17 +2568,17 @@ function summarizeAnalysisDays(days) {
     entries: totals.entries,
     averagesPerLoggedDay: {
       calories: Math.round(totals.calories / divisor),
-      ...(targetDays.length > 0 ? {
+      ...(targetCoverageComplete ? {
         calorieTarget: Math.round(totals.calorieTarget / targetDivisor),
       } : {}),
       targetDaysAvailable: targetDays.length,
       targetDaysMissing: loggedDays.length - targetDays.length,
       protein: roundNutrition(totals.protein / divisor),
-      ...(targetDays.length > 0 ? { proteinTarget: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { proteinTarget: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
       carbs: roundNutrition(totals.carbs / divisor),
-      ...(targetDays.length > 0 ? { carbsTarget: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { carbsTarget: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
       fat: roundNutrition(totals.fat / divisor),
-      ...(targetDays.length > 0 ? { fatTarget: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { fatTarget: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
       alcoholCalories: Math.round(totals.alcoholCalories / divisor),
     },
     activity: {
