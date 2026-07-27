@@ -2265,7 +2265,8 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
   assertAnalysisUserScope(scope.userKey);
   const today = todayInBerlin();
   const anchorDate = input?.weekStart ? normalizeWeightDate(input.weekStart) : today;
-  const anchorWeekStart = getWeekStart(anchorDate);
+  const requestedAnchorWeekStart = getWeekStart(anchorDate);
+  const anchorWeekStart = requestedAnchorWeekStart > today ? getWeekStart(today) : requestedAnchorWeekStart;
   const config = getAnalysisAiConfigRecord();
   const provider = aiProviders.get(config.provider);
   if (!provider || !config.apiKey) throw new Error("Analyse-KI ist nicht konfiguriert.");
@@ -2286,7 +2287,8 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
     && /\b(?:das|dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
       question.toLocaleLowerCase("de-DE"),
     );
-  let queryPlan = referencesHistory || hasUnresolvedAnalysisTimeReference(question) ? null : explicitPlan;
+  const requiresPlanner = referencesHistory || hasUnresolvedAnalysisTimeReference(question);
+  let queryPlan = requiresPlanner ? null : explicitPlan;
   if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
     queryPlan = inferDefaultAnalysisPlan(question, planOptions);
   }
@@ -2300,6 +2302,9 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
         options: planOptions,
       });
     } catch (error) {
+      if (requiresPlanner) {
+        throw new Error("Der angefragte Zeitraum konnte nicht sicher aufgelöst werden.", { cause: error });
+      }
       console.warn("Analysis data-query planning fell back to a bounded default:", error instanceof Error ? error.message : error);
       queryPlan = explicitPlan ?? inferDefaultAnalysisPlan(question, planOptions);
     }

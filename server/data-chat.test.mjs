@@ -263,6 +263,21 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     }, { userKey: "default" });
     assert.equal(requestBodies.length, 2);
     assert.equal(Array.isArray(requestBodies[0].tools), true);
+
+    globalThis.fetch = async () => new globalThis.Response(JSON.stringify({
+      choices: [{ message: { content: "" } }],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    await assert.rejects(
+      () => databaseModule.answerAnalysisQuestion({
+        question: "Was habe ich gestern gegessen?",
+        weekStart: "2026-07-20",
+        history: [],
+      }, { userKey: "default" }),
+      /Zeitraum konnte nicht sicher aufgelöst/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

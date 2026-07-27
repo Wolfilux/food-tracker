@@ -169,6 +169,19 @@ test("resolves selected and previous weeks as separate comparison periods", () =
   ]);
 });
 
+test("clamps a future selected week to the current partial week", () => {
+  const plan = resolveExplicitAnalysisPlan("Wie läuft diese Woche?", {
+    ...options,
+    anchorWeekStart: "2026-08-03",
+    today: "2026-07-29",
+  });
+
+  assert.deepEqual(plan.periods.map(({ from, to }) => ({ from, to })), [{
+    from: "2026-07-27",
+    to: "2026-07-29",
+  }]);
+});
+
 test("keeps the selected week when comparing it with a named month", () => {
   const plan = resolveExplicitAnalysisPlan("Vergleiche Juni mit dieser Woche", options);
 

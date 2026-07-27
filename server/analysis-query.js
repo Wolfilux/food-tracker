@@ -75,8 +75,11 @@ export function buildAnalysisQueryTool({ anchorWeekStart, today, availableFrom, 
 
 export function resolveExplicitAnalysisPlan(question, options) {
   const normalizedQuestion = normalizeQuestion(question);
-  const anchorWeekStart = normalizeDate(options.anchorWeekStart, "Ausgewählte Woche");
   const today = normalizeDate(options.today, "Heute");
+  const requestedAnchorWeekStart = normalizeDate(options.anchorWeekStart, "Ausgewählte Woche");
+  const anchorWeekStart = requestedAnchorWeekStart > today
+    ? startOfIsoWeek(today)
+    : requestedAnchorWeekStart;
   const anchorEnd = minDate(addDays(anchorWeekStart, 6), today);
   const focus = inferFocus(normalizedQuestion);
   const periods = [];
@@ -194,8 +197,11 @@ export function resolveExplicitAnalysisPlan(question, options) {
 }
 
 export function inferDefaultAnalysisPlan(question, options) {
-  const anchorWeekStart = normalizeDate(options.anchorWeekStart, "Ausgewählte Woche");
   const today = normalizeDate(options.today, "Heute");
+  const requestedAnchorWeekStart = normalizeDate(options.anchorWeekStart, "Ausgewählte Woche");
+  const anchorWeekStart = requestedAnchorWeekStart > today
+    ? startOfIsoWeek(today)
+    : requestedAnchorWeekStart;
   const anchorEnd = minDate(addDays(anchorWeekStart, 6), today);
   const normalizedQuestion = normalizeQuestion(question);
   const focus = inferFocus(normalizedQuestion);
@@ -318,6 +324,13 @@ function isoWeekStart(year, week) {
   const weekday = januaryFourth.getUTCDay() || 7;
   januaryFourth.setUTCDate(januaryFourth.getUTCDate() - weekday + 1 + ((week - 1) * 7));
   return januaryFourth.toISOString().slice(0, 10);
+}
+
+function startOfIsoWeek(date) {
+  const parsed = new Date(`${date}T12:00:00Z`);
+  const weekday = parsed.getUTCDay() || 7;
+  parsed.setUTCDate(parsed.getUTCDate() - weekday + 1);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function firstDayOfMonth(year, month) {
