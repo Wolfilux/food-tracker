@@ -359,7 +359,17 @@ function resolveMonthPeriods(matches, anchorEnd) {
     if (Number.isFinite(resolvedYears[index])) continue;
     const crossesIntoJanuary = monthNames.get(matches[index - 1][1]) === 12
       && monthNames.get(matches[index][1]) === 1;
-    resolvedYears[index] = resolvedYears[index - 1] + (crossesIntoJanuary ? 1 : 0);
+    const betweenMatches = matches[index].input.slice(
+      matches[index - 1].index + matches[index - 1][0].length,
+      matches[index].index,
+    );
+    const requestsPreviousMonth = /\b(?:vorherige[nr]?|vorangegangene[nr]?|davor|zuvor)\b/.test(betweenMatches);
+    const crossesBackIntoDecember = monthNames.get(matches[index - 1][1]) === 1
+      && monthNames.get(matches[index][1]) === 12
+      && requestsPreviousMonth;
+    resolvedYears[index] = resolvedYears[index - 1]
+      + (crossesIntoJanuary ? 1 : 0)
+      - (crossesBackIntoDecember ? 1 : 0);
   }
   for (let index = knownYearIndex - 1; index >= 0; index -= 1) {
     if (Number.isFinite(resolvedYears[index])) continue;
