@@ -92,6 +92,25 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     /Unzulässiger Datenbereich/,
   );
 
+  const originalAdaptiveProfile = databaseModule.getAdaptiveGoalProfile();
+  databaseModule.saveAdaptiveGoalProfile({
+    ...originalAdaptiveProfile,
+    enabled: true,
+    garminEnabled: false,
+    manualOverrideCalories: 1750,
+  });
+  const adaptiveBenchmarkContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
+  assert.equal(adaptiveBenchmarkContext.periods[0].summary.averagesPerLoggedDay.currentCalorieBenchmark, 1750);
+  assert.equal(adaptiveBenchmarkContext.periods[0].days[0].currentCalorieBenchmark, 1750);
+  databaseModule.saveAdaptiveGoalProfile({
+    ...originalAdaptiveProfile,
+    enabled: false,
+    manualOverrideCalories: 0,
+  });
+  databaseModule.getFoodDatabase()
+    .prepare("DELETE FROM adaptive_weight_logs WHERE date = ?")
+    .run("2026-07-27");
+
   const partialWeekPlan = normalizeAnalysisQueryPlan({
     periods: [{ label: "Teilwochen", from: "2026-06-10", to: "2026-06-16" }],
     focus: ["nutrition"],

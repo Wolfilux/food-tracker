@@ -2536,19 +2536,27 @@ function buildAnalysisPeriodContext(period, plan) {
   }
   const nutritionConfig = getNutritionConfig();
   const preset = nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance;
+  const adaptiveProfile = getAdaptiveGoalProfile();
+  const adaptiveWeightLogs = adaptiveProfile.enabled ? listAdaptiveWeightLogs() : [];
+  const adaptiveDailyCalories = adaptiveProfile.enabled
+    ? listDailyCalories(addDays(period.from, -27), period.to)
+    : [];
   const days = buildDateRange(period.from, period.to).map((date) => {
     const dateEntries = entriesByDate.get(date) ?? [];
     const totals = summarizeEntryTotals(dateEntries);
     const dateActivities = activitiesByDate.get(date) ?? [];
     const activityTotals = summarizeGarminActivities(dateActivities);
     const garminSummary = getGarminCachedSummary(date);
-    const calorieTarget = garminConfigured && !garminSummary
-      ? undefined
-      : calculateEffectiveCalorieGoal(
-        nutritionConfig.calorieGoal,
-        nutritionConfig.calorieGoalOffset,
-        garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
-      );
+    const calorieTarget = calculateAnalysisCalorieBenchmark({
+      date,
+      nutritionConfig,
+      adaptiveProfile,
+      adaptiveWeightLogs,
+      adaptiveDailyCalories,
+      garminConfigured,
+      garminSummary,
+      dateActivities,
+    });
     const macroTargets = Number.isFinite(calorieTarget) ? calculateMacroTargets(calorieTarget, preset) : undefined;
     return {
       date,
@@ -2598,6 +2606,45 @@ function buildAnalysisPeriodContext(period, plan) {
       days: days.map((day) => buildAnalysisDayContext(day, plan.focus)),
     } : {}),
   };
+}
+
+function calculateAnalysisCalorieBenchmark({
+  date,
+  nutritionConfig,
+  adaptiveProfile,
+  adaptiveWeightLogs,
+  adaptiveDailyCalories,
+  garminConfigured,
+  garminSummary,
+  dateActivities,
+}) {
+  if (!adaptiveProfile.enabled) {
+    return garminConfigured && !garminSummary
+      ? undefined
+      : calculateEffectiveCalorieGoal(
+        nutritionConfig.calorieGoal,
+        nutritionConfig.calorieGoalOffset,
+        garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
+      );
+  }
+  if (adaptiveProfile.garminEnabled && garminConfigured && !garminSummary) return undefined;
+
+  const latestWeight = adaptiveWeightLogs.filter((log) => log.date <= date).at(-1);
+  const profileForCalculation = normalizeAdaptiveGoalProfile({
+    ...adaptiveProfile,
+    currentWeightKg: latestWeight?.weightKg ?? adaptiveProfile.currentWeightKg,
+  }, adaptiveProfile);
+  const adaptiveMaintenance = calculateAdaptiveMaintenance(
+    adaptiveDailyCalories.filter((day) => day.date >= addDays(date, -27) && day.date <= date),
+    adaptiveWeightLogs,
+    date,
+  );
+  return calculateDailyGoal({
+    profile: profileForCalculation,
+    adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
+    summary: profileForCalculation.garminEnabled ? garminSummary : undefined,
+    activities: profileForCalculation.garminEnabled ? dateActivities : [],
+  }).finalGoal;
 }
 
 function summarizeAnalysisDays(days) {
