@@ -491,6 +491,7 @@ h1 {
 .analysis-chat-empty { padding: 18px; border: 1px dashed rgba(36,64,58,.25); border-radius: 12px; }
 .analysis-chat-message { width: fit-content; max-width: min(88%, 720px); padding: 11px 13px; white-space: pre-wrap; border-radius: 14px 14px 14px 4px; background: #edf2ee; line-height: 1.5; }
 .analysis-chat-message--user { justify-self: end; color: #fff8eb; background: var(--color-primary); border-radius: 14px 14px 4px 14px; }
+.analysis-chat-context { display: flex; align-items: flex-start; gap: 5px; width: fit-content; max-width: 100%; margin-top: 8px; padding-top: 7px; border-top: 1px solid rgba(36,64,58,.14); color: var(--color-muted); font-size: .76rem; font-weight: 750; line-height: 1.35; white-space: normal; }
 .analysis-chat-loading { display: flex; align-items: center; gap: 8px; }
 .analysis-chat-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
 .analysis-chat-form textarea { resize: vertical; min-height: 54px; }

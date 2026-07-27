@@ -468,6 +468,12 @@ type WeeklyAiAnalysis = {
   updatedAt?: string;
 };
 
+type AnalysisChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  periodLabel?: string;
+};
+
 type AiUsageSnapshot = {
   provider: string;
   model: string;
@@ -1052,7 +1058,7 @@ function App() {
   const [weeklyAiState, setWeeklyAiState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [weeklyAiError, setWeeklyAiError] = useState("");
   const [analysisQuestion, setAnalysisQuestion] = useState("");
-  const [analysisChat, setAnalysisChat] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [analysisChat, setAnalysisChat] = useState<AnalysisChatMessage[]>([]);
   const [analysisChatState, setAnalysisChatState] = useState<"idle" | "loading" | "error">("idle");
   const [analysisChatError, setAnalysisChatError] = useState("");
   const [calorieIdeas, setCalorieIdeas] = useState<CalorieIdea[]>([]);
@@ -1933,9 +1939,17 @@ function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question, weekStart: selectedWeekStart, history }),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Antwort konnte nicht erstellt werden.");
-      setAnalysisChat((current) => [...current, { role: "assistant", content: payload.answer }]);
+      const payload = await response.json() as {
+        answer?: string;
+        error?: string;
+        period?: { label?: string };
+      };
+      if (!response.ok || !payload.answer) throw new Error(payload.error || "Antwort konnte nicht erstellt werden.");
+      setAnalysisChat((current) => [...current, {
+        role: "assistant",
+        content: payload.answer ?? "",
+        periodLabel: payload.period?.label,
+      }]);
       setAnalysisChatState("idle");
     } catch (error) {
       setAnalysisChatState("error");
@@ -2910,17 +2924,24 @@ function App() {
           <section className="analysis-chat-card" aria-label="KI-Datenchat">
             <div>
               <p className="eyebrow eyebrow--dark"><MessageSquareText size={16} aria-hidden="true" /> Datenchat</p>
-              <h2>Frag deine Woche</h2>
-              <p>Antworten beziehen sich auf {formatWeekRange(weekDates)} und dienen der Orientierung, nicht als medizinische Diagnose.</p>
+              <h2>Frag deine Daten</h2>
+              <p>Die ausgewählte Woche {formatWeekRange(weekDates)} dient als zeitlicher Anker. Konkrete Angaben wie „letzte 4 Wochen“, „im Juni“ oder „seit Januar“ werden dynamisch abgefragt.</p>
             </div>
             <div className="analysis-chat-log" aria-live="polite">
-              {analysisChat.length === 0 && <p className="analysis-chat-empty">Zum Beispiel: „Warum habe ich zugenommen?“ oder „Was sollte ich nächste Woche ändern?“</p>}
-              {analysisChat.map((message, index) => <article className={`analysis-chat-message analysis-chat-message--${message.role}`} key={`${message.role}-${index}`}>{message.content}</article>)}
-              {analysisChatState === "loading" && <p className="analysis-chat-loading"><Loader2 className="spin" size={17} /> Daten werden begrenzt aufbereitet …</p>}
+              {analysisChat.length === 0 && <p className="analysis-chat-empty">Zum Beispiel: „Wie war mein Gewichtstrend in den letzten 8 Wochen?“ oder „Vergleiche Juni und Juli.“</p>}
+              {analysisChat.map((message, index) => (
+                <article className={`analysis-chat-message analysis-chat-message--${message.role}`} key={`${message.role}-${index}`}>
+                  {message.content}
+                  {message.role === "assistant" && message.periodLabel && (
+                    <small className="analysis-chat-context"><CalendarDays size={13} aria-hidden="true" /> Kontext: {message.periodLabel}</small>
+                  )}
+                </article>
+              ))}
+              {analysisChatState === "loading" && <p className="analysis-chat-loading"><Loader2 className="spin" size={17} /> Passender Zeitraum wird sicher abgefragt …</p>}
             </div>
             <form className="analysis-chat-form" onSubmit={askAnalysisQuestion}>
               <label className="visually-hidden" htmlFor="analysis-question">Frage zu deinen Daten</label>
-              <textarea id="analysis-question" value={analysisQuestion} maxLength={500} rows={2} onChange={(event) => setAnalysisQuestion(event.target.value)} placeholder="Was fällt dir an meiner Woche auf?" disabled={!analysisAiConfig.hasApiKey} />
+              <textarea id="analysis-question" value={analysisQuestion} maxLength={500} rows={2} onChange={(event) => setAnalysisQuestion(event.target.value)} placeholder="Was fällt dir in den letzten 4 Wochen auf?" disabled={!analysisAiConfig.hasApiKey} />
               <button className="primary-button" type="submit" disabled={!analysisQuestion.trim() || analysisChatState === "loading" || !analysisAiConfig.hasApiKey}><Sparkles size={17} /> Fragen</button>
             </form>
             {analysisChatState === "error" && <p className="config-status config-status--error" role="alert">{analysisChatError}</p>}

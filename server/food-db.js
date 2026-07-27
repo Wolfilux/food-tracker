@@ -19,6 +19,14 @@ import {
   normalizeAdaptiveGoalProfile,
   rollingWeightAverage,
 } from "./adaptive-goals.js";
+import {
+  buildAnalysisQueryTool,
+  hasAnalysisTimeReference,
+  hasUnresolvedAnalysisTimeReference,
+  inferDefaultAnalysisPlan,
+  normalizeAnalysisQueryPlan,
+  resolveExplicitAnalysisPlan,
+} from "./analysis-query.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dataDirectory = process.env.FOOD_TRACKER_DATA_DIR || join(here, "..", "data");
@@ -405,7 +413,7 @@ export function createFoodApiMiddleware() {
 
     if (url.pathname === "/api/ai/data-chat" && request.method === "POST") {
       try {
-        sendJson(response, await answerAnalysisQuestion(await readJsonBody(request)));
+        sendJson(response, await answerAnalysisQuestion(await readJsonBody(request), { userKey: "default" }));
       } catch (error) {
         sendJson(response, { error: error.message }, 400);
       }
@@ -2250,14 +2258,15 @@ export function isWeeklyEmailDue(berlinNow) {
   return day > 0 || Number(berlinNow.hour) >= 1;
 }
 
-async function answerAnalysisQuestion(input) {
-  const question = String(input?.question ?? "").trim().slice(0, 500);
+export async function answerAnalysisQuestion(input, scope = { userKey: "default" }) {
+  const question = String(input?.question ?? "").trim();
   if (!question) throw new Error("Bitte eine Frage eingeben.");
-  const weekStart = normalizeWeekStart(input?.weekStart ?? todayInBerlin());
-  const summary = buildWeeklyAnalysis(weekStart);
-  if (!summary.loggedDayCount && !listWeightEntries().some((entry) => entry.date >= weekStart && entry.date <= summary.weekEnd)) {
-    throw new Error("Für diesen Zeitraum sind noch keine Ernährungs- oder Gewichtsdaten vorhanden.");
-  }
+  if (question.length > 500) throw new Error("Die Frage darf höchstens 500 Zeichen lang sein.");
+  assertAnalysisUserScope(scope.userKey);
+  const today = todayInBerlin();
+  const anchorDate = input?.weekStart ? normalizeWeightDate(input.weekStart) : today;
+  const requestedAnchorWeekStart = getWeekStart(anchorDate);
+  const anchorWeekStart = requestedAnchorWeekStart > today ? getWeekStart(today) : requestedAnchorWeekStart;
   const config = getAnalysisAiConfigRecord();
   const provider = aiProviders.get(config.provider);
   if (!provider || !config.apiKey) throw new Error("Analyse-KI ist nicht konfiguriert.");
@@ -2266,11 +2275,64 @@ async function answerAnalysisQuestion(input) {
     role: message?.role === "assistant" ? "assistant" : "user",
     content: String(message?.content ?? "").slice(0, 800),
   }));
-  const context = await buildWeeklyPromptPayload(summary);
-  context.weights = listWeightEntries()
-    .filter((entry) => entry.date >= addDays(weekStart, -28) && entry.date <= summary.weekEnd)
-    .slice(-35)
-    .map(({ date, weightKg, source }) => ({ date, weightKg, source }));
+  const coverage = getAnalysisDataCoverage();
+  const planOptions = {
+    anchorWeekStart,
+    today,
+    availableFrom: coverage.from,
+    availableTo: coverage.to,
+  };
+  const explicitPlan = resolveExplicitAnalysisPlan(question, planOptions);
+  const normalizedQuestion = question.toLocaleLowerCase("de-DE");
+  const explicitHistoryReference = /\b(?:dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
+    normalizedQuestion,
+  );
+  const adjectiveComparison = /\b(?:besser|schlechter|mehr|weniger|höher|hoeher|niedriger|größer|groesser|kleiner|stärker|staerker|schwächer|schwaecher|anders)\b[^?!.]{0,80}\bals\b/.test(
+    normalizedQuestion,
+  );
+  const incompleteComparison = (explicitPlan?.periods.length ?? 0) < 2
+    && (
+      adjectiveComparison
+      || /\b(?:vergleich(?:e|en)?|verglichen|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion)
+    );
+  const referencesHistory = safeHistory.length > 0 && explicitHistoryReference;
+  const requiresPlanner = referencesHistory || incompleteComparison || hasUnresolvedAnalysisTimeReference(question);
+  let queryPlan = requiresPlanner ? null : explicitPlan;
+  if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
+    queryPlan = inferDefaultAnalysisPlan(question, planOptions);
+  }
+  if (!queryPlan) {
+    try {
+      queryPlan = await planAnalysisDataQuery({
+        question,
+        history: safeHistory,
+        provider,
+        config,
+        options: planOptions,
+      });
+    } catch (error) {
+      if (requiresPlanner) {
+        throw new Error("Der angefragte Zeitraum konnte nicht sicher aufgelöst werden.", { cause: error });
+      }
+      console.warn("Analysis data-query planning fell back to a bounded default:", error instanceof Error ? error.message : error);
+      queryPlan = explicitPlan ?? inferDefaultAnalysisPlan(question, planOptions);
+    }
+  }
+
+  const context = buildAnalysisDataContext(queryPlan, scope);
+  const period = {
+    label: queryPlan.periodLabel,
+    periods: queryPlan.periods.map(({ label, from, to }) => ({ label, from, to })),
+    defaulted: queryPlan.defaulted,
+    detailLevel: queryPlan.includeDailyDetails ? "daily" : "weekly",
+  };
+  if (!context.dataPresence.hasAnyData) {
+    return {
+      answer: `Ausgewerteter Zeitraum: ${queryPlan.periodLabel}\n\nFür diesen Zeitraum liegen keine Ernährungs-, Gewichts- oder Aktivitätsdaten vor.`,
+      period,
+    };
+  }
+
   const response = await fetch(provider.endpoint, {
     method: "POST",
     headers: {
@@ -2282,9 +2344,21 @@ async function answerAnalysisQuestion(input) {
       model: config.model,
       temperature: 0.3,
       messages: [
-        { role: "system", content: "Du bist ein deutschsprachiger Ernährungscoach. Antworte konkret und knapp ausschließlich anhand des bereitgestellten, begrenzten Tracker-Kontexts. Benenne Zeitraum und Datenlücken. Keine medizinische Diagnose. Behaupte keine Kausalität, die die Daten nicht belegen." },
+        {
+          role: "system",
+          content: [
+            "Du bist ein deutschsprachiger Ernährungscoach.",
+            "Antworte konkret und knapp ausschließlich anhand des serverseitig abgefragten, begrenzten Tracker-Kontexts.",
+            "Benenne Datenlücken und unterscheide Beobachtung, Korrelation und Vermutung.",
+            "Behaupte keine Kausalität, die die Daten nicht belegen.",
+            "Fehlende Garmin-Cache-Wochen bedeuten nicht Inaktivität; fehlende Garmin-Tagessummen bedeuten nicht, dass das Basis-Kalorienziel galt.",
+            "Alle als currentBenchmark bezeichneten Zielwerte stammen aus der heutigen Konfiguration und dürfen nicht als historisch gültige Ziele dargestellt werden.",
+            "Keine medizinische Diagnose.",
+            "Der ausgewertete Zeitraum wird von der Anwendung automatisch vor deine Antwort gesetzt; wiederhole ihn nicht als eigene Überschrift.",
+          ].join(" "),
+        },
         ...safeHistory,
-        { role: "user", content: `Tracker-Kontext: ${JSON.stringify(context)}\nFrage: ${question}` },
+        { role: "user", content: `Serverseitig abgefragter Tracker-Kontext: ${JSON.stringify(context)}\nFrage: ${question}` },
       ],
     }),
   });
@@ -2292,7 +2366,671 @@ async function answerAnalysisQuestion(input) {
   if (!response.ok) throw new Error(String(payload?.error?.message ?? "KI-Anfrage fehlgeschlagen."));
   const answer = String(payload?.choices?.[0]?.message?.content ?? "").trim();
   if (!answer) throw new Error("Die KI hat keine verständliche Antwort geliefert.");
-  return { answer: answer.slice(0, 6000), period: { weekStart, weekEnd: summary.weekEnd } };
+  return {
+    answer: `Ausgewerteter Zeitraum: ${queryPlan.periodLabel}\n\n${answer.slice(0, 6000)}`,
+    period,
+  };
+}
+
+async function planAnalysisDataQuery({ question, history, provider, config, options }) {
+  try {
+    return await planAnalysisDataQueryWithTool({ question, history, provider, config, options });
+  } catch (toolError) {
+    try {
+      return await planAnalysisDataQueryWithJson({ question, history, provider, config, options });
+    } catch (jsonError) {
+      throw new AggregateError(
+        [toolError, jsonError],
+        "Die KI konnte keine gültige Datenabfrage planen.",
+        { cause: jsonError },
+      );
+    }
+  }
+}
+
+async function planAnalysisDataQueryWithTool({ question, history, provider, config, options }) {
+  const tool = buildAnalysisQueryTool(options);
+  const planningHistory = history.slice(-4).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 320),
+  }));
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? { "HTTP-Referer": "http://localhost:5173", "X-Title": "Food Tracker" } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Plane ausschließlich eine minimale Tracker-Datenabfrage und rufe query_tracker_data auf.",
+            "Antworte nicht auf die Ernährungsfrage.",
+            "Gewichtsfragen benötigen neben weight normalerweise nutrition und activity, damit nur belegbare Zusammenhänge geprüft werden.",
+            "Wenn kein Zeitraum genannt ist: für Gewichts-/Trendfragen acht Wochen, sonst vier Wochen bis zum Ende der ausgewählten Woche.",
+          ].join(" "),
+        },
+        ...planningHistory,
+        { role: "user", content: question },
+      ],
+      tools: [tool],
+      tool_choice: { type: "function", function: { name: "query_tracker_data" } },
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "KI-Zeitraumplanung fehlgeschlagen."));
+  const toolCall = payload?.choices?.[0]?.message?.tool_calls?.find((candidate) => (
+    candidate?.type === "function" && candidate?.function?.name === "query_tracker_data"
+  ));
+  if (!toolCall) throw new Error("Die KI hat keine Datenabfrage geliefert.");
+  let argumentsValue;
+  try {
+    argumentsValue = JSON.parse(String(toolCall.function.arguments ?? "{}"));
+  } catch {
+    throw new Error("Die KI hat ungültige Abfrageparameter geliefert.");
+  }
+  return normalizeAnalysisQueryPlan(argumentsValue, options);
+}
+
+async function planAnalysisDataQueryWithJson({ question, history, provider, config, options }) {
+  const planningHistory = history.slice(-4).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 320),
+  }));
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? { "HTTP-Referer": "http://localhost:5173", "X-Title": "Food Tracker" } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Plane ausschließlich eine minimale Tracker-Datenabfrage; beantworte nicht die Ernährungsfrage.",
+            "Antworte ausschließlich als JSON-Objekt mit periods (1 bis 3 Objekte aus label, from, to), focus",
+            "(nutrition, weight, activity, habits, goals) und includeDailyDetails (boolean).",
+            `Je Zeitraum maximal 366 Tage, insgesamt maximal 400 Tage; heute ist ${options.today}.`,
+            `Relative Angaben beziehen sich auf ${options.anchorWeekStart} bis ${addDays(options.anchorWeekStart, 6)}.`,
+            "Tagesdetails dürfen insgesamt höchstens 42 Tage umfassen.",
+          ].join(" "),
+        },
+        ...planningHistory,
+        { role: "user", content: question },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "KI-Zeitraumplanung fehlgeschlagen."));
+  const content = String(payload?.choices?.[0]?.message?.content ?? "").trim();
+  const jsonStart = content.indexOf("{");
+  const jsonEnd = content.lastIndexOf("}");
+  if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("Die KI hat keine JSON-Datenabfrage geliefert.");
+  let argumentsValue;
+  try {
+    argumentsValue = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+  } catch (error) {
+    throw new Error("Die KI hat ungültige JSON-Abfrageparameter geliefert.", { cause: error });
+  }
+  return normalizeAnalysisQueryPlan(argumentsValue, options);
+}
+
+export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
+  assertAnalysisUserScope(scope.userKey);
+  const goal = getAnalysisGoalContext(plan.focus);
+  const goalDataAvailable = plan.focus.includes("goals") && Object.keys(goal).length > 0;
+  const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
+  const aggregatePresence = periods.reduce((presence, period) => ({
+    entryCount: presence.entryCount + (period.dataCoverage.entryCount ?? 0),
+    weightCount: presence.weightCount + (period.dataCoverage.weightCount ?? 0),
+    activityCount: presence.activityCount + (period.dataCoverage.activityCount ?? 0),
+    activityDaysAvailable: presence.activityDaysAvailable
+      + (period.summary.activity?.daysAvailable ?? 0),
+    goalDataAvailable: presence.goalDataAvailable,
+    hasAnyData: presence.hasAnyData
+      || (period.dataCoverage.entryCount ?? 0) > 0
+      || (period.dataCoverage.weightCount ?? 0) > 0
+      || (period.dataCoverage.activityCount ?? 0) > 0
+      || (period.summary.activity?.daysAvailable ?? 0) > 0,
+  }), {
+    entryCount: 0,
+    weightCount: 0,
+    activityCount: 0,
+    activityDaysAvailable: 0,
+    goalDataAvailable,
+    hasAnyData: goalDataAvailable,
+  });
+  const includesNutrition = plan.focus.includes("nutrition") || plan.focus.includes("habits");
+  const dataPresence = {
+    ...(includesNutrition ? { entryCount: aggregatePresence.entryCount } : {}),
+    ...(plan.focus.includes("weight") ? { weightCount: aggregatePresence.weightCount } : {}),
+    ...(plan.focus.includes("activity") ? {
+      activityCount: aggregatePresence.activityCount,
+      activityDaysAvailable: aggregatePresence.activityDaysAvailable,
+    } : {}),
+    goalDataAvailable,
+    hasAnyData: aggregatePresence.hasAnyData,
+  };
+
+  return {
+    query: {
+      periods: plan.periods.map(({ label, from, to, days }) => ({ label, from, to, days })),
+      focus: plan.focus,
+      detailLevel: plan.includeDailyDetails ? "daily" : "weekly",
+      defaulted: plan.defaulted,
+      limitsApplied: {
+        maximumPeriodDays: 366,
+        dailyDetailsMaximumDays: 42,
+      },
+    },
+    goal,
+    dataPresence,
+    periods,
+  };
+}
+
+function buildAnalysisPeriodContext(period, plan) {
+  const includesNutrition = plan.focus.includes("nutrition") || plan.focus.includes("habits");
+  const includesWeight = plan.focus.includes("weight");
+  const includesActivity = plan.focus.includes("activity");
+  const needsGarmin = includesNutrition || includesActivity;
+  const entries = includesNutrition ? listEntriesForRange(period.from, period.to) : [];
+  const weights = includesWeight ? listWeightEntries(period.from, period.to) : [];
+  const garminConfig = needsGarmin ? getGarminConfigRecord() : {};
+  const garminConfigured = needsGarmin && Boolean(garminConfig.username && garminConfig.authValue);
+  const activityRange = needsGarmin
+    ? listCachedActivitiesForRange(period.from, period.to)
+    : { activities: [], cachedWeeks: [], partialWeeks: [], missingWeeks: [], coveredDates: [] };
+  const activities = activityRange.activities;
+  const activitiesByDate = groupGarminActivitiesByDate(activities);
+  const coveredActivityDates = new Set(activityRange.coveredDates);
+  const weightsByDate = new Map(weights.map((weight) => [weight.date, weight]));
+  const entriesByDate = new Map();
+  for (const entry of entries) {
+    const date = entry.consumedAt.slice(0, 10);
+    const dateEntries = entriesByDate.get(date) ?? [];
+    dateEntries.push(entry);
+    entriesByDate.set(date, dateEntries);
+  }
+  const nutritionConfig = includesNutrition ? getNutritionConfig() : undefined;
+  const preset = includesNutrition
+    ? nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance
+    : nutritionGoalPresets.maintenance;
+  const adaptiveProfile = includesNutrition ? getAdaptiveGoalProfile() : { enabled: false };
+  const adaptiveWeightLogs = adaptiveProfile.enabled ? listAdaptiveWeightLogs() : [];
+  const adaptiveDailyCalories = adaptiveProfile.enabled
+    ? listDailyCalories(addDays(period.from, -27), period.to)
+    : [];
+  const days = buildDateRange(period.from, period.to).map((date) => {
+    const dateEntries = entriesByDate.get(date) ?? [];
+    const totals = summarizeEntryTotals(dateEntries);
+    const dateActivities = activitiesByDate.get(date) ?? [];
+    const cachedGarminSummary = needsGarmin ? getGarminCachedSummary(date) : null;
+    const garminSummaryAvailable = hasUsableGarminSummary(cachedGarminSummary);
+    const garminSummary = garminSummaryAvailable ? cachedGarminSummary : null;
+    const activityTotals = summarizeAnalysisActivity(dateActivities, garminSummary);
+    const calorieTarget = includesNutrition ? calculateAnalysisCalorieBenchmark({
+      date,
+      nutritionConfig,
+      adaptiveProfile,
+      adaptiveWeightLogs,
+      adaptiveDailyCalories,
+      garminConfigured,
+      garminSummary,
+      dateActivities,
+    }) : undefined;
+    const macroTargets = Number.isFinite(calorieTarget) ? calculateMacroTargets(calorieTarget, preset) : undefined;
+    return {
+      date,
+      entryCount: dateEntries.length,
+      totals,
+      calorieTarget,
+      macroTargets,
+      activityTotals,
+      activityDataAvailable: includesActivity
+        && (coveredActivityDates.has(date) || garminSummaryAvailable || dateActivities.length > 0),
+      garminSummaryAvailable: includesActivity && garminSummaryAvailable,
+      weight: weightsByDate.get(date),
+    };
+  });
+  const weeks = [...groupAnalysisDaysByWeek(days).entries()].map(([weekStart, weekDays]) => ({
+    weekStart: weekStart < period.from ? period.from : weekStart,
+    weekEnd: minAnalysisDate(addDays(weekStart, 6), period.to),
+    ...selectAnalysisSummaryFields(summarizeAnalysisDays(weekDays), plan.focus),
+  }));
+
+  return {
+    label: period.label,
+    from: period.from,
+    to: period.to,
+    dataCoverage: {
+      requestedDays: period.days,
+      ...(includesNutrition ? {
+        loggedDays: days.filter((day) => day.entryCount > 0).length,
+        entryCount: entries.length,
+        firstEntryDate: entries.at(0)?.consumedAt.slice(0, 10),
+        lastEntryDate: entries.at(-1)?.consumedAt.slice(0, 10),
+      } : {}),
+      ...(includesWeight ? { weightCount: weights.length } : {}),
+      ...(includesActivity ? {
+        activityCount: activities.length,
+        garmin: {
+        status: garminConfigured ? "configured" : "not_configured",
+        activityWeeksAvailable: activityRange.cachedWeeks,
+        activityWeeksPartial: activityRange.partialWeeks,
+        activityWeeksMissing: activityRange.missingWeeks,
+        dailySummariesAvailable: days.filter((day) => day.garminSummaryAvailable).length,
+        dailySummariesMissing: days.filter((day) => !day.garminSummaryAvailable).length,
+        },
+      } : {}),
+    },
+    summary: selectAnalysisSummaryFields(summarizeAnalysisDays(days), plan.focus),
+    ...(plan.focus.includes("habits") || plan.focus.includes("nutrition")
+      ? { foodPatterns: buildRangeFoodPatterns(entries) }
+      : {}),
+    ...(plan.focus.includes("weight") ? { weightTrend: buildRangeWeightTrend(weights, weeks) } : {}),
+    weeks,
+    ...(plan.includeDailyDetails ? {
+      days: days.map((day) => buildAnalysisDayContext(day, plan.focus)),
+    } : {}),
+  };
+}
+
+function calculateAnalysisCalorieBenchmark({
+  date,
+  nutritionConfig,
+  adaptiveProfile,
+  adaptiveWeightLogs,
+  adaptiveDailyCalories,
+  garminConfigured,
+  garminSummary,
+  dateActivities,
+}) {
+  const activeKilocalories = optionalNonNegativeNumber(garminSummary?.activeKilocalories);
+  if (!adaptiveProfile.enabled) {
+    return garminConfigured && activeKilocalories === undefined
+      ? undefined
+      : calculateEffectiveCalorieGoal(
+        nutritionConfig.calorieGoal,
+        nutritionConfig.calorieGoalOffset,
+        activeKilocalories,
+      );
+  }
+  if (adaptiveProfile.garminEnabled && garminConfigured && activeKilocalories === undefined) return undefined;
+
+  const latestWeight = adaptiveWeightLogs.filter((log) => log.date <= date).at(-1);
+  const profileForCalculation = normalizeAdaptiveGoalProfile({
+    ...adaptiveProfile,
+    currentWeightKg: latestWeight?.weightKg ?? adaptiveProfile.currentWeightKg,
+  }, adaptiveProfile);
+  const adaptiveMaintenance = calculateAdaptiveMaintenance(
+    adaptiveDailyCalories.filter((day) => day.date >= addDays(date, -27) && day.date <= date),
+    adaptiveWeightLogs,
+    date,
+  );
+  return calculateDailyGoal({
+    profile: profileForCalculation,
+    adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
+    summary: profileForCalculation.garminEnabled ? garminSummary : undefined,
+    activities: profileForCalculation.garminEnabled ? dateActivities : [],
+  }).finalGoal;
+}
+
+function summarizeAnalysisDays(days) {
+  const loggedDays = days.filter((day) => day.entryCount > 0);
+  const targetDays = loggedDays.filter((day) => Number.isFinite(day.calorieTarget) && day.macroTargets);
+  const totals = loggedDays.reduce((sum, day) => ({
+    calories: sum.calories + day.totals.calories,
+    calorieTarget: sum.calorieTarget + (Number.isFinite(day.calorieTarget) ? day.calorieTarget : 0),
+    protein: sum.protein + day.totals.protein,
+    proteinTarget: sum.proteinTarget + (day.macroTargets?.protein.grams ?? 0),
+    carbs: sum.carbs + day.totals.carbs,
+    carbsTarget: sum.carbsTarget + (day.macroTargets?.carbs.grams ?? 0),
+    fat: sum.fat + day.totals.fat,
+    fatTarget: sum.fatTarget + (day.macroTargets?.fat.grams ?? 0),
+    alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
+    entries: sum.entries + day.entryCount,
+  }), {
+    calories: 0,
+    calorieTarget: 0,
+    protein: 0,
+    proteinTarget: 0,
+    carbs: 0,
+    carbsTarget: 0,
+    fat: 0,
+    fatTarget: 0,
+    alcoholCalories: 0,
+    entries: 0,
+  });
+  const activityDays = days.filter((day) => day.activityDataAvailable);
+  const activityTotals = activityDays.reduce((sum, day) => ({
+    count: sum.count + day.activityTotals.count,
+    workoutCalories: sum.workoutCalories + day.activityTotals.calories,
+    allDayActiveCalories: sum.allDayActiveCalories + (day.activityTotals.allDayActiveCalories ?? 0),
+    allDayActiveCaloriesDaysAvailable: sum.allDayActiveCaloriesDaysAvailable
+      + (Number.isFinite(day.activityTotals.allDayActiveCalories) ? 1 : 0),
+    durationMinutes: sum.durationMinutes + day.activityTotals.durationMinutes,
+    steps: sum.steps + (day.activityTotals.steps ?? 0),
+    stepsDaysAvailable: sum.stepsDaysAvailable + (Number.isFinite(day.activityTotals.steps) ? 1 : 0),
+  }), {
+    count: 0,
+    workoutCalories: 0,
+    allDayActiveCalories: 0,
+    allDayActiveCaloriesDaysAvailable: 0,
+    durationMinutes: 0,
+    steps: 0,
+    stepsDaysAvailable: 0,
+  });
+  const divisor = loggedDays.length || 1;
+  const targetDivisor = targetDays.length || 1;
+  const targetCoverageComplete = loggedDays.length > 0 && targetDays.length === loggedDays.length;
+  const weightDays = days.filter((day) => day.weight);
+
+  return {
+    requestedDays: days.length,
+    loggedDays: loggedDays.length,
+    entries: totals.entries,
+    averagesPerLoggedDay: {
+      calories: Math.round(totals.calories / divisor),
+      ...(targetCoverageComplete ? {
+        currentCalorieBenchmark: Math.round(totals.calorieTarget / targetDivisor),
+      } : {}),
+      currentBenchmarkDaysAvailable: targetDays.length,
+      currentBenchmarkDaysMissing: loggedDays.length - targetDays.length,
+      protein: roundNutrition(totals.protein / divisor),
+      ...(targetCoverageComplete ? { currentProteinBenchmark: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
+      carbs: roundNutrition(totals.carbs / divisor),
+      ...(targetCoverageComplete ? { currentCarbsBenchmark: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
+      fat: roundNutrition(totals.fat / divisor),
+      ...(targetCoverageComplete ? { currentFatBenchmark: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
+      alcoholCalories: Math.round(totals.alcoholCalories / divisor),
+    },
+    activity: {
+      count: activityTotals.count,
+      workoutCalories: Math.round(activityTotals.workoutCalories),
+      ...(activityTotals.allDayActiveCaloriesDaysAvailable > 0 ? {
+        allDayActiveCalories: Math.round(activityTotals.allDayActiveCalories),
+      } : {}),
+      allDayActiveCaloriesDaysAvailable: activityTotals.allDayActiveCaloriesDaysAvailable,
+      allDayActiveCaloriesDaysMissing: days.length - activityTotals.allDayActiveCaloriesDaysAvailable,
+      durationMinutes: Math.round(activityTotals.durationMinutes),
+      ...(activityTotals.stepsDaysAvailable > 0 ? { steps: Math.round(activityTotals.steps) } : {}),
+      stepsDaysAvailable: activityTotals.stepsDaysAvailable,
+      stepsDaysMissing: days.length - activityTotals.stepsDaysAvailable,
+      daysAvailable: activityDays.length,
+      daysMissing: days.length - activityDays.length,
+    },
+    weight: buildWeightSummary(weightDays.map((day) => day.weight)),
+  };
+}
+
+function selectAnalysisSummaryFields(summary, focus) {
+  return {
+    requestedDays: summary.requestedDays,
+    ...((focus.includes("nutrition") || focus.includes("habits")) ? {
+      loggedDays: summary.loggedDays,
+      entries: summary.entries,
+      averagesPerLoggedDay: summary.averagesPerLoggedDay,
+    } : {}),
+    ...(focus.includes("activity") ? { activity: summary.activity } : {}),
+    ...(focus.includes("weight") ? { weight: summary.weight } : {}),
+  };
+}
+
+function buildAnalysisDayContext(day, focus) {
+  return {
+    date: day.date,
+    ...((focus.includes("nutrition") || focus.includes("habits")) ? {
+      entryCount: day.entryCount,
+      calories: Math.round(day.totals.calories),
+      ...(Number.isFinite(day.calorieTarget) ? { currentCalorieBenchmark: Math.round(day.calorieTarget) } : {
+        currentCalorieBenchmarkAvailable: false,
+      }),
+      protein: roundNutrition(day.totals.protein),
+      carbs: roundNutrition(day.totals.carbs),
+      fat: roundNutrition(day.totals.fat),
+      alcoholCalories: Math.round(day.totals.alcoholCalories),
+    } : {}),
+    ...(focus.includes("activity") ? {
+      ...(day.activityDataAvailable ? {
+        workoutCalories: Math.round(day.activityTotals.calories),
+        ...(Number.isFinite(day.activityTotals.allDayActiveCalories)
+          ? { allDayActiveCalories: Math.round(day.activityTotals.allDayActiveCalories) }
+          : { allDayActiveCaloriesAvailable: false }),
+        activityMinutes: Math.round(day.activityTotals.durationMinutes),
+        ...(Number.isFinite(day.activityTotals.steps)
+          ? { activitySteps: Math.round(day.activityTotals.steps) }
+          : { activityStepsAvailable: false }),
+      } : { activityDataAvailable: false }),
+    } : {}),
+    ...(focus.includes("weight") ? { weightKg: day.weight?.weightKg } : {}),
+  };
+}
+
+function buildRangeFoodPatterns(entries) {
+  const foods = new Map();
+  const timeBuckets = { morning: 0, midday: 0, afternoon: 0, evening: 0, late: 0 };
+  const categoryCalories = {};
+  for (const entry of entries) {
+    const foodKey = normalizeFoodKey(entry.foodName);
+    const current = foods.get(foodKey) ?? { name: entry.foodName.slice(0, 80), count: 0, calories: 0 };
+    current.count += 1;
+    current.calories += caloriesForEntry(entry);
+    foods.set(foodKey, current);
+    const calories = caloriesForEntry(entry);
+    timeBuckets[classifyMealTime(entry.consumedAt.slice(11, 16))] += calories;
+    const category = classifyFoodEntry(entry);
+    categoryCalories[category] = (categoryCalories[category] ?? 0) + calories;
+  }
+  return {
+    topFoods: [...foods.values()]
+      .sort((left, right) => right.count - left.count || right.calories - left.calories)
+      .slice(0, 12)
+      .map((food) => ({ ...food, calories: Math.round(food.calories) })),
+    caloriesByTimeOfDay: roundObjectValues(timeBuckets),
+    caloriesByFoodCategory: roundObjectValues(categoryCalories),
+  };
+}
+
+function buildRangeWeightTrend(weights, weeks) {
+  return {
+    ...buildWeightSummary(weights),
+    weekly: weeks
+      .filter((week) => week.weight.count > 0)
+      .map((week) => ({
+        weekStart: week.weekStart,
+        count: week.weight.count,
+        averageKg: week.weight.averageKg,
+        startKg: week.weight.startKg,
+        endKg: week.weight.endKg,
+        changeKg: week.weight.changeKg,
+      })),
+  };
+}
+
+function buildWeightSummary(weights) {
+  const values = weights.filter(Boolean);
+  if (values.length === 0) return { count: 0 };
+  const kilograms = values.map((weight) => Number(weight.weightKg));
+  const startKg = kilograms[0];
+  const endKg = kilograms.at(-1);
+  return {
+    count: values.length,
+    startDate: values[0].date,
+    endDate: values.at(-1).date,
+    startKg,
+    endKg,
+    changeKg: roundNutrition(endKg - startKg),
+    averageKg: roundNutrition(kilograms.reduce((sum, value) => sum + value, 0) / kilograms.length),
+    minimumKg: Math.min(...kilograms),
+    maximumKg: Math.max(...kilograms),
+  };
+}
+
+function getAnalysisGoalContext(focus) {
+  const includesNutritionGoal = focus.includes("nutrition") || focus.includes("goals");
+  const includesAdaptiveGoal = focus.includes("weight") || focus.includes("goals");
+  const nutrition = includesNutritionGoal ? getNutritionConfig() : undefined;
+  const preset = includesNutritionGoal
+    ? nutritionGoalPresets[nutrition.goal] ?? nutritionGoalPresets.maintenance
+    : undefined;
+  const adaptive = includesAdaptiveGoal ? getAdaptiveGoalProfile() : undefined;
+  const includesCurrentBenchmark = focus.includes("nutrition")
+    || focus.includes("weight")
+    || focus.includes("goals");
+  return {
+    ...(includesCurrentBenchmark ? {
+      basis: "current_configuration",
+      historicalGoalHistoryAvailable: false,
+      note: "Aktuelle Zielwerte sind nur ein heutiger Benchmark und keine historisch gültigen Sollwerte.",
+    } : {}),
+    ...(includesNutritionGoal ? {
+      nutritionGoal: preset.label,
+      baseCalorieGoal: nutrition.calorieGoal,
+      calorieGoalOffset: nutrition.calorieGoalOffset,
+    } : {}),
+    ...(includesAdaptiveGoal ? {
+      adaptive: adaptive.enabled ? {
+        enabled: true,
+        currentWeightKg: adaptive.currentWeightKg,
+        targetWeightKg: adaptive.targetWeightKg,
+        weeklyLossKg: adaptive.weeklyLossKg,
+      } : { enabled: false },
+    } : {}),
+  };
+}
+
+function getAnalysisDataCoverage() {
+  const row = getFoodDatabase().prepare([
+    "SELECT MIN(date) AS first_date, MAX(date) AS last_date",
+    "FROM (",
+    "  SELECT substr(consumed_at, 1, 10) AS date FROM entries",
+    "  UNION ALL",
+    "  SELECT date FROM adaptive_weight_logs",
+    "  UNION ALL",
+    "  SELECT date FROM garmin_daily_summary",
+    "  UNION ALL",
+    "  SELECT week_start FROM garmin_week_activities",
+    "  UNION ALL",
+    "  SELECT week_end FROM garmin_week_activities",
+    ")",
+  ].join("\n")).get();
+  return {
+    from: row?.first_date || undefined,
+    to: row?.last_date || undefined,
+  };
+}
+
+function listEntriesForRange(from, to) {
+  const rows = getFoodDatabase()
+    .prepare([
+      "SELECT",
+      "  food_name, quantity_value, quantity_unit, calories_per_100g,",
+      "  protein_per_100g, carbs_per_100g, fat_per_100g, consumed_at,",
+      "  alcohol_vol_percent, alcohol_grams, alcohol_calories",
+      "FROM entries",
+      "WHERE substr(consumed_at, 1, 10) BETWEEN ? AND ?",
+      "ORDER BY consumed_at ASC",
+    ].join("\n"))
+    .all(from, to);
+  return rows.map((row) => ({
+    foodName: row.food_name,
+    quantityValue: row.quantity_value,
+    quantityUnit: row.quantity_unit,
+    caloriesPer100g: row.calories_per_100g,
+    proteinPer100g: row.protein_per_100g,
+    carbsPer100g: row.carbs_per_100g,
+    fatPer100g: row.fat_per_100g,
+    consumedAt: row.consumed_at,
+    alcoholVolPercent: row.alcohol_vol_percent ?? undefined,
+    alcoholGrams: row.alcohol_grams ?? 0,
+    alcoholCalories: row.alcohol_calories ?? 0,
+  }));
+}
+
+function listCachedActivitiesForRange(from, to) {
+  const activities = [];
+  const cachedWeeks = [];
+  const partialWeeks = [];
+  const missingWeeks = [];
+  const coveredDates = [];
+  for (let weekStart = getWeekStart(from); weekStart <= to; weekStart = addDays(weekStart, 7)) {
+    const cachedWeek = getGarminCachedActivities(weekStart);
+    if (!cachedWeek) {
+      missingWeeks.push(weekStart);
+      continue;
+    }
+    cachedWeeks.push(weekStart);
+    const requestedWeekStart = weekStart < from ? from : weekStart;
+    const requestedWeekEnd = minAnalysisDate(addDays(weekStart, 6), to);
+    const fetchedDate = dateInBerlin(cachedWeek.fetchedAt);
+    const coveredThrough = fetchedDate
+      ? minAnalysisDate(addDays(fetchedDate, -1), addDays(weekStart, 6))
+      : addDays(weekStart, -1);
+    if (coveredThrough < requestedWeekEnd) partialWeeks.push(weekStart);
+    for (
+      let coveredDate = requestedWeekStart;
+      coveredDate <= minAnalysisDate(coveredThrough, requestedWeekEnd);
+      coveredDate = addDays(coveredDate, 1)
+    ) {
+      coveredDates.push(coveredDate);
+    }
+    for (const activity of cachedWeek.activities ?? []) {
+      const date = String(activity.date ?? activity.startTimeLocal ?? "").slice(0, 10);
+      if (date >= from && date <= to) activities.push(activity);
+    }
+  }
+  return { activities, cachedWeeks, partialWeeks, missingWeeks, coveredDates };
+}
+
+function dateInBerlin(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function buildDateRange(from, to) {
+  const dates = [];
+  for (let date = from; date <= to; date = addDays(date, 1)) dates.push(date);
+  return dates;
+}
+
+function groupAnalysisDaysByWeek(days) {
+  const weeks = new Map();
+  for (const day of days) {
+    const weekStart = getWeekStart(day.date);
+    const weekDays = weeks.get(weekStart) ?? [];
+    weekDays.push(day);
+    weeks.set(weekStart, weekDays);
+  }
+  return weeks;
+}
+
+function roundObjectValues(input) {
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, Math.round(value)]));
+}
+
+function minAnalysisDate(left, right) {
+  return left < right ? left : right;
+}
+
+function assertAnalysisUserScope(userKey) {
+  if (userKey !== "default") throw new Error("Unzulässiger Datenbereich.");
 }
 
 async function analyzeWeekManually(input) {
@@ -2836,6 +3574,29 @@ function summarizeGarminActivities(activities) {
     durationMinutes: sum.durationMinutes + Number(activity.durationSeconds ?? activity.movingDurationSeconds ?? 0) / 60,
     distanceMeters: sum.distanceMeters + Number(activity.distanceMeters ?? 0),
   }), { count: 0, calories: 0, durationMinutes: 0, distanceMeters: 0 });
+}
+
+function summarizeAnalysisActivity(activities, garminSummary) {
+  const activityTotals = summarizeGarminActivities(activities);
+  const summaryActiveCalories = optionalNonNegativeNumber(garminSummary?.activeKilocalories);
+  const summarySteps = optionalNonNegativeNumber(garminSummary?.steps ?? garminSummary?.totalSteps);
+  return {
+    ...activityTotals,
+    allDayActiveCalories: summaryActiveCalories,
+    steps: summarySteps,
+  };
+}
+
+function hasUsableGarminSummary(summary) {
+  if (!summary || summary.configured !== true || summary.error) return false;
+  return optionalNonNegativeNumber(summary.activeKilocalories) !== undefined
+    || optionalNonNegativeNumber(summary.steps ?? summary.totalSteps) !== undefined;
+}
+
+function optionalNonNegativeNumber(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : undefined;
 }
 
 function compactGarminActivity(activity) {
@@ -3988,7 +4749,7 @@ function parseOpenAiModels(payload) {
     .sort(compareModelIds);
 }
 
-function parseOpenRouterModels(payload, capability = "photo") {
+export function parseOpenRouterModels(payload, capability = "photo") {
   const models = Array.isArray(payload?.data) ? payload.data : [];
   return models
     .filter((model) => {
@@ -3997,8 +4758,10 @@ function parseOpenRouterModels(payload, capability = "photo") {
       const supportsImageInput = Array.isArray(inputModalities) && inputModalities.includes("image");
       const supportsTextInput = !Array.isArray(inputModalities) || inputModalities.includes("text");
       const supportsTextOutput = !Array.isArray(outputModalities) || outputModalities.includes("text");
+      const supportsTools = Array.isArray(model?.supported_parameters)
+        && model.supported_parameters.includes("tools");
       return capability === "analysis"
-        ? supportsTextInput && supportsTextOutput
+        ? supportsTextInput && supportsTextOutput && supportsTools
         : supportsImageInput && supportsTextOutput;
     })
     .map((model) => String(model?.id ?? ""))
