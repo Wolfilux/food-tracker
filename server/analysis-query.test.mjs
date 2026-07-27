@@ -317,6 +317,8 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war Juni?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es im Juni?"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es seit KW 20?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es von KW 20 bis 22?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es von KW 20 bis KW 22?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es seit letzter Woche?"), true);
   assert.equal(hasAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);

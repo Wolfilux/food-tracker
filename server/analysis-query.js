@@ -250,6 +250,9 @@ export function hasAnalysisTimeReference(question) {
 
 export function hasUnresolvedAnalysisTimeReference(question) {
   let remaining = normalizeQuestion(question);
+  if (/\bkw\s*\d{1,2}(?:\s*[/. -]\s*20\d{2})?\s+bis\s+(?:kw\s*)?\d{1,2}\b/.test(remaining)) {
+    return true;
+  }
   const monthMatches = [...remaining.matchAll(
     /\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2})|\s+(?:des\s+)?(vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/g,
   )];
