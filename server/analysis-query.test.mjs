@@ -38,6 +38,18 @@ test("adds the preceding rolling range when the question asks for a comparison",
   ]);
 });
 
+test("preserves multiple explicit rolling ranges in one comparison", () => {
+  const plan = resolveExplicitAnalysisPlan(
+    "Vergleiche die letzten 4 Wochen mit den letzten 8 Wochen",
+    options,
+  );
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
+    { label: "Letzte 8 Wochen", from: "2026-06-01", to: "2026-07-26" },
+  ]);
+});
+
 test("resolves named months and month comparisons", () => {
   const june = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni?", options);
   assert.deepEqual(june.periods.map(({ from, to }) => ({ from, to })), [{

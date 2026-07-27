@@ -2402,16 +2402,28 @@ async function planAnalysisDataQuery({ question, history, provider, config, opti
 export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   assertAnalysisUserScope(scope.userKey);
   const goal = getAnalysisGoalContext(plan.focus);
+  const goalDataAvailable = Object.keys(goal).length > 0;
   const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
   const dataPresence = periods.reduce((presence, period) => ({
     entryCount: presence.entryCount + period.dataCoverage.entryCount,
     weightCount: presence.weightCount + period.dataCoverage.weightCount,
     activityCount: presence.activityCount + period.dataCoverage.activityCount,
+    activityDaysAvailable: presence.activityDaysAvailable
+      + (period.summary.activity?.daysAvailable ?? 0),
+    goalDataAvailable: presence.goalDataAvailable,
     hasAnyData: presence.hasAnyData
       || period.dataCoverage.entryCount > 0
       || period.dataCoverage.weightCount > 0
-      || period.dataCoverage.activityCount > 0,
-  }), { entryCount: 0, weightCount: 0, activityCount: 0, hasAnyData: false });
+      || period.dataCoverage.activityCount > 0
+      || (period.summary.activity?.daysAvailable ?? 0) > 0,
+  }), {
+    entryCount: 0,
+    weightCount: 0,
+    activityCount: 0,
+    activityDaysAvailable: 0,
+    goalDataAvailable,
+    hasAnyData: goalDataAvailable,
+  });
 
   return {
     query: {

@@ -81,8 +81,8 @@ export function resolveExplicitAnalysisPlan(question, options) {
   const focus = inferFocus(normalizedQuestion);
   const periods = [];
 
-  const weeksMatch = normalizedQuestion.match(/\b(?:letzte[nr]?|vergangene[nr]?)\s+(\d{1,2})\s+wochen?\b/);
-  if (weeksMatch) {
+  const weeksMatches = [...normalizedQuestion.matchAll(/\b(?:letzte[nr]?|vergangene[nr]?)\s+(\d{1,2})\s+wochen?\b/g)];
+  for (const [matchIndex, weeksMatch] of weeksMatches.slice(0, analysisQueryLimits.maxPeriods).entries()) {
     const weekCount = Number(weeksMatch[1]);
     if (weekCount >= 1 && weekCount <= 52) {
       const currentPeriod = {
@@ -91,7 +91,7 @@ export function resolveExplicitAnalysisPlan(question, options) {
         to: anchorEnd,
       };
       periods.push(currentPeriod);
-      if (/\b(?:davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/.test(normalizedQuestion)) {
+      if (matchIndex === 0 && /\b(?:davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/.test(normalizedQuestion)) {
         const previousTo = addDays(currentPeriod.from, -1);
         periods.push({
           label: `${weekCount} Wochen davor`,

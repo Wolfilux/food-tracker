@@ -87,6 +87,37 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 2);
   assert.equal(missingGarminContext.periods[0].days[0].calorieTargetAvailable, false);
 
+  databaseModule.getFoodDatabase().prepare([
+    "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
+    "VALUES (?, ?, ?, ?)",
+  ].join("\n")).run("2026-05-04", "2026-05-10", "[]", "2026-05-11T00:00:00.000Z");
+  const emptyActivityPlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Leere Garmin-Woche", from: "2026-05-04", to: "2026-05-10" }],
+    focus: ["activity"],
+    includeDailyDetails: true,
+  }, {
+    anchorWeekStart: "2026-05-04",
+    today: "2026-07-27",
+  });
+  const emptyActivityContext = databaseModule.buildAnalysisDataContext(emptyActivityPlan, { userKey: "default" });
+  assert.equal(emptyActivityContext.dataPresence.activityCount, 0);
+  assert.equal(emptyActivityContext.dataPresence.activityDaysAvailable, 7);
+  assert.equal(emptyActivityContext.dataPresence.hasAnyData, true);
+
+  const goalOnlyPlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Ohne Logs", from: "2026-05-11", to: "2026-05-17" }],
+    focus: ["goals"],
+    includeDailyDetails: false,
+  }, {
+    anchorWeekStart: "2026-05-11",
+    today: "2026-07-27",
+  });
+  const goalOnlyContext = databaseModule.buildAnalysisDataContext(goalOnlyPlan, { userKey: "default" });
+  assert.equal(goalOnlyContext.dataPresence.entryCount, 0);
+  assert.equal(goalOnlyContext.dataPresence.goalDataAvailable, true);
+  assert.equal(goalOnlyContext.dataPresence.hasAnyData, true);
+  assert.equal(goalOnlyContext.goal.baseCalorieGoal, 2200);
+
   databaseModule.saveAiConfig({
     provider: "openai",
     model: "gpt-4o-mini",
