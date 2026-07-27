@@ -99,6 +99,15 @@ test("resolves selected and previous weeks as separate comparison periods", () =
   ]);
 });
 
+test("keeps the selected week when comparing it with a named month", () => {
+  const plan = resolveExplicitAnalysisPlan("Vergleiche Juni mit dieser Woche", options);
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
+    { label: "Ausgewählte Woche", from: "2026-07-20", to: "2026-07-26" },
+  ]);
+});
+
 test("resolves the two preceding singular weeks for a davor comparison", () => {
   const plan = resolveExplicitAnalysisPlan("Vergleiche letzte Woche mit der Woche davor", options);
 

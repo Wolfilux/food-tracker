@@ -160,7 +160,7 @@ export function resolveExplicitAnalysisPlan(question, options) {
     }
   }
 
-  if (periods.length === 0 && /\b(?:diese|aktuelle|ausgewählte|ausgewaehlte)\s+woche\b/.test(normalizedQuestion)) {
+  if (/\b(?:diese(?:r|n)?|aktuelle(?:r|n)?|ausgewählte(?:r|n)?|ausgewaehlte(?:r|n)?)\s+woche\b/.test(normalizedQuestion)) {
     periods.push({ label: "Ausgewählte Woche", from: anchorWeekStart, to: addDays(anchorWeekStart, 6) });
   }
 
