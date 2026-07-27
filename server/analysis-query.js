@@ -335,7 +335,7 @@ export function formatAnalysisPeriodLabel(periods) {
 function inferFocus(question) {
   const focus = [];
   if (/\b(?:gewicht|zugenommen|abgenommen|abnahme|zunahme|waage|trend|verlauf)\b/.test(question)) focus.push("weight");
-  if (/\b(?:essen|ernährung|ernaehrung|kalorien|protein|kohlenhydrat|fett|makro|lebensmittel|mahlzeit)\b/.test(question)) focus.push("nutrition");
+  if (/\b(?:essen|gegessen|isst|ernährung|ernaehrung|kalorien|protein|kohlenhydrat|fett|makro|lebensmittel|mahlzeit)\b/.test(question)) focus.push("nutrition");
   if (/\b(?:sport|training|aktivität|aktivitaet|garmin|bewegung|verbrannt|verbraucht|kalorienverbrauch|energieverbrauch|aktivkalorien)\b/.test(question)) focus.push("activity");
   if (/\b(?:gewohnheit|muster|timing|uhrzeit|abends|snack)\b/.test(question)) focus.push("habits");
   if (/\b(?:ziel|erreichen|defizit|plan)\b/.test(question)) focus.push("goals");
