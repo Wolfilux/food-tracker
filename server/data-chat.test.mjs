@@ -61,6 +61,8 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(result.periods[0].summary.weight.changeKg, -0.5);
   assert.equal(result.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 0);
   assert.equal(result.periods[0].dataCoverage.garmin.status, "not_configured");
+  assert.equal(result.periods[0].summary.activity.daysAvailable, 0);
+  assert.equal(result.periods[0].summary.activity.daysMissing, 7);
   assert.equal(result.periods[0].days.length, 7);
   assert.deepEqual(
     result.periods[0].foodPatterns.topFoods.map((food) => food.name).sort(),

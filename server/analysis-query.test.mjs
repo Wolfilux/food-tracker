@@ -53,6 +53,16 @@ test("resolves named months and month comparisons", () => {
   assert.equal(comparison.includeDailyDetails, false);
 });
 
+test("keeps intervening months in a continuous named-month range", () => {
+  const plan = resolveExplicitAnalysisPlan("Wie lief es von Januar bis März?", options);
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [{
+    label: "Januar 2026 bis März 2026",
+    from: "2026-01-01",
+    to: "2026-03-31",
+  }]);
+});
+
 test("resolves since January without exceeding the annual query limit", () => {
   const plan = resolveExplicitAnalysisPlan("Wie hat sich mein Gewicht seit Januar entwickelt?", options);
 

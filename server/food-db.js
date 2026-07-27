@@ -2470,7 +2470,7 @@ function buildAnalysisPeriodContext(period, plan) {
       calorieTarget,
       macroTargets,
       activityTotals,
-      activityDataAvailable: !garminConfigured || cachedActivityWeeks.has(getWeekStart(date)),
+      activityDataAvailable: cachedActivityWeeks.has(getWeekStart(date)),
       garminSummaryAvailable: !garminConfigured || Boolean(garminSummary),
       weight: weightsByDate.get(date),
     };
@@ -2493,14 +2493,12 @@ function buildAnalysisPeriodContext(period, plan) {
       activityCount: activities.length,
       firstEntryDate: entries.at(0)?.consumedAt.slice(0, 10),
       lastEntryDate: entries.at(-1)?.consumedAt.slice(0, 10),
-      garmin: garminConfigured ? {
-        status: "configured",
+      garmin: {
+        status: garminConfigured ? "configured" : "not_configured",
         activityWeeksAvailable: activityRange.cachedWeeks,
         activityWeeksMissing: activityRange.missingWeeks,
         dailySummariesAvailable: days.filter((day) => day.garminSummaryAvailable).length,
         dailySummariesMissing: days.filter((day) => !day.garminSummaryAvailable).length,
-      } : {
-        status: "not_configured",
       },
     },
     summary: selectAnalysisSummaryFields(summarizeAnalysisDays(days), plan.focus),

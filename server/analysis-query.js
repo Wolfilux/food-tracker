@@ -135,19 +135,26 @@ export function resolveExplicitAnalysisPlan(question, options) {
     const wantsMonths = monthMatches.length > 1
       || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
     if (wantsMonths) {
-      for (const match of monthMatches.slice(0, analysisQueryLimits.maxPeriods)) {
-        const month = monthNames.get(match[1]);
-        let year = Number(match[2] ?? anchorEnd.slice(0, 4));
-        let from = firstDayOfMonth(year, month);
-        if (!match[2] && from > anchorEnd) {
-          year -= 1;
-          from = firstDayOfMonth(year, month);
+      const continuousMonthRange = monthMatches.length >= 2
+        && /\b(?:von|zwischen)\b.*\b(?:bis|und)\b/.test(normalizedQuestion);
+      if (continuousMonthRange) {
+        const first = resolveMonthPeriod(monthMatches[0], anchorEnd);
+        const last = resolveMonthPeriod(monthMatches[1], anchorEnd);
+        if (!monthMatches[0][2] && first.from > last.from) {
+          first.year -= 1;
+          first.from = firstDayOfMonth(first.year, first.month);
+          first.to = lastDayOfMonth(first.year, first.month);
         }
         periods.push({
-          label: `${capitalize(match[1])} ${year}`,
-          from,
-          to: lastDayOfMonth(year, month),
+          label: `${first.label} bis ${last.label}`,
+          from: first.from,
+          to: last.to,
         });
+      } else {
+        for (const match of monthMatches.slice(0, analysisQueryLimits.maxPeriods)) {
+          const period = resolveMonthPeriod(match, anchorEnd);
+          periods.push({ label: period.label, from: period.from, to: period.to });
+        }
       }
     }
   }
@@ -279,6 +286,23 @@ function isoWeekStart(year, week) {
 
 function firstDayOfMonth(year, month) {
   return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+function resolveMonthPeriod(match, anchorEnd) {
+  const month = monthNames.get(match[1]);
+  let year = Number(match[2] ?? anchorEnd.slice(0, 4));
+  let from = firstDayOfMonth(year, month);
+  if (!match[2] && from > anchorEnd) {
+    year -= 1;
+    from = firstDayOfMonth(year, month);
+  }
+  return {
+    label: `${capitalize(match[1])} ${year}`,
+    month,
+    year,
+    from,
+    to: lastDayOfMonth(year, month),
+  };
 }
 
 function lastDayOfMonth(year, month) {
