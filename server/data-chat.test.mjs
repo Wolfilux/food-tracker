@@ -223,7 +223,17 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   databaseModule.getFoodDatabase().prepare([
     "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
     "VALUES (?, ?, ?, ?)",
-  ].join("\n")).run("2026-06-15", "2026-06-21", "[]", "2026-06-18T12:00:00.000Z");
+  ].join("\n")).run(
+    "2026-06-15",
+    "2026-06-21",
+    JSON.stringify([{
+      date: "2026-06-18",
+      activityName: "Lauf",
+      calories: 300,
+      durationSeconds: 3600,
+    }]),
+    "2026-06-18T12:00:00.000Z",
+  );
   const partialActivityCachePlan = normalizeAnalysisQueryPlan({
     periods: [{ label: "Teilweise Garmin-Woche", from: "2026-06-15", to: "2026-06-21" }],
     focus: ["activity"],
@@ -236,8 +246,10 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     partialActivityCachePlan,
     { userKey: "default" },
   );
-  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysAvailable, 3);
-  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysMissing, 4);
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysAvailable, 4);
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysMissing, 3);
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.count, 1);
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.calories, 300);
   assert.deepEqual(
     partialActivityCacheContext.periods[0].dataCoverage.garmin.activityWeeksPartial,
     ["2026-06-15"],

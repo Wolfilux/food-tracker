@@ -2590,7 +2590,7 @@ function buildAnalysisPeriodContext(period, plan) {
       macroTargets,
       activityTotals,
       activityDataAvailable: includesActivity
-        && (coveredActivityDates.has(date) || garminSummaryAvailable),
+        && (coveredActivityDates.has(date) || garminSummaryAvailable || dateActivities.length > 0),
       garminSummaryAvailable: includesActivity && garminSummaryAvailable,
       weight: weightsByDate.get(date),
     };
