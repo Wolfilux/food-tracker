@@ -67,12 +67,14 @@ test("resolves named months and month comparisons", () => {
 
 test("keeps intervening months in a continuous named-month range", () => {
   const plan = resolveExplicitAnalysisPlan("Wie lief es von Januar bis März?", options);
+  const barePlan = resolveExplicitAnalysisPlan("Wie lief es Januar bis März?", options);
 
   assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [{
     label: "Januar 2026 bis März 2026",
     from: "2026-01-01",
     to: "2026-03-31",
   }]);
+  assert.deepEqual(barePlan.periods, plan.periods);
 });
 
 test("resolves since January without exceeding the annual query limit", () => {
@@ -94,6 +96,15 @@ test("resolves selected and previous weeks as separate comparison periods", () =
   assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
     { label: "Ausgewählte Woche", from: "2026-07-20", to: "2026-07-26" },
     { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
+  ]);
+});
+
+test("resolves the two preceding singular weeks for a davor comparison", () => {
+  const plan = resolveExplicitAnalysisPlan("Vergleiche letzte Woche mit der Woche davor", options);
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
+    { label: "Woche davor", from: "2026-07-06", to: "2026-07-12" },
   ]);
 });
 

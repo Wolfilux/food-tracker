@@ -136,7 +136,8 @@ export function resolveExplicitAnalysisPlan(question, options) {
       || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
     if (wantsMonths) {
       const continuousMonthRange = monthMatches.length >= 2
-        && /\b(?:von|zwischen)\b.*\b(?:bis|und)\b/.test(normalizedQuestion);
+        && (/\bbis\b/.test(normalizedQuestion)
+          || /\bzwischen\b.*\bund\b/.test(normalizedQuestion));
       if (continuousMonthRange) {
         const first = resolveMonthPeriod(monthMatches[0], anchorEnd);
         const last = resolveMonthPeriod(monthMatches[1], anchorEnd);
@@ -166,6 +167,10 @@ export function resolveExplicitAnalysisPlan(question, options) {
   if (/\b(?:letzte[nr]?|vorherige[nr]?|vergangene[nr]?)\s+woche\b/.test(normalizedQuestion)) {
     const from = addDays(anchorWeekStart, -7);
     periods.push({ label: "Vorherige Woche", from, to: addDays(from, 6) });
+    if (/\bdavor\b/.test(normalizedQuestion)) {
+      const earlierFrom = addDays(from, -7);
+      periods.push({ label: "Woche davor", from: earlierFrom, to: addDays(earlierFrom, 6) });
+    }
   }
 
   if (periods.length === 0) return null;
