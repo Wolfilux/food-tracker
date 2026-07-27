@@ -2287,8 +2287,14 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
   const explicitHistoryReference = /\b(?:dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
     normalizedQuestion,
   );
+  const adjectiveComparison = /\b(?:besser|schlechter|mehr|weniger|höher|hoeher|niedriger|größer|groesser|kleiner|stärker|staerker|schwächer|schwaecher|anders)\b[^?!.]{0,80}\bals\b/.test(
+    normalizedQuestion,
+  );
   const incompleteComparison = (explicitPlan?.periods.length ?? 0) < 2
-    && /\b(?:vergleich(?:e|en)?|verglichen|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
+    && (
+      adjectiveComparison
+      || /\b(?:vergleich(?:e|en)?|verglichen|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion)
+    );
   const referencesHistory = safeHistory.length > 0 && explicitHistoryReference;
   const requiresPlanner = referencesHistory || incompleteComparison || hasUnresolvedAnalysisTimeReference(question);
   let queryPlan = requiresPlanner ? null : explicitPlan;
