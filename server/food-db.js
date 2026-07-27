@@ -2548,9 +2548,10 @@ function buildAnalysisPeriodContext(period, plan) {
     const dateEntries = entriesByDate.get(date) ?? [];
     const totals = summarizeEntryTotals(dateEntries);
     const dateActivities = activitiesByDate.get(date) ?? [];
-    const garminSummary = getGarminCachedSummary(date);
+    const cachedGarminSummary = getGarminCachedSummary(date);
+    const garminSummaryAvailable = hasUsableGarminSummary(cachedGarminSummary);
+    const garminSummary = garminSummaryAvailable ? cachedGarminSummary : null;
     const activityTotals = summarizeAnalysisActivity(dateActivities, garminSummary);
-    const garminSummaryAvailable = Boolean(garminSummary);
     const calorieTarget = calculateAnalysisCalorieBenchmark({
       date,
       nutritionConfig,
@@ -2622,16 +2623,17 @@ function calculateAnalysisCalorieBenchmark({
   garminSummary,
   dateActivities,
 }) {
+  const activeKilocalories = optionalNonNegativeNumber(garminSummary?.activeKilocalories);
   if (!adaptiveProfile.enabled) {
-    return garminConfigured && !garminSummary
+    return garminConfigured && activeKilocalories === undefined
       ? undefined
       : calculateEffectiveCalorieGoal(
         nutritionConfig.calorieGoal,
         nutritionConfig.calorieGoalOffset,
-        garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
+        activeKilocalories,
       );
   }
-  if (adaptiveProfile.garminEnabled && garminConfigured && !garminSummary) return undefined;
+  if (adaptiveProfile.garminEnabled && garminConfigured && activeKilocalories === undefined) return undefined;
 
   const latestWeight = adaptiveWeightLogs.filter((log) => log.date <= date).at(-1);
   const profileForCalculation = normalizeAdaptiveGoalProfile({
@@ -3495,6 +3497,12 @@ function summarizeAnalysisActivity(activities, garminSummary) {
     calories: summaryActiveCalories ?? activityTotals.calories,
     steps: summarySteps ?? 0,
   };
+}
+
+function hasUsableGarminSummary(summary) {
+  if (!summary || summary.configured !== true || summary.error) return false;
+  return optionalNonNegativeNumber(summary.activeKilocalories) !== undefined
+    || optionalNonNegativeNumber(summary.steps ?? summary.totalSteps) !== undefined;
 }
 
 function optionalNonNegativeNumber(value) {

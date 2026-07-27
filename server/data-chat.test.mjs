@@ -142,7 +142,25 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(missingGarminContext.periods[0].days[0].currentCalorieBenchmarkAvailable, false);
 
   databaseModule.getFoodDatabase().prepare([
-    "INSERT INTO garmin_daily_summary (date, summary_json, fetched_at)",
+    "INSERT OR REPLACE INTO garmin_daily_summary (date, summary_json, fetched_at)",
+    "VALUES (?, ?, ?)",
+  ].join("\n")).run(
+    "2026-06-08",
+    JSON.stringify({ date: "2026-06-08", configured: true, error: "Garmin sync failed" }),
+    "2026-06-09T00:00:00.000Z",
+  );
+  const failedSummaryContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
+  assert.equal(failedSummaryContext.periods[0].dataCoverage.garmin.dailySummariesAvailable, 0);
+  assert.equal(failedSummaryContext.periods[0].dataCoverage.garmin.dailySummariesMissing, 7);
+  assert.equal(failedSummaryContext.periods[0].summary.activity.daysAvailable, 0);
+  assert.equal(
+    failedSummaryContext.periods[0].summary.averagesPerLoggedDay.currentBenchmarkDaysAvailable,
+    0,
+  );
+  assert.equal(failedSummaryContext.periods[0].days[0].currentCalorieBenchmarkAvailable, false);
+
+  databaseModule.getFoodDatabase().prepare([
+    "INSERT OR REPLACE INTO garmin_daily_summary (date, summary_json, fetched_at)",
     "VALUES (?, ?, ?)",
   ].join("\n")).run(
     "2026-06-08",
