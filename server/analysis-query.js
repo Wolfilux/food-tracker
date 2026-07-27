@@ -82,7 +82,8 @@ export function resolveExplicitAnalysisPlan(question, options) {
   const periods = [];
 
   const weeksMatches = [...normalizedQuestion.matchAll(/\b(?:letzte[nr]?|vergangene[nr]?)\s+(\d{1,2})\s+wochen?\b(?!\s+davor)/g)];
-  const precedingWeeksMatch = normalizedQuestion.match(/\b(?:letzte[nr]?\s+)?(\d{1,2})\s+wochen?\s+davor\b/);
+  const precedingWeeksMatch = normalizedQuestion.match(/\b(?:letzte[nr]?\s+)?(\d{1,2})\s+wochen?\s+davor\b/)
+    ?? normalizedQuestion.match(/\b(?:vorhergehende[nr]?|vorangegangene[nr]?)\s+(\d{1,2})\s+wochen?\b/);
   for (const [matchIndex, weeksMatch] of weeksMatches.slice(0, analysisQueryLimits.maxPeriods).entries()) {
     const weekCount = Number(weeksMatch[1]);
     if (weekCount >= 1 && weekCount <= 52) {
@@ -139,26 +140,29 @@ export function resolveExplicitAnalysisPlan(question, options) {
     || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
   if (wantsMonths) {
     const resolvedMonths = resolveMonthPeriods(monthMatches, anchorEnd);
-    const continuousMonthRange = monthMatches.length >= 2
-      && (/\bbis\b/.test(normalizedQuestion)
-        || /\bzwischen\b.*\bund\b/.test(normalizedQuestion));
-    if (continuousMonthRange) {
-      const first = resolvedMonths[0];
-      const last = resolvedMonths[1];
-      if (!monthMatches[0][2] && !monthMatches[1][2] && first.from > last.from) {
-        first.year -= 1;
-        first.from = firstDayOfMonth(first.year, first.month);
-        first.to = lastDayOfMonth(first.year, first.month);
-        first.label = `${capitalize(monthMatches[0][1])} ${first.year}`;
-      }
-      periods.push({
-        label: `${first.label} bis ${last.label}`,
-        from: first.from,
-        to: last.to,
-      });
-    } else {
-      for (const period of resolvedMonths.slice(0, analysisQueryLimits.maxPeriods)) {
-        periods.push({ label: period.label, from: period.from, to: period.to });
+    for (let index = 0; index < resolvedMonths.length; index += 1) {
+      const current = resolvedMonths[index];
+      const next = resolvedMonths[index + 1];
+      const betweenMatches = next
+        ? normalizedQuestion.slice(monthMatches[index].index + monthMatches[index][0].length, monthMatches[index + 1].index)
+        : "";
+      const prefix = normalizedQuestion.slice(0, monthMatches[index].index);
+      const startsBetweenRange = index === 0 && /\bzwischen\s*$/.test(prefix) && /\bund\b/.test(betweenMatches);
+      if (next && (/\bbis\b/.test(betweenMatches) || startsBetweenRange)) {
+        if (!monthMatches[index][2] && !monthMatches[index + 1][2] && current.from > next.from) {
+          current.year -= 1;
+          current.from = firstDayOfMonth(current.year, current.month);
+          current.to = lastDayOfMonth(current.year, current.month);
+          current.label = `${capitalize(monthMatches[index][1])} ${current.year}`;
+        }
+        periods.push({
+          label: `${current.label} bis ${next.label}`,
+          from: current.from,
+          to: next.to,
+        });
+        index += 1;
+      } else {
+        periods.push({ label: current.label, from: current.from, to: current.to });
       }
     }
   }

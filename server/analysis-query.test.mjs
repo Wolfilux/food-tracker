@@ -43,11 +43,16 @@ test("honors a differently sized preceding rolling range", () => {
     "Vergleiche die letzten 4 Wochen mit den 8 Wochen davor",
     options,
   );
+  const adjectivePlan = resolveExplicitAnalysisPlan(
+    "Vergleiche die letzten 4 Wochen mit den vorhergehenden 8 Wochen",
+    options,
+  );
 
   assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
     { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
     { label: "8 Wochen davor", from: "2026-05-04", to: "2026-06-28" },
   ]);
+  assert.deepEqual(adjectivePlan.periods, plan.periods);
 });
 
 test("preserves multiple explicit rolling ranges in one comparison", () => {
@@ -94,6 +99,11 @@ test("keeps named months in mixed month and week comparisons", () => {
 test("keeps intervening months in a continuous named-month range", () => {
   const plan = resolveExplicitAnalysisPlan("Wie lief es von Januar bis März?", options);
   const barePlan = resolveExplicitAnalysisPlan("Wie lief es Januar bis März?", options);
+  const comparison = resolveExplicitAnalysisPlan("Vergleiche Januar bis März mit Juni", options);
+  const rangeComparison = resolveExplicitAnalysisPlan(
+    "Vergleiche Januar bis März mit April bis Juni",
+    options,
+  );
 
   assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [{
     label: "Januar 2026 bis März 2026",
@@ -101,6 +111,14 @@ test("keeps intervening months in a continuous named-month range", () => {
     to: "2026-03-31",
   }]);
   assert.deepEqual(barePlan.periods, plan.periods);
+  assert.deepEqual(comparison.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2026-01-01", to: "2026-03-31" },
+    { from: "2026-06-01", to: "2026-06-30" },
+  ]);
+  assert.deepEqual(rangeComparison.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2026-01-01", to: "2026-03-31" },
+    { from: "2026-04-01", to: "2026-06-30" },
+  ]);
 });
 
 test("propagates explicit years across named-month ranges and comparisons", () => {

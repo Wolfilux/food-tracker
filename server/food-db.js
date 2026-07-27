@@ -2280,7 +2280,12 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
     availableFrom: coverage.from,
     availableTo: coverage.to,
   };
-  let queryPlan = resolveExplicitAnalysisPlan(question, planOptions);
+  const explicitPlan = resolveExplicitAnalysisPlan(question, planOptions);
+  const referencesHistory = safeHistory.length > 0
+    && /\b(?:das|dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
+      question.toLocaleLowerCase("de-DE"),
+    );
+  let queryPlan = referencesHistory ? null : explicitPlan;
   if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
     queryPlan = inferDefaultAnalysisPlan(question, planOptions);
   }
@@ -2295,7 +2300,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
       });
     } catch (error) {
       console.warn("Analysis data-query planning fell back to a bounded default:", error instanceof Error ? error.message : error);
-      queryPlan = inferDefaultAnalysisPlan(question, planOptions);
+      queryPlan = explicitPlan ?? inferDefaultAnalysisPlan(question, planOptions);
     }
   }
 
@@ -2717,6 +2722,12 @@ function getAnalysisDataCoverage() {
     "  SELECT substr(consumed_at, 1, 10) AS date FROM entries",
     "  UNION ALL",
     "  SELECT date FROM adaptive_weight_logs",
+    "  UNION ALL",
+    "  SELECT date FROM garmin_daily_summary",
+    "  UNION ALL",
+    "  SELECT week_start FROM garmin_week_activities",
+    "  UNION ALL",
+    "  SELECT week_end FROM garmin_week_activities",
     ")",
   ].join("\n")).get();
   return {

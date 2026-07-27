@@ -169,6 +169,13 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     const requestBody = JSON.parse(String(options?.body ?? "{}"));
     requestBodies.push(requestBody);
     if (requestBody.tools) {
+      const followUpQuestion = requestBody.messages.at(-1)?.content ?? "";
+      const periods = followUpQuestion.includes("letzten 4 Wochen")
+        ? [
+          { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
+          { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
+        ]
+        : [{ label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" }];
       return new globalThis.Response(JSON.stringify({
         choices: [{
           message: {
@@ -177,7 +184,7 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
               function: {
                 name: "query_tracker_data",
                 arguments: JSON.stringify({
-                  periods: [{ label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" }],
+                  periods,
                   focus: ["nutrition", "weight"],
                   includeDailyDetails: true,
                 }),
@@ -227,8 +234,26 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(requestBodies.length, 2);
     assert.equal(Array.isArray(requestBodies[0].tools), true);
     assert.match(requestBodies[0].messages.at(-2).content, /Ausgewerteter Zeitraum: Juni 2026/);
+    assert.match(requestBodies[0].tools[0].function.description, /2026-05-04 bis 2026-07-01/);
     assert.equal(followUp.period.periods[0].from, "2026-06-01");
     assert.equal(followUp.period.defaulted, false);
+
+    requestBodies.length = 0;
+    const explicitFollowUp = await databaseModule.answerAnalysisQuestion({
+      question: "Vergleiche das mit den letzten 4 Wochen",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Juni?" },
+        { role: "assistant", content: answer.answer },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.deepEqual(explicitFollowUp.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-06-01", to: "2026-06-30" },
+      { from: "2026-06-29", to: "2026-07-26" },
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
