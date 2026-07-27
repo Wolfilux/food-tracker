@@ -2351,6 +2351,9 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
             "Antworte konkret und knapp ausschließlich anhand des serverseitig abgefragten, begrenzten Tracker-Kontexts.",
             "Benenne Datenlücken und unterscheide Beobachtung, Korrelation und Vermutung.",
             "Behaupte keine Kausalität, die die Daten nicht belegen.",
+            "Nutze energyCalculation als maßgebliche Fachdefinition für kcal-, Energiebilanz- und Defizitfragen.",
+            "Unterscheide Zieldefizit, geschätzte tatsächliche Energiebilanz und bloße Differenz zum Kalorienziel; nenne Formel, Einheiten, Datenquellen, Fallbacks und Unsicherheiten.",
+            "Addiere workoutCalories niemals zu allDayActiveCalories: Garmin allDayActiveCalories umfasst den ganzen aktiven Tag; workoutCalories dient separat der Trainingsanalyse oder nur dem dokumentierten Fallback.",
             "Fehlende Garmin-Cache-Wochen bedeuten nicht Inaktivität; fehlende Garmin-Tagessummen bedeuten nicht, dass das Basis-Kalorienziel galt.",
             "Alle als currentBenchmark bezeichneten Zielwerte stammen aus der heutigen Konfiguration und dürfen nicht als historisch gültige Ziele dargestellt werden.",
             "Keine medizinische Diagnose.",
@@ -2486,6 +2489,7 @@ async function planAnalysisDataQueryWithJson({ question, history, provider, conf
 export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   assertAnalysisUserScope(scope.userKey);
   const goal = getAnalysisGoalContext(plan.focus);
+  const energyCalculation = buildEnergyCalculationContext();
   const goalDataAvailable = plan.focus.includes("goals") && Object.keys(goal).length > 0;
   const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
   const aggregatePresence = periods.reduce((presence, period) => ({
@@ -2532,8 +2536,205 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
       },
     },
     goal,
+    energyCalculation,
     dataPresence,
     periods,
+  };
+}
+
+export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
+  const date = normalizeGarminDate(dateInput);
+  const nutrition = getNutritionConfig();
+  const adaptiveProfile = getAdaptiveGoalProfile();
+  const garminConfig = getGarminConfigRecord();
+  const garminConfigured = Boolean(garminConfig.username && garminConfig.authValue);
+  const garminSummary = getGarminCachedSummary(date);
+  const garminSummaryAvailable = hasUsableGarminSummary(garminSummary);
+  const activeCalories = garminSummaryAvailable
+    ? optionalNonNegativeNumber(garminSummary?.activeKilocalories)
+    : undefined;
+  const weekActivities = getGarminCachedActivities(getWeekStart(date))?.activities ?? [];
+  const activities = weekActivities.filter((activity) => String(activity.date ?? "").slice(0, 10) === date);
+  const workoutCalories = Math.round(summarizeGarminActivities(activities).calories);
+  const dailyIntake = listDailyCalories(date, date)[0];
+  const intakeCalories = dailyIntake?.calories ?? 0;
+  const intakeEntryCount = dailyIntake?.entryCount ?? 0;
+  const common = {
+    schemaVersion: 1,
+    date,
+    timezone: "Europe/Berlin",
+    units: {
+      energy: "kcal",
+      weight: "kg",
+      height: "cm",
+      targetRate: "kg/week",
+    },
+    terminology: {
+      targetDeficit: "Geplantes Energiedefizit, das in das Kalorienziel eingebaut wird.",
+      estimatedEnergyBalance: "Geschätzter Bedarf inklusive angerechneter Tagesaktivität minus protokollierte Aufnahme; positiv bedeutet Defizit, negativ Überschuss.",
+      targetDelta: "Kalorienziel minus Aufnahme; dies ist Restbudget und nicht automatisch ein physiologisches Defizit.",
+    },
+    intake: {
+      calories: Math.round(intakeCalories),
+      entryCount: intakeEntryCount,
+      source: "Food-Tracker-Einträge des Kalendertags",
+      completeness: intakeEntryCount > 0 ? "unknown" : "no_entries",
+      assumption: "Ein Tag mit Einträgen kann trotzdem unvollständig sein; fehlende Einträge werden nicht als gegessen geschätzt.",
+    },
+    garmin: {
+      configured: garminConfigured,
+      dailySummaryAvailable: garminSummaryAvailable,
+      allDayActiveCalories: activeCalories,
+      allDayActiveCaloriesSource: "Garmin-Tagessumme activeKilocalories",
+      totalCalories: garminSummaryAvailable
+        ? optionalNonNegativeNumber(garminSummary?.totalKilocalories)
+        : undefined,
+      bmrCalories: garminSummaryAvailable
+        ? optionalNonNegativeNumber(garminSummary?.bmrKilocalories)
+        : undefined,
+      workoutCalories,
+      workoutCount: activities.length,
+      workoutCaloriesSource: "Summe einzelner Garmin-Aktivitäten",
+      doubleCountingRule: "allDayActiveCalories und workoutCalories nie addieren. Die Tagessumme hat Vorrang; Workouts sind separat oder Teil des Fallbacks.",
+    },
+    universalAssumptions: [
+      "Kalendertage und Zeiträume werden in Europe/Berlin ausgewertet; Bereichsgrenzen sind inklusive.",
+      "Aufnahme stammt ausschließlich aus protokollierten Food-Tracker-Einträgen.",
+      "Garmin allDayActiveCalories und workoutCalories sind getrennte Messgrößen und werden nicht doppelt gezählt.",
+      "Fehlende Garmin-Daten bedeuten unbekannt, nicht null Aktivität.",
+      "Alle Energieergebnisse sind Schätzwerte und keine direkte Stoffwechselmessung.",
+    ],
+  };
+
+  if (!adaptiveProfile.enabled) {
+    const targetAvailable = !garminConfigured || activeCalories !== undefined;
+    const effectiveActiveCalories = garminConfigured ? activeCalories : 0;
+    const calorieTarget = targetAvailable
+      ? calculateEffectiveCalorieGoal(
+        nutrition.calorieGoal,
+        nutrition.calorieGoalOffset,
+        effectiveActiveCalories,
+      )
+      : undefined;
+    return {
+      ...common,
+      mode: "legacy",
+      formulas: {
+        calorieTarget: "max(800 kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)",
+        targetDelta: "calorieTarget - intakeCalories",
+        physiologicalDeficit: "Nicht bestimmbar, solange baseCalorieGoal nicht als Erhaltungsbedarf belegt ist.",
+      },
+      parameters: {
+        baseCalorieGoal: nutrition.calorieGoal,
+        calorieGoalOffset: nutrition.calorieGoalOffset,
+        minimumCalorieGoal,
+        allDayActiveCalories: effectiveActiveCalories,
+      },
+      results: {
+        calorieTarget,
+        targetAvailable,
+        targetDeltaCalories: calorieTarget === undefined ? undefined : Math.round(calorieTarget - intakeCalories),
+        plannedDeficitFromOffsetCalories: Math.max(0, -nutrition.calorieGoalOffset),
+        plannedSurplusFromOffsetCalories: Math.max(0, nutrition.calorieGoalOffset),
+        estimatedEnergyBalanceCalories: undefined,
+      },
+      fallbacks: [
+        "Ohne konfigurierte Garmin-Verbindung werden 0 Aktivitäts-kcal addiert.",
+        "Bei konfiguriertem Garmin, aber fehlender Tagessumme, ist das Tagesziel unbekannt statt Aktivität als 0 anzunehmen.",
+        "Das Ziel wird auf mindestens 800 kcal begrenzt.",
+      ],
+      uncertainties: [
+        "Das manuelle Basisziel ist nicht automatisch BMR, TDEE oder gemessener Erhaltungsbedarf.",
+        "Daher ist Ziel minus Aufnahme nur Restbudget; ein tatsächliches Defizit kann daraus nicht sicher berechnet werden.",
+      ],
+    };
+  }
+
+  const weightLogs = listAdaptiveWeightLogs();
+  const latestWeight = weightLogs.filter((log) => log.date <= date).at(-1);
+  const profile = normalizeAdaptiveGoalProfile({
+    ...adaptiveProfile,
+    currentWeightKg: latestWeight?.weightKg ?? adaptiveProfile.currentWeightKg,
+  }, adaptiveProfile);
+  const trackingWindowFrom = addDays(date, -27);
+  const dailyCalories = listDailyCalories(trackingWindowFrom, date);
+  const adaptiveMaintenance = calculateAdaptiveMaintenance(dailyCalories, weightLogs, date);
+  const calculation = calculateDailyGoal({
+    profile,
+    adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
+    summary: profile.garminEnabled && garminSummaryAvailable ? garminSummary : undefined,
+    activities: profile.garminEnabled ? activities : [],
+  });
+  const estimatedMaintenanceToday = calculation.maintenance + calculation.activityAdjustment;
+  return {
+    ...common,
+    mode: "adaptive",
+    formulas: {
+      bmr: "Mifflin-St Jeor: 10×Gewicht(kg) + 6.25×Größe(cm) − 5×Alter + Geschlechtskonstante (männlich +5, weiblich −161, sonst −78)",
+      initialTdee: "BMR × Aktivitätsfaktor",
+      requestedDeficit: "weeklyLossKg × 7700 kcal/kg ÷ 7",
+      safeTargetDeficit: "min(requestedDeficit, gewählte Defizitobergrenze, maintenance − minimumGoal)",
+      basisTarget: "maintenance − safeTargetDeficit",
+      calorieTarget: "manualOverride, sonst max(minimumGoal, basisTarget + activityAdjustment)",
+      estimatedEnergyBalance: "maintenance + activityAdjustment − intakeCalories",
+      adaptiveMaintenance: "durchschnittliche Aufnahme + aus 7-Tage-Gewichtstrend abgeleitete tägliche Energiedifferenz",
+    },
+    parameters: {
+      ageYears: profile.age,
+      sex: profile.sex,
+      heightCm: profile.heightCm,
+      currentWeightKg: profile.currentWeightKg,
+      currentWeightSource: latestWeight ? `letzter Gewichtseintrag bis ${date}` : "adaptives Profil",
+      targetWeightKg: profile.targetWeightKg,
+      targetWeightRole: "Zielanzeige; fließt nicht direkt in die Tagesdefizitformel ein.",
+      weeklyLossKg: profile.weeklyLossKg,
+      kcalPerKgBodyWeight: 7700,
+      activityLevel: profile.activityLevel,
+      activityFactor: calculation.activityFactor,
+      garminEnabled: profile.garminEnabled,
+      manualOverrideCalories: profile.manualOverrideCalories,
+      maxDeficitPercent: profile.maxDeficitPercent,
+      useBodyWeightDeficitLimit: profile.useBodyWeightDeficitLimit,
+      enforceSexMinimumCalories: profile.enforceSexMinimumCalories,
+      workoutCreditFactors: profile.workoutCreditFactors,
+      trackingWindow: { from: trackingWindowFrom, to: date, days: 28 },
+    },
+    results: {
+      bmr: calculation.bmr,
+      initialTdee: calculation.initialTdee,
+      maintenance: calculation.maintenance,
+      maintenanceSource: adaptiveMaintenance.available ? "adaptive_tracking_and_weight_trend" : "initial_tdee_fallback",
+      requestedDeficit: calculation.requestedDeficit,
+      safeTargetDeficit: calculation.targetDeficit,
+      minimumCalorieGoal: calculation.minimumCalorieGoal,
+      basisTarget: calculation.basisTarget,
+      activityAdjustment: calculation.activityAdjustment,
+      activityStrategy: calculation.activity.strategy,
+      activityRawBonus: calculation.activity.rawBonus,
+      activityCap: calculation.activity.cap,
+      activityNote: calculation.activity.note,
+      recommendedToday: calculation.recommendedToday,
+      finalCalorieTarget: calculation.finalGoal,
+      hasManualOverride: calculation.hasManualOverride,
+      estimatedMaintenanceToday,
+      estimatedEnergyBalanceCalories: Math.round(estimatedMaintenanceToday - intakeCalories),
+      targetDeltaCalories: Math.round(calculation.finalGoal - intakeCalories),
+    },
+    safety: calculation.safety,
+    adaptiveMaintenanceEvidence: adaptiveMaintenance,
+    fallbacks: [
+      "Ohne ausreichende adaptive Daten wird initialTdee als maintenance verwendet.",
+      "Adaptive maintenance benötigt mindestens 14 Tage mit Aufnahme, 14 Tage mit mindestens 2 Einträgen und 10 Gewichtseinträge; beide 7-Tage-Gewichtsmittel brauchen mindestens 3 Werte.",
+      "Bei Garmin totalKilocalories und bmrKilocalories wird deren Differenz bis 700 kcal genutzt.",
+      "Sonst werden Garmin activeKilocalories bis 650 kcal genutzt.",
+      "Fehlt beides, werden Schrittbonus plus anteilige Workout-kcal bis 650 kcal genutzt; ohne Daten ist dieser Bonus 0.",
+      "Ein manueller Override ersetzt das berechnete Tagesziel, nicht BMR oder maintenance.",
+    ],
+    uncertainties: [
+      "Aktivitätsfaktoren, 7700 kcal/kg, Garmin-Werte und Workout-Anrechnungsfaktoren sind Modellannahmen.",
+      "Die adaptive Schätzung hängt von vollständigem Food-Tracking und repräsentativen Gewichtsdaten ab.",
+      "Das aktuelle Profil und aktuelle Zielparameter sind kein historischer Zielverlauf.",
+    ],
   };
 }
 
