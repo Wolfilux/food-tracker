@@ -357,11 +357,15 @@ function resolveMonthPeriods(matches, anchorEnd) {
 
   for (let index = knownYearIndex + 1; index < matches.length; index += 1) {
     if (Number.isFinite(resolvedYears[index])) continue;
-    resolvedYears[index] = resolvedYears[index - 1];
+    const crossesIntoJanuary = monthNames.get(matches[index - 1][1]) === 12
+      && monthNames.get(matches[index][1]) === 1;
+    resolvedYears[index] = resolvedYears[index - 1] + (crossesIntoJanuary ? 1 : 0);
   }
   for (let index = knownYearIndex - 1; index >= 0; index -= 1) {
     if (Number.isFinite(resolvedYears[index])) continue;
-    resolvedYears[index] = resolvedYears[index + 1];
+    const crossesBackIntoDecember = monthNames.get(matches[index][1]) === 12
+      && monthNames.get(matches[index + 1][1]) === 1;
+    resolvedYears[index] = resolvedYears[index + 1] - (crossesBackIntoDecember ? 1 : 0);
   }
   return matches.map((match, index) => resolveMonthPeriod(match, anchorEnd, resolvedYears[index]));
 }
