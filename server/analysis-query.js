@@ -135,16 +135,18 @@ export function resolveExplicitAnalysisPlan(question, options) {
     const wantsMonths = monthMatches.length > 1
       || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
     if (wantsMonths) {
+      const resolvedMonths = resolveMonthPeriods(monthMatches, anchorEnd);
       const continuousMonthRange = monthMatches.length >= 2
         && (/\bbis\b/.test(normalizedQuestion)
           || /\bzwischen\b.*\bund\b/.test(normalizedQuestion));
       if (continuousMonthRange) {
-        const first = resolveMonthPeriod(monthMatches[0], anchorEnd);
-        const last = resolveMonthPeriod(monthMatches[1], anchorEnd);
-        if (!monthMatches[0][2] && first.from > last.from) {
+        const first = resolvedMonths[0];
+        const last = resolvedMonths[1];
+        if (!monthMatches[0][2] && !monthMatches[1][2] && first.from > last.from) {
           first.year -= 1;
           first.from = firstDayOfMonth(first.year, first.month);
           first.to = lastDayOfMonth(first.year, first.month);
+          first.label = `${capitalize(monthMatches[0][1])} ${first.year}`;
         }
         periods.push({
           label: `${first.label} bis ${last.label}`,
@@ -152,8 +154,7 @@ export function resolveExplicitAnalysisPlan(question, options) {
           to: last.to,
         });
       } else {
-        for (const match of monthMatches.slice(0, analysisQueryLimits.maxPeriods)) {
-          const period = resolveMonthPeriod(match, anchorEnd);
+        for (const period of resolvedMonths.slice(0, analysisQueryLimits.maxPeriods)) {
           periods.push({ label: period.label, from: period.from, to: period.to });
         }
       }
@@ -293,11 +294,31 @@ function firstDayOfMonth(year, month) {
   return `${year}-${String(month).padStart(2, "0")}-01`;
 }
 
-function resolveMonthPeriod(match, anchorEnd) {
+function resolveMonthPeriods(matches, anchorEnd) {
+  const resolvedYears = matches.map((match) => match[2] ? Number(match[2]) : undefined);
+  const knownYearIndex = resolvedYears.findIndex(Number.isFinite);
+  if (knownYearIndex < 0) return matches.map((match) => resolveMonthPeriod(match, anchorEnd));
+
+  for (let index = knownYearIndex + 1; index < matches.length; index += 1) {
+    if (Number.isFinite(resolvedYears[index])) continue;
+    const previousMonth = monthNames.get(matches[index - 1][1]);
+    const month = monthNames.get(matches[index][1]);
+    resolvedYears[index] = resolvedYears[index - 1] + (month < previousMonth ? 1 : 0);
+  }
+  for (let index = knownYearIndex - 1; index >= 0; index -= 1) {
+    if (Number.isFinite(resolvedYears[index])) continue;
+    const month = monthNames.get(matches[index][1]);
+    const nextMonth = monthNames.get(matches[index + 1][1]);
+    resolvedYears[index] = resolvedYears[index + 1] - (month > nextMonth ? 1 : 0);
+  }
+  return matches.map((match, index) => resolveMonthPeriod(match, anchorEnd, resolvedYears[index]));
+}
+
+function resolveMonthPeriod(match, anchorEnd, forcedYear) {
   const month = monthNames.get(match[1]);
-  let year = Number(match[2] ?? anchorEnd.slice(0, 4));
+  let year = Number(forcedYear ?? match[2] ?? anchorEnd.slice(0, 4));
   let from = firstDayOfMonth(year, month);
-  if (!match[2] && from > anchorEnd) {
+  if (!Number.isFinite(forcedYear) && !match[2] && from > anchorEnd) {
     year -= 1;
     from = firstDayOfMonth(year, month);
   }

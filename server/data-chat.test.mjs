@@ -63,6 +63,8 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(result.periods[0].dataCoverage.garmin.status, "not_configured");
   assert.equal(result.periods[0].summary.activity.daysAvailable, 0);
   assert.equal(result.periods[0].summary.activity.daysMissing, 7);
+  assert.equal(result.periods[0].dataCoverage.garmin.dailySummariesAvailable, 0);
+  assert.equal(result.periods[0].dataCoverage.garmin.dailySummariesMissing, 7);
   assert.equal(result.periods[0].days.length, 7);
   assert.deepEqual(
     result.periods[0].foodPatterns.topFoods.map((food) => food.name).sort(),
@@ -72,6 +74,23 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.throws(
     () => databaseModule.buildAnalysisDataContext(plan, { userKey: "another-user" }),
     /Unzulässiger Datenbereich/,
+  );
+
+  const partialWeekPlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Teilwochen", from: "2026-06-10", to: "2026-06-16" }],
+    focus: ["nutrition"],
+    includeDailyDetails: false,
+  }, {
+    anchorWeekStart: "2026-06-08",
+    today: "2026-07-27",
+  });
+  const partialWeekContext = databaseModule.buildAnalysisDataContext(partialWeekPlan, { userKey: "default" });
+  assert.deepEqual(
+    partialWeekContext.periods[0].weeks.map(({ weekStart, weekEnd }) => ({ weekStart, weekEnd })),
+    [
+      { weekStart: "2026-06-10", weekEnd: "2026-06-14" },
+      { weekStart: "2026-06-15", weekEnd: "2026-06-16" },
+    ],
   );
 
   databaseModule.saveGarminConfig({

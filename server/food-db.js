@@ -2483,12 +2483,12 @@ function buildAnalysisPeriodContext(period, plan) {
       macroTargets,
       activityTotals,
       activityDataAvailable: cachedActivityWeeks.has(getWeekStart(date)),
-      garminSummaryAvailable: !garminConfigured || Boolean(garminSummary),
+      garminSummaryAvailable: garminConfigured && Boolean(garminSummary),
       weight: weightsByDate.get(date),
     };
   });
   const weeks = [...groupAnalysisDaysByWeek(days).entries()].map(([weekStart, weekDays]) => ({
-    weekStart,
+    weekStart: weekStart < period.from ? period.from : weekStart,
     weekEnd: minAnalysisDate(addDays(weekStart, 6), period.to),
     ...selectAnalysisSummaryFields(summarizeAnalysisDays(weekDays), plan.focus),
   }));
