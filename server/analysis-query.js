@@ -125,12 +125,16 @@ export function resolveExplicitAnalysisPlan(question, options) {
     periods.push({ label: `KW ${week}/${year}`, from, to: addDays(from, 6) });
   }
 
-  const sinceMonthMatch = normalizedQuestion.match(/\bseit\s+(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/);
+  const sinceMonthMatch = normalizedQuestion.match(
+    /\bseit\s+(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2})|\s+(?:des\s+)?(vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/,
+  );
   if (sinceMonthMatch) {
     const month = monthNames.get(sinceMonthMatch[1]);
-    let year = Number(sinceMonthMatch[2] ?? anchorEnd.slice(0, 4));
+    let year = Number(sinceMonthMatch[2] ?? (
+      sinceMonthMatch[3] ? Number(anchorEnd.slice(0, 4)) - 1 : anchorEnd.slice(0, 4)
+    ));
     let from = firstDayOfMonth(year, month);
-    if (!sinceMonthMatch[2] && from > anchorEnd) {
+    if (!sinceMonthMatch[2] && !sinceMonthMatch[3] && from > anchorEnd) {
       year -= 1;
       from = firstDayOfMonth(year, month);
     }
@@ -144,9 +148,12 @@ export function resolveExplicitAnalysisPlan(question, options) {
   const sinceMonthIndex = sinceMonthMatch
     ? sinceMonthMatch.index + sinceMonthMatch[0].indexOf(sinceMonthMatch[1])
     : -1;
-  const monthMatches = [...normalizedQuestion.matchAll(/\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/g)]
+  const monthMatches = [...normalizedQuestion.matchAll(
+    /\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2})|\s+(?:des\s+)?(vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/g,
+  )]
     .filter((match) => match.index !== sinceMonthIndex);
   const wantsMonths = monthMatches.length > 1
+    || monthMatches.some((match) => match[2] || match[3])
     || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
   if (wantsMonths) {
     const resolvedMonths = resolveMonthPeriods(monthMatches, anchorEnd);
@@ -236,24 +243,25 @@ export function inferDefaultAnalysisPlan(question, options) {
 
 export function hasAnalysisTimeReference(question) {
   const normalizedQuestion = normalizeQuestion(question);
-  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|monaten|quartal|vorjahr|jahr|jahre|jahren|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
+  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|monaten|quartal|vorjahr(?:es)?|jahr(?:es|e|en)?|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
 }
 
 export function hasUnresolvedAnalysisTimeReference(question) {
   let remaining = normalizeQuestion(question);
   const monthMatches = [...remaining.matchAll(
-    /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    /\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2})|\s+(?:des\s+)?(vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/g,
   )];
   const hasDeterministicMonthContext = monthMatches.length > 1
+    || monthMatches.some((match) => match[2] || match[3])
     || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(remaining);
   const resolvedPatterns = [
     /\b(?:letzte[nr]?|vergangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
     /\b\d{1,2}\s+wochen?\s+davor\b/g,
     /\b(?:vorhergehende[nr]?|vorangegangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
     /\bkw\s*\d{1,2}(?:\s*[/. -]\s*20\d{2})?\b/g,
-    /\bseit\s+(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    /\bseit\s+(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2}|\s+(?:des\s+)?(?:vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/g,
     ...(hasDeterministicMonthContext ? [
-      /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+      /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2}|\s+(?:des\s+)?(?:vorjahres|letzten\s+jahres|letztes\s+jahr|vergangenen\s+jahres|vergangenes\s+jahr|vorigen\s+jahres|voriges\s+jahr))?\b/g,
     ] : []),
     /\b(?:diese(?:r|n)?|aktuelle(?:r|n)?|ausgewählte(?:r|n)?|ausgewaehlte(?:r|n)?)\s+woche\b/g,
     /\b(?:letzte[nr]?|vorherige[nr]?|vergangene[nr]?)\s+woche\b/g,
@@ -361,7 +369,10 @@ function firstDayOfMonth(year, month) {
 }
 
 function resolveMonthPeriods(matches, anchorEnd) {
-  const resolvedYears = matches.map((match) => match[2] ? Number(match[2]) : undefined);
+  const anchorYear = Number(anchorEnd.slice(0, 4));
+  const resolvedYears = matches.map((match) => (
+    match[2] ? Number(match[2]) : match[3] ? anchorYear - 1 : undefined
+  ));
   const knownYearIndex = resolvedYears.findIndex(Number.isFinite);
   if (knownYearIndex < 0) return matches.map((match) => resolveMonthPeriod(match, anchorEnd));
 

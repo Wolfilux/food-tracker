@@ -82,10 +82,21 @@ test("preserves multiple explicit rolling ranges in one comparison", () => {
 
 test("resolves named months and month comparisons", () => {
   const june = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni?", options);
+  const previousYearJune = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni letzten Jahres?", options);
+  const genitivePreviousYearJune = resolveExplicitAnalysisPlan("Wie war Juni des Vorjahres?", options);
   assert.deepEqual(june.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2026-06-01",
     to: "2026-06-30",
   }]);
+  assert.deepEqual(previousYearJune.periods.map(({ from, to }) => ({ from, to })), [{
+    from: "2025-06-01",
+    to: "2025-06-30",
+  }]);
+  assert.deepEqual(genitivePreviousYearJune.periods, previousYearJune.periods);
+  assert.throws(
+    () => resolveExplicitAnalysisPlan("Wie war es seit Januar letzten Jahres?", options),
+    /366 Tage/,
+  );
 
   const comparison = resolveExplicitAnalysisPlan("Vergleiche April und Juni", options);
   assert.deepEqual(comparison.periods.map(({ from, to }) => ({ from, to })), [
@@ -286,6 +297,9 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Januar bis März mit Juni"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche letzte Woche mit der Woche davor"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Juni mit dem Vorjahr"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es im Juni letzten Jahres?"), false);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war Juni des Vorjahres?"), false);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es im Juni vor zwei Jahren?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche gestern mit der letzten Woche"), true);
   assert.equal(resolveExplicitAnalysisPlan("Wie war Juni?", options), null);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war Juni?"), true);
