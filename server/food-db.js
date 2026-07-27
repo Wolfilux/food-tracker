@@ -2567,10 +2567,9 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
   const cachedActivityCoveredThrough = cachedActivityFetchedDate
     ? minAnalysisDate(addDays(cachedActivityFetchedDate, -1), addDays(activityWeekStart, 6))
     : addDays(activityWeekStart, -1);
-  const activityDateCovered = includeDayValues && (
-    activities.length > 0
-    || (Boolean(cachedActivityWeek) && date <= cachedActivityCoveredThrough)
-  );
+  const activityDateCovered = includeDayValues
+    && Boolean(cachedActivityWeek)
+    && date <= cachedActivityCoveredThrough;
   const workoutCalories = Math.round(summarizeGarminActivities(activities).calories);
   const dailyIntake = includeDayValues ? listDailyCalories(date, date)[0] : undefined;
   const intakeCalories = dailyIntake?.calories ?? 0;

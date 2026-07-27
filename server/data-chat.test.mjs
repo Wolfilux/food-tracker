@@ -310,6 +310,7 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(adaptiveEnergy.mode, "adaptive");
   assert.equal(adaptiveEnergy.garmin.allDayActiveCalories, 550);
   assert.equal(adaptiveEnergy.garmin.workoutCalories, 300);
+  assert.equal(adaptiveEnergy.garmin.activityDateCovered, false);
   assert.equal(adaptiveEnergy.results.activityStrategy, "garmin-active-calories");
   assert.equal(adaptiveEnergy.results.activityAdjustment, 550);
   assert.equal(
