@@ -324,7 +324,17 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     requestBodies.push(requestBody);
     if (requestBody.tools) {
       const followUpQuestion = requestBody.messages.at(-1)?.content ?? "";
-      const periods = followUpQuestion.includes("Vergleiche mit letzter Woche")
+      const periods = followUpQuestion.includes("Vergleich zur letzten Woche")
+        ? [
+          { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
+          { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
+        ]
+        : followUpQuestion.includes("gegenüber letzter Woche")
+        ? [
+          { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
+          { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
+        ]
+        : followUpQuestion.includes("Vergleiche mit letzter Woche")
         ? [
           { label: "Ausgewählte Woche", from: "2026-07-20", to: "2026-07-26" },
           { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
@@ -473,6 +483,40 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(Array.isArray(requestBodies[0].tools), true);
     assert.deepEqual(standaloneComparison.period.periods.map(({ from, to }) => ({ from, to })), [
       { from: "2026-07-20", to: "2026-07-26" },
+      { from: "2026-07-13", to: "2026-07-19" },
+    ]);
+
+    requestBodies.length = 0;
+    const conversationalComparison = await databaseModule.answerAnalysisQuestion({
+      question: "Wie ist das im Vergleich zur letzten Woche?",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Juni?" },
+        { role: "assistant", content: answer.answer },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.deepEqual(conversationalComparison.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-06-01", to: "2026-06-30" },
+      { from: "2026-07-13", to: "2026-07-19" },
+    ]);
+
+    requestBodies.length = 0;
+    const gegenueberComparison = await databaseModule.answerAnalysisQuestion({
+      question: "Wie ist das gegenüber letzter Woche?",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Juni?" },
+        { role: "assistant", content: answer.answer },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.deepEqual(gegenueberComparison.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-06-01", to: "2026-06-30" },
       { from: "2026-07-13", to: "2026-07-19" },
     ]);
 
