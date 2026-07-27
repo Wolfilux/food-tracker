@@ -220,6 +220,29 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(emptyActivityContext.dataPresence.activityDaysAvailable, 7);
   assert.equal(emptyActivityContext.dataPresence.hasAnyData, true);
 
+  databaseModule.getFoodDatabase().prepare([
+    "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
+    "VALUES (?, ?, ?, ?)",
+  ].join("\n")).run("2026-06-15", "2026-06-21", "[]", "2026-06-18T12:00:00.000Z");
+  const partialActivityCachePlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Teilweise Garmin-Woche", from: "2026-06-15", to: "2026-06-21" }],
+    focus: ["activity"],
+    includeDailyDetails: true,
+  }, {
+    anchorWeekStart: "2026-06-15",
+    today: "2026-07-27",
+  });
+  const partialActivityCacheContext = databaseModule.buildAnalysisDataContext(
+    partialActivityCachePlan,
+    { userKey: "default" },
+  );
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysAvailable, 3);
+  assert.equal(partialActivityCacheContext.periods[0].summary.activity.daysMissing, 4);
+  assert.deepEqual(
+    partialActivityCacheContext.periods[0].dataCoverage.garmin.activityWeeksPartial,
+    ["2026-06-15"],
+  );
+
   const emptyNutritionPlan = normalizeAnalysisQueryPlan({
     periods: [{ label: "Ohne Logs", from: "2026-05-11", to: "2026-05-17" }],
     focus: ["nutrition"],

@@ -2542,10 +2542,10 @@ function buildAnalysisPeriodContext(period, plan) {
   const garminConfigured = needsGarmin && Boolean(garminConfig.username && garminConfig.authValue);
   const activityRange = needsGarmin
     ? listCachedActivitiesForRange(period.from, period.to)
-    : { activities: [], cachedWeeks: [], missingWeeks: [] };
+    : { activities: [], cachedWeeks: [], partialWeeks: [], missingWeeks: [], coveredDates: [] };
   const activities = activityRange.activities;
   const activitiesByDate = groupGarminActivitiesByDate(activities);
-  const cachedActivityWeeks = new Set(activityRange.cachedWeeks);
+  const coveredActivityDates = new Set(activityRange.coveredDates);
   const weightsByDate = new Map(weights.map((weight) => [weight.date, weight]));
   const entriesByDate = new Map();
   for (const entry of entries) {
@@ -2590,7 +2590,7 @@ function buildAnalysisPeriodContext(period, plan) {
       macroTargets,
       activityTotals,
       activityDataAvailable: includesActivity
-        && (cachedActivityWeeks.has(getWeekStart(date)) || garminSummaryAvailable),
+        && (coveredActivityDates.has(date) || garminSummaryAvailable),
       garminSummaryAvailable: includesActivity && garminSummaryAvailable,
       weight: weightsByDate.get(date),
     };
@@ -2619,6 +2619,7 @@ function buildAnalysisPeriodContext(period, plan) {
         garmin: {
         status: garminConfigured ? "configured" : "not_configured",
         activityWeeksAvailable: activityRange.cachedWeeks,
+        activityWeeksPartial: activityRange.partialWeeks,
         activityWeeksMissing: activityRange.missingWeeks,
         dailySummariesAvailable: days.filter((day) => day.garminSummaryAvailable).length,
         dailySummariesMissing: days.filter((day) => !day.garminSummaryAvailable).length,
@@ -2928,7 +2929,9 @@ function listEntriesForRange(from, to) {
 function listCachedActivitiesForRange(from, to) {
   const activities = [];
   const cachedWeeks = [];
+  const partialWeeks = [];
   const missingWeeks = [];
+  const coveredDates = [];
   for (let weekStart = getWeekStart(from); weekStart <= to; weekStart = addDays(weekStart, 7)) {
     const cachedWeek = getGarminCachedActivities(weekStart);
     if (!cachedWeek) {
@@ -2936,12 +2939,39 @@ function listCachedActivitiesForRange(from, to) {
       continue;
     }
     cachedWeeks.push(weekStart);
+    const requestedWeekStart = weekStart < from ? from : weekStart;
+    const requestedWeekEnd = minAnalysisDate(addDays(weekStart, 6), to);
+    const fetchedDate = dateInBerlin(cachedWeek.fetchedAt);
+    const coveredThrough = fetchedDate
+      ? minAnalysisDate(addDays(fetchedDate, -1), addDays(weekStart, 6))
+      : addDays(weekStart, -1);
+    if (coveredThrough < requestedWeekEnd) partialWeeks.push(weekStart);
+    for (
+      let coveredDate = requestedWeekStart;
+      coveredDate <= minAnalysisDate(coveredThrough, requestedWeekEnd);
+      coveredDate = addDays(coveredDate, 1)
+    ) {
+      coveredDates.push(coveredDate);
+    }
     for (const activity of cachedWeek.activities ?? []) {
       const date = String(activity.date ?? activity.startTimeLocal ?? "").slice(0, 10);
       if (date >= from && date <= to) activities.push(activity);
     }
   }
-  return { activities, cachedWeeks, missingWeeks };
+  return { activities, cachedWeeks, partialWeeks, missingWeeks, coveredDates };
+}
+
+function dateInBerlin(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function buildDateRange(from, to) {
