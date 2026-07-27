@@ -992,7 +992,6 @@ function App() {
   const [adaptiveGoalState, setAdaptiveGoalState] = useState<"idle" | "loading" | "saving" | "saved" | "error">("idle");
   const [adaptiveGoalError, setAdaptiveGoalError] = useState("");
   const [weightEntries, setWeightEntries] = useState<WeightEntry[]>([]);
-  const [weightDateDraft, setWeightDateDraft] = useState(todayLocal());
   const [weightKgDraft, setWeightKgDraft] = useState("");
   const [weightState, setWeightState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [weightMessage, setWeightMessage] = useState("");
@@ -1052,6 +1051,10 @@ function App() {
   const [weeklyAiAnalysis, setWeeklyAiAnalysis] = useState<WeeklyAiAnalysis | null>(null);
   const [weeklyAiState, setWeeklyAiState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [weeklyAiError, setWeeklyAiError] = useState("");
+  const [analysisQuestion, setAnalysisQuestion] = useState("");
+  const [analysisChat, setAnalysisChat] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [analysisChatState, setAnalysisChatState] = useState<"idle" | "loading" | "error">("idle");
+  const [analysisChatError, setAnalysisChatError] = useState("");
   const [calorieIdeas, setCalorieIdeas] = useState<CalorieIdea[]>([]);
   const [calorieIdeasState, setCalorieIdeasState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [calorieIdeasError, setCalorieIdeasError] = useState("");
@@ -1068,6 +1071,16 @@ function App() {
   const [garminConfigState, setGarminConfigState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [garminConfigError, setGarminConfigError] = useState("");
   const [reanalyzingEntryId, setReanalyzingEntryId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const existing = weightEntries.find((entry) => entry.date === selectedDate);
+    const syncDraft = window.setTimeout(() => {
+      setWeightKgDraft(existing ? String(existing.weightKg).replace(".", ",") : "");
+      setWeightState("idle");
+      setWeightMessage("");
+    }, 0);
+    return () => window.clearTimeout(syncDraft);
+  }, [selectedDate, weightEntries]);
   const [isAutocompleteOpen, setAutocompleteOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [heroSwipeDirection, setHeroSwipeDirection] = useState<"next" | "previous" | null>(null);
@@ -1839,7 +1852,7 @@ function App() {
     setWeightState("saving");
     setWeightMessage("");
     try {
-      const savedWeight = await saveWeight(weightDateDraft, weightKg);
+      const savedWeight = await saveWeight(selectedDate, weightKg);
       setWeightEntries((currentEntries) => [
         ...currentEntries.filter((entry) => entry.date !== savedWeight.date),
         savedWeight,
@@ -1850,7 +1863,7 @@ function App() {
       setAdaptiveDraft(goal.profile);
       setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
       setWeightState("saved");
-      setWeightMessage(`${savedWeight.weightKg.toLocaleString("de-DE")} kg für ${formatDateLabel(savedWeight.date)} gespeichert.`);
+      setWeightMessage(`${savedWeight.weightKg.toLocaleString("de-DE")} kg für ${formatDateLabel(selectedDate)} gespeichert.`);
     } catch (error) {
       setWeightState("error");
       setWeightMessage(error instanceof Error ? error.message : "Gewicht konnte nicht gespeichert werden.");
@@ -1893,7 +1906,7 @@ function App() {
       setAdaptiveGoal(goal);
       setAdaptiveDraft(goal.profile);
       setAdaptiveWeightDraft(String(goal.profile.currentWeightKg));
-      if (weightDateDraft === conflict.date) {
+      if (selectedDate === conflict.date) {
         setWeightKgDraft(String(adopted.weightKg).replace(".", ","));
       }
       setGarminWeightConflict(null);
@@ -1902,6 +1915,31 @@ function App() {
     } catch (error) {
       setGarminWeightState("error");
       setGarminWeightMessage(error instanceof Error ? error.message : "Garmin-Gewicht konnte nicht übernommen werden.");
+    }
+  }
+
+  async function askAnalysisQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const question = analysisQuestion.trim();
+    if (!question || analysisChatState === "loading") return;
+    const history = analysisChat.slice(-6);
+    setAnalysisChat((current) => [...current, { role: "user", content: question }]);
+    setAnalysisQuestion("");
+    setAnalysisChatState("loading");
+    setAnalysisChatError("");
+    try {
+      const response = await fetch("/api/ai/data-chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question, weekStart: selectedWeekStart, history }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Antwort konnte nicht erstellt werden.");
+      setAnalysisChat((current) => [...current, { role: "assistant", content: payload.answer }]);
+      setAnalysisChatState("idle");
+    } catch (error) {
+      setAnalysisChatState("error");
+      setAnalysisChatError(error instanceof Error ? error.message : "Antwort konnte nicht erstellt werden.");
     }
   }
 
@@ -2869,6 +2907,26 @@ function App() {
             {weeklyAiState === "error" && <small className="config-status config-status--error">{weeklyAiError}</small>}
           </section>
 
+          <section className="analysis-chat-card" aria-label="KI-Datenchat">
+            <div>
+              <p className="eyebrow eyebrow--dark"><MessageSquareText size={16} aria-hidden="true" /> Datenchat</p>
+              <h2>Frag deine Woche</h2>
+              <p>Antworten beziehen sich auf {formatWeekRange(weekDates)} und dienen der Orientierung, nicht als medizinische Diagnose.</p>
+            </div>
+            <div className="analysis-chat-log" aria-live="polite">
+              {analysisChat.length === 0 && <p className="analysis-chat-empty">Zum Beispiel: „Warum habe ich zugenommen?“ oder „Was sollte ich nächste Woche ändern?“</p>}
+              {analysisChat.map((message, index) => <article className={`analysis-chat-message analysis-chat-message--${message.role}`} key={`${message.role}-${index}`}>{message.content}</article>)}
+              {analysisChatState === "loading" && <p className="analysis-chat-loading"><Loader2 className="spin" size={17} /> Daten werden begrenzt aufbereitet …</p>}
+            </div>
+            <form className="analysis-chat-form" onSubmit={askAnalysisQuestion}>
+              <label className="visually-hidden" htmlFor="analysis-question">Frage zu deinen Daten</label>
+              <textarea id="analysis-question" value={analysisQuestion} maxLength={500} rows={2} onChange={(event) => setAnalysisQuestion(event.target.value)} placeholder="Was fällt dir an meiner Woche auf?" disabled={!analysisAiConfig.hasApiKey} />
+              <button className="primary-button" type="submit" disabled={!analysisQuestion.trim() || analysisChatState === "loading" || !analysisAiConfig.hasApiKey}><Sparkles size={17} /> Fragen</button>
+            </form>
+            {analysisChatState === "error" && <p className="config-status config-status--error" role="alert">{analysisChatError}</p>}
+            {!analysisAiConfig.hasApiKey && <p className="config-status">Bitte zuerst einen Analyse-Key in der Konfiguration hinterlegen.</p>}
+          </section>
+
           <section className="weekly-chart-grid" aria-label="Wochendiagramme">
             <WeeklyBarChart
               title="Kalorien"
@@ -3412,33 +3470,22 @@ function App() {
 
       {activeView === "tracker" && (
         <>
-      <form className="weight-entry-card" aria-label="Körpergewicht erfassen" onSubmit={saveWeightEntry}>
+      <details className="weight-entry-card">
+        <summary className="weight-entry-card__copy">
+          <span className="weight-entry-card__icon" aria-hidden="true"><Scale size={20} /></span>
+          <span><strong>Körpergewicht</strong><small>{formatDateLabel(selectedDate)}{weightEntries.find((entry) => entry.date === selectedDate) ? ` · ${weightEntries.find((entry) => entry.date === selectedDate)?.weightKg.toLocaleString("de-DE")} kg` : " · noch kein Wert"}</small></span>
+          <ChevronDown size={20} aria-hidden="true" />
+        </summary>
+        <form className="weight-entry-card__body" aria-label="Körpergewicht erfassen" onSubmit={saveWeightEntry}>
         <div className="weight-entry-card__copy">
           <span className="weight-entry-card__icon" aria-hidden="true"><Scale size={22} /></span>
           <div>
             <p className="eyebrow eyebrow--dark">Gewicht</p>
             <h2>Körpergewicht erfassen</h2>
-            <span>Ein Wert pro Tag · manuelle Eingabe hat Vorrang vor Garmin.</span>
+            <span>Der im Header gewählte Tag wird gespeichert.</span>
           </div>
         </div>
         <div className="weight-entry-card__fields">
-          <label>
-            Datum
-            <input
-              type="date"
-              value={weightDateDraft}
-              max={todayLocal()}
-              onChange={(event) => {
-                const nextDate = event.target.value;
-                setWeightDateDraft(nextDate);
-                const existing = weightEntries.find((entry) => entry.date === nextDate);
-                setWeightKgDraft(existing ? String(existing.weightKg).replace(".", ",") : "");
-                setWeightState("idle");
-                setWeightMessage("");
-              }}
-              required
-            />
-          </label>
           <label>
             Gewicht in kg
             <div className="weight-input">
@@ -3468,9 +3515,10 @@ function App() {
           className={weightState === "error" ? "weight-entry-card__status weight-entry-card__status--error" : "weight-entry-card__status"}
           role="status"
         >
-          {weightMessage || "Heute ist vorausgewählt; vorhandene Tageswerte werden aktualisiert."}
+          {weightMessage || `${formatDateLabel(selectedDate)} · vorhandene Tageswerte werden aktualisiert.`}
         </p>
-      </form>
+        </form>
+      </details>
 
       <section className="metric-grid" aria-label="Tagessummen">
         <Metric icon={<Flame />} label="Kalorien" value={totals.calories} suffix="kcal" />
