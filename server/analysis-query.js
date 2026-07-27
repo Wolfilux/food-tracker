@@ -97,11 +97,14 @@ export function resolveExplicitAnalysisPlan(question, options) {
       };
       periods.push(currentPeriod);
       if (matchIndex === 0 && /\b(?:davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/.test(normalizedQuestion)) {
-        const precedingWeekCount = Number(precedingWeeksMatch?.[1] ?? weekCount);
+        const hasSingularPrecedingWeek = /\b(?:der|die)?\s*woche\s+davor\b/.test(normalizedQuestion);
+        const precedingWeekCount = hasSingularPrecedingWeek
+          ? 1
+          : Number(precedingWeeksMatch?.[1] ?? weekCount);
         const previousTo = addDays(currentPeriod.from, -1);
         if (precedingWeekCount >= 1 && precedingWeekCount <= 52) {
           periods.push({
-            label: `${precedingWeekCount} Wochen davor`,
+            label: `${precedingWeekCount} ${precedingWeekCount === 1 ? "Woche" : "Wochen"} davor`,
             from: addDays(previousTo, -(precedingWeekCount * 7) + 1),
             to: previousTo,
           });
@@ -251,7 +254,7 @@ export function hasUnresolvedAnalysisTimeReference(question) {
   ];
   for (const pattern of resolvedPatterns) remaining = remaining.replace(pattern, " ");
   remaining = remaining.replace(
-    /\b(?:seit|zwischen|von|bis|davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/g,
+    /\b(?:zwischen|von|bis|davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/g,
     " ",
   );
   return hasAnalysisTimeReference(remaining);

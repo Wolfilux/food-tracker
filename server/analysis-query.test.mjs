@@ -56,6 +56,18 @@ test("honors a differently sized preceding rolling range", () => {
   assert.deepEqual(adjectivePlan.periods, plan.periods);
 });
 
+test("treats a singular preceding week as one week", () => {
+  const plan = resolveExplicitAnalysisPlan(
+    "Vergleiche die letzten 4 Wochen mit der Woche davor",
+    options,
+  );
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
+    { label: "1 Woche davor", from: "2026-06-22", to: "2026-06-28" },
+  ]);
+});
+
 test("preserves multiple explicit rolling ranges in one comparison", () => {
   const plan = resolveExplicitAnalysisPlan(
     "Vergleiche die letzten 4 Wochen mit den letzten 8 Wochen",
@@ -275,6 +287,8 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche letzte Woche mit der Woche davor"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Juni mit dem Vorjahr"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche gestern mit der letzten Woche"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es seit KW 20?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es seit letzter Woche?"), true);
   assert.equal(hasAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);
 });
