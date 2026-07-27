@@ -72,12 +72,16 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(result.energyCalculation.mode, "legacy");
   assert.equal(
     result.energyCalculation.formulas.calorieTarget,
-    "max(800 kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)",
+    "max(minimumCalorieGoal=800 kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)",
   );
   assert.equal(result.energyCalculation.parameters.baseCalorieGoal, 2200);
-  assert.equal(result.energyCalculation.results.calorieTarget, 2200);
+  assert.equal(result.energyCalculation.dayValuesIncluded, false);
+  assert.equal(result.energyCalculation.results.calorieTarget, undefined);
   assert.equal(result.energyCalculation.results.estimatedEnergyBalanceCalories, undefined);
   assert.match(result.energyCalculation.uncertainties[0], /Basisziel ist nicht automatisch BMR, TDEE/);
+  const legacyEnergy = databaseModule.buildEnergyCalculationContext("2026-06-08");
+  assert.equal(legacyEnergy.results.calorieTarget, 2200);
+  assert.equal(legacyEnergy.results.targetDeltaCalories, 1975);
   assert.equal(result.dataPresence.entryCount, 2);
   assert.equal(result.dataPresence.weightCount, 2);
   assert.equal(result.periods[0].summary.loggedDays, 2);
@@ -319,6 +323,8 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.match(adaptiveEnergy.garmin.doubleCountingRule, /nie addieren/);
   assert.equal(adaptiveEnergy.parameters.targetWeightKg, 75);
   assert.match(adaptiveEnergy.parameters.targetWeightRole, /nicht direkt/);
+  assert.equal(adaptiveEnergy.results.estimatedEnergyBalanceCalories, undefined);
+  assert.match(adaptiveEnergy.results.unavailableReason, /Keine Kalorienaufnahme/);
 
   const adaptiveFallbackEnergy = databaseModule.buildEnergyCalculationContext("2026-06-17");
   assert.equal(adaptiveFallbackEnergy.results.maintenanceSource, "initial_tdee_fallback");
@@ -326,6 +332,11 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(adaptiveFallbackEnergy.results.activityAdjustment, 0);
   assert.equal(adaptiveFallbackEnergy.adaptiveMaintenanceEvidence.available, false);
   assert.match(adaptiveFallbackEnergy.fallbacks.join(" "), /mindestens 14 Tage/);
+  const adaptiveMissingGarminEnergy = databaseModule.buildEnergyCalculationContext("2026-06-09");
+  assert.equal(adaptiveMissingGarminEnergy.results.dayValuesAvailable, false);
+  assert.equal(adaptiveMissingGarminEnergy.results.finalCalorieTarget, undefined);
+  assert.equal(adaptiveMissingGarminEnergy.results.estimatedEnergyBalanceCalories, undefined);
+  assert.match(adaptiveMissingGarminEnergy.results.unavailableReason, /Aktivität ist unbekannt statt 0/);
   databaseModule.saveAdaptiveGoalProfile({
     ...originalAdaptiveProfile,
     enabled: false,

@@ -2489,7 +2489,12 @@ async function planAnalysisDataQueryWithJson({ question, history, provider, conf
 export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   assertAnalysisUserScope(scope.userKey);
   const goal = getAnalysisGoalContext(plan.focus);
-  const energyCalculation = buildEnergyCalculationContext();
+  const today = todayInBerlin();
+  const includesToday = plan.periods.some((period) => period.from <= today && period.to >= today);
+  const energyCalculation = buildEnergyCalculationContext(today, {
+    includeDayValues: includesToday,
+    requestedPeriods: plan.periods.map(({ label, from, to }) => ({ label, from, to })),
+  });
   const goalDataAvailable = plan.focus.includes("goals") && Object.keys(goal).length > 0;
   const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
   const aggregatePresence = periods.reduce((presence, period) => ({
@@ -2542,26 +2547,30 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   };
 }
 
-export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
+export function buildEnergyCalculationContext(dateInput = todayInBerlin(), options = {}) {
   const date = normalizeGarminDate(dateInput);
+  const includeDayValues = options.includeDayValues !== false;
   const nutrition = getNutritionConfig();
   const adaptiveProfile = getAdaptiveGoalProfile();
   const garminConfig = getGarminConfigRecord();
   const garminConfigured = Boolean(garminConfig.username && garminConfig.authValue);
-  const garminSummary = getGarminCachedSummary(date);
+  const garminSummary = includeDayValues ? getGarminCachedSummary(date) : null;
   const garminSummaryAvailable = hasUsableGarminSummary(garminSummary);
   const activeCalories = garminSummaryAvailable
     ? optionalNonNegativeNumber(garminSummary?.activeKilocalories)
     : undefined;
-  const weekActivities = getGarminCachedActivities(getWeekStart(date))?.activities ?? [];
+  const cachedActivityWeek = includeDayValues ? getGarminCachedActivities(getWeekStart(date)) : null;
+  const weekActivities = cachedActivityWeek?.activities ?? [];
   const activities = weekActivities.filter((activity) => String(activity.date ?? "").slice(0, 10) === date);
   const workoutCalories = Math.round(summarizeGarminActivities(activities).calories);
-  const dailyIntake = listDailyCalories(date, date)[0];
+  const dailyIntake = includeDayValues ? listDailyCalories(date, date)[0] : undefined;
   const intakeCalories = dailyIntake?.calories ?? 0;
   const intakeEntryCount = dailyIntake?.entryCount ?? 0;
   const common = {
     schemaVersion: 1,
     date,
+    dayValuesIncluded: includeDayValues,
+    requestedPeriods: options.requestedPeriods,
     timezone: "Europe/Berlin",
     units: {
       energy: "kcal",
@@ -2575,25 +2584,27 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       targetDelta: "Kalorienziel minus Aufnahme; dies ist Restbudget und nicht automatisch ein physiologisches Defizit.",
     },
     intake: {
-      calories: Math.round(intakeCalories),
+      available: includeDayValues && intakeEntryCount > 0,
+      calories: includeDayValues && intakeEntryCount > 0 ? Math.round(intakeCalories) : undefined,
       entryCount: intakeEntryCount,
       source: "Food-Tracker-Einträge des Kalendertags",
-      completeness: intakeEntryCount > 0 ? "unknown" : "no_entries",
+      completeness: !includeDayValues ? "outside_requested_periods" : intakeEntryCount > 0 ? "unknown" : "no_entries",
       assumption: "Ein Tag mit Einträgen kann trotzdem unvollständig sein; fehlende Einträge werden nicht als gegessen geschätzt.",
     },
     garmin: {
       configured: garminConfigured,
-      dailySummaryAvailable: garminSummaryAvailable,
-      allDayActiveCalories: activeCalories,
+      dailySummaryAvailable: includeDayValues ? garminSummaryAvailable : undefined,
+      activityWeekCacheAvailable: includeDayValues ? Boolean(cachedActivityWeek) : undefined,
+      allDayActiveCalories: includeDayValues ? activeCalories : undefined,
       allDayActiveCaloriesSource: "Garmin-Tagessumme activeKilocalories",
-      totalCalories: garminSummaryAvailable
+      totalCalories: includeDayValues && garminSummaryAvailable
         ? optionalNonNegativeNumber(garminSummary?.totalKilocalories)
         : undefined,
-      bmrCalories: garminSummaryAvailable
+      bmrCalories: includeDayValues && garminSummaryAvailable
         ? optionalNonNegativeNumber(garminSummary?.bmrKilocalories)
         : undefined,
-      workoutCalories,
-      workoutCount: activities.length,
+      workoutCalories: includeDayValues ? workoutCalories : undefined,
+      workoutCount: includeDayValues ? activities.length : undefined,
       workoutCaloriesSource: "Summe einzelner Garmin-Aktivitäten",
       doubleCountingRule: "allDayActiveCalories und workoutCalories nie addieren. Die Tagessumme hat Vorrang; Workouts sind separat oder Teil des Fallbacks.",
     },
@@ -2607,7 +2618,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
   };
 
   if (!adaptiveProfile.enabled) {
-    const targetAvailable = !garminConfigured || activeCalories !== undefined;
+    const targetAvailable = includeDayValues && (!garminConfigured || activeCalories !== undefined);
     const effectiveActiveCalories = garminConfigured ? activeCalories : 0;
     const calorieTarget = targetAvailable
       ? calculateEffectiveCalorieGoal(
@@ -2620,7 +2631,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       ...common,
       mode: "legacy",
       formulas: {
-        calorieTarget: "max(800 kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)",
+        calorieTarget: `max(minimumCalorieGoal=${minimumCalorieGoal} kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)`,
         targetDelta: "calorieTarget - intakeCalories",
         physiologicalDeficit: "Nicht bestimmbar, solange baseCalorieGoal nicht als Erhaltungsbedarf belegt ist.",
       },
@@ -2631,9 +2642,15 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
         allDayActiveCalories: effectiveActiveCalories,
       },
       results: {
+        dayValuesAvailable: targetAvailable,
+        unavailableReason: !includeDayValues
+          ? "Der Referenztag liegt außerhalb der angefragten Zeiträume; Tageswerte wurden bewusst nicht geladen."
+          : undefined,
         calorieTarget,
         targetAvailable,
-        targetDeltaCalories: calorieTarget === undefined ? undefined : Math.round(calorieTarget - intakeCalories),
+        targetDeltaCalories: calorieTarget === undefined || intakeEntryCount === 0
+          ? undefined
+          : Math.round(calorieTarget - intakeCalories),
         plannedDeficitFromOffsetCalories: Math.max(0, -nutrition.calorieGoalOffset),
         plannedSurplusFromOffsetCalories: Math.max(0, nutrition.calorieGoalOffset),
         estimatedEnergyBalanceCalories: undefined,
@@ -2641,7 +2658,7 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       fallbacks: [
         "Ohne konfigurierte Garmin-Verbindung werden 0 Aktivitäts-kcal addiert.",
         "Bei konfiguriertem Garmin, aber fehlender Tagessumme, ist das Tagesziel unbekannt statt Aktivität als 0 anzunehmen.",
-        "Das Ziel wird auf mindestens 800 kcal begrenzt.",
+        `Das Ziel wird auf mindestens minimumCalorieGoal=${minimumCalorieGoal} kcal begrenzt.`,
       ],
       uncertainties: [
         "Das manuelle Basisziel ist nicht automatisch BMR, TDEE oder gemessener Erhaltungsbedarf.",
@@ -2650,15 +2667,20 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
     };
   }
 
-  const weightLogs = listAdaptiveWeightLogs();
+  const weightLogs = includeDayValues ? listAdaptiveWeightLogs() : [];
   const latestWeight = weightLogs.filter((log) => log.date <= date).at(-1);
   const profile = normalizeAdaptiveGoalProfile({
     ...adaptiveProfile,
     currentWeightKg: latestWeight?.weightKg ?? adaptiveProfile.currentWeightKg,
   }, adaptiveProfile);
   const trackingWindowFrom = addDays(date, -27);
-  const dailyCalories = listDailyCalories(trackingWindowFrom, date);
+  const dailyCalories = includeDayValues ? listDailyCalories(trackingWindowFrom, date) : [];
   const adaptiveMaintenance = calculateAdaptiveMaintenance(dailyCalories, weightLogs, date);
+  const missingRequiredGarminData = includeDayValues
+    && profile.garminEnabled
+    && garminConfigured
+    && !garminSummaryAvailable
+    && !cachedActivityWeek;
   const calculation = calculateDailyGoal({
     profile,
     adaptiveMaintenance: adaptiveMaintenance.available ? adaptiveMaintenance.adaptiveMaintenance : undefined,
@@ -2673,9 +2695,9 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       bmr: "Mifflin-St Jeor: 10×Gewicht(kg) + 6.25×Größe(cm) − 5×Alter + Geschlechtskonstante (männlich +5, weiblich −161, sonst −78)",
       initialTdee: "BMR × Aktivitätsfaktor",
       requestedDeficit: "weeklyLossKg × 7700 kcal/kg ÷ 7",
-      safeTargetDeficit: "min(requestedDeficit, gewählte Defizitobergrenze, maintenance − minimumGoal)",
+      safeTargetDeficit: "min(requestedDeficit, gewählte Defizitobergrenze, maintenance − minimumCalorieGoal)",
       basisTarget: "maintenance − safeTargetDeficit",
-      calorieTarget: "manualOverride, sonst max(minimumGoal, basisTarget + activityAdjustment)",
+      calorieTarget: "manualOverride, sonst max(minimumCalorieGoal, basisTarget + activityAdjustment)",
       estimatedEnergyBalance: "maintenance + activityAdjustment − intakeCalories",
       adaptiveMaintenance: "durchschnittliche Aufnahme + aus 7-Tage-Gewichtstrend abgeleitete tägliche Energiedifferenz",
     },
@@ -2700,6 +2722,14 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       trackingWindow: { from: trackingWindowFrom, to: date, days: 28 },
     },
     results: {
+      dayValuesAvailable: includeDayValues && !missingRequiredGarminData,
+      unavailableReason: !includeDayValues
+        ? "Der Referenztag liegt außerhalb der angefragten Zeiträume; Tageswerte wurden bewusst nicht geladen."
+        : missingRequiredGarminData
+        ? "Garmin ist aktiviert, aber Tagessumme und Aktivitätswochen-Cache fehlen; Aktivität ist unbekannt statt 0."
+        : intakeEntryCount === 0
+        ? "Keine Kalorienaufnahme protokolliert; Zielwerte sind verfügbar, die Energiebilanz jedoch nicht."
+        : undefined,
       bmr: calculation.bmr,
       initialTdee: calculation.initialTdee,
       maintenance: calculation.maintenance,
@@ -2713,12 +2743,18 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin()) {
       activityRawBonus: calculation.activity.rawBonus,
       activityCap: calculation.activity.cap,
       activityNote: calculation.activity.note,
-      recommendedToday: calculation.recommendedToday,
-      finalCalorieTarget: calculation.finalGoal,
+      recommendedToday: includeDayValues && !missingRequiredGarminData ? calculation.recommendedToday : undefined,
+      finalCalorieTarget: includeDayValues && !missingRequiredGarminData ? calculation.finalGoal : undefined,
       hasManualOverride: calculation.hasManualOverride,
-      estimatedMaintenanceToday,
-      estimatedEnergyBalanceCalories: Math.round(estimatedMaintenanceToday - intakeCalories),
-      targetDeltaCalories: Math.round(calculation.finalGoal - intakeCalories),
+      estimatedMaintenanceToday: includeDayValues && !missingRequiredGarminData
+        ? estimatedMaintenanceToday
+        : undefined,
+      estimatedEnergyBalanceCalories: includeDayValues && !missingRequiredGarminData && intakeEntryCount > 0
+        ? Math.round(estimatedMaintenanceToday - intakeCalories)
+        : undefined,
+      targetDeltaCalories: includeDayValues && !missingRequiredGarminData && intakeEntryCount > 0
+        ? Math.round(calculation.finalGoal - intakeCalories)
+        : undefined,
     },
     safety: calculation.safety,
     adaptiveMaintenanceEvidence: adaptiveMaintenance,
