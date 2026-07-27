@@ -253,6 +253,23 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(explicitQuestionWithArticle.period.periods[0].to, "2026-06-30");
 
     requestBodies.length = 0;
+    const explicitComparisonWithArticle = await databaseModule.answerAnalysisQuestion({
+      question: "Vergleiche das Gewicht im Juni mit Mai",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im April?" },
+        { role: "assistant", content: "Ausgewerteter Zeitraum: April 2026" },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 1);
+    assert.equal("tools" in requestBodies[0], false);
+    assert.deepEqual(explicitComparisonWithArticle.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-06-01", to: "2026-06-30" },
+      { from: "2026-05-01", to: "2026-05-31" },
+    ]);
+
+    requestBodies.length = 0;
     const followUp = await databaseModule.answerAnalysisQuestion({
       question: "Und im Vergleich dazu?",
       weekStart: "2026-07-20",

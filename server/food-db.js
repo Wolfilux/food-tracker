@@ -2284,7 +2284,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
   };
   const explicitPlan = resolveExplicitAnalysisPlan(question, planOptions);
   const referencesHistory = safeHistory.length > 0
-    && /\b(?:dazu|damit|davon|hierzu|vergleiche\s+das|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
+    && /\b(?:dazu|damit|davon|hierzu|vergleiche\s+das\s+(?:mit|dazu|damit|hierzu)|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
       question.toLocaleLowerCase("de-DE"),
     );
   const requiresPlanner = referencesHistory || hasUnresolvedAnalysisTimeReference(question);
