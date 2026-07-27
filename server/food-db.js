@@ -2405,15 +2405,27 @@ async function sendWeeklyAnalysisEmail(weekStart) {
     auth: smtpConfig.user || smtpConfig.pass ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
     tls: smtpConfig.tlsServername ? { servername: smtpConfig.tlsServername } : undefined,
   });
-  await transporter.sendMail({
+  await transporter.verify();
+  const delivery = await transporter.sendMail({
     from: smtpConfig.from,
     to: mailConfig.targetEmail,
     subject: `Food Tracker Wochenanalyse ${formatDate(analysis.weekStart)} - ${formatDate(analysis.weekEnd)}`,
     text: buildWeeklyEmailText(analysis),
     html: buildWeeklyEmailHtml(analysis),
   });
+  if (!isSmtpDeliveryAccepted(delivery, mailConfig.targetEmail)) {
+    throw new Error("SMTP relay did not accept the configured recipient");
+  }
+  console.info(`Weekly food email accepted by SMTP relay (${delivery.messageId ? "message id recorded" : "without message id"})`);
 
   return { sent: true };
+}
+
+export function isSmtpDeliveryAccepted(delivery, targetEmail) {
+  const target = String(targetEmail ?? "").trim().toLowerCase();
+  const accepted = Array.isArray(delivery?.accepted) ? delivery.accepted.map((address) => String(address).trim().toLowerCase()) : [];
+  const rejected = Array.isArray(delivery?.rejected) ? delivery.rejected.map((address) => String(address).trim().toLowerCase()) : [];
+  return Boolean(target) && accepted.includes(target) && !rejected.includes(target);
 }
 
 async function generateWeeklyAiText(summary) {
