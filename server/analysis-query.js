@@ -156,11 +156,23 @@ export function resolveExplicitAnalysisPlan(question, options) {
       const prefix = normalizedQuestion.slice(0, monthMatches[index].index);
       const startsBetweenRange = index === 0 && /\bzwischen\s*$/.test(prefix) && /\bund\b/.test(betweenMatches);
       if (next && (/\bbis\b/.test(betweenMatches) || startsBetweenRange)) {
-        if (!monthMatches[index][2] && !monthMatches[index + 1][2] && current.from > next.from) {
-          current.year -= 1;
-          current.from = firstDayOfMonth(current.year, current.month);
-          current.to = lastDayOfMonth(current.year, current.month);
-          current.label = `${capitalize(monthMatches[index][1])} ${current.year}`;
+        if (current.from > next.from) {
+          if (monthMatches[index][2] && !monthMatches[index + 1][2]) {
+            next.year += 1;
+            next.from = firstDayOfMonth(next.year, next.month);
+            next.to = lastDayOfMonth(next.year, next.month);
+            next.label = `${capitalize(monthMatches[index + 1][1])} ${next.year}`;
+          } else if (!monthMatches[index][2] && monthMatches[index + 1][2]) {
+            current.year -= 1;
+            current.from = firstDayOfMonth(current.year, current.month);
+            current.to = lastDayOfMonth(current.year, current.month);
+            current.label = `${capitalize(monthMatches[index][1])} ${current.year}`;
+          } else if (!monthMatches[index][2] && !monthMatches[index + 1][2]) {
+            current.year -= 1;
+            current.from = firstDayOfMonth(current.year, current.month);
+            current.to = lastDayOfMonth(current.year, current.month);
+            current.label = `${capitalize(monthMatches[index][1])} ${current.year}`;
+          }
         }
         periods.push({
           label: `${current.label} bis ${next.label}`,
@@ -300,7 +312,7 @@ function inferFocus(question) {
   const focus = [];
   if (/\b(?:gewicht|zugenommen|abgenommen|abnahme|zunahme|waage|trend|verlauf)\b/.test(question)) focus.push("weight");
   if (/\b(?:essen|ernährung|ernaehrung|kalorien|protein|kohlenhydrat|fett|makro|lebensmittel|mahlzeit)\b/.test(question)) focus.push("nutrition");
-  if (/\b(?:sport|training|aktivität|aktivitaet|garmin|bewegung)\b/.test(question)) focus.push("activity");
+  if (/\b(?:sport|training|aktivität|aktivitaet|garmin|bewegung|verbrannt|verbraucht|kalorienverbrauch|energieverbrauch|aktivkalorien)\b/.test(question)) focus.push("activity");
   if (/\b(?:gewohnheit|muster|timing|uhrzeit|abends|snack)\b/.test(question)) focus.push("habits");
   if (/\b(?:ziel|erreichen|defizit|plan)\b/.test(question)) focus.push("goals");
   if (focus.length === 0) return ["nutrition", "weight", "activity", "habits", "goals"];
@@ -344,15 +356,11 @@ function resolveMonthPeriods(matches, anchorEnd) {
 
   for (let index = knownYearIndex + 1; index < matches.length; index += 1) {
     if (Number.isFinite(resolvedYears[index])) continue;
-    const previousMonth = monthNames.get(matches[index - 1][1]);
-    const month = monthNames.get(matches[index][1]);
-    resolvedYears[index] = resolvedYears[index - 1] + (month < previousMonth ? 1 : 0);
+    resolvedYears[index] = resolvedYears[index - 1];
   }
   for (let index = knownYearIndex - 1; index >= 0; index -= 1) {
     if (Number.isFinite(resolvedYears[index])) continue;
-    const month = monthNames.get(matches[index][1]);
-    const nextMonth = monthNames.get(matches[index + 1][1]);
-    resolvedYears[index] = resolvedYears[index + 1] - (month > nextMonth ? 1 : 0);
+    resolvedYears[index] = resolvedYears[index + 1];
   }
   return matches.map((match, index) => resolveMonthPeriod(match, anchorEnd, resolvedYears[index]));
 }

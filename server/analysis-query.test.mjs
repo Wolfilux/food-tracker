@@ -125,7 +125,9 @@ test("keeps intervening months in a continuous named-month range", () => {
 test("propagates explicit years across named-month ranges and comparisons", () => {
   const range = resolveExplicitAnalysisPlan("Wie lief es von Januar 2025 bis März?", options);
   const comparison = resolveExplicitAnalysisPlan("Vergleiche Juni 2025 und Juli", options);
+  const reverseComparison = resolveExplicitAnalysisPlan("Vergleiche Juli 2025 mit Juni", options);
   const yearBoundary = resolveExplicitAnalysisPlan("Wie lief es von November 2025 bis Februar?", options);
+  const reverseExplicitBoundary = resolveExplicitAnalysisPlan("Wie lief es von November bis Februar 2026?", options);
 
   assert.deepEqual(range.periods.map(({ label, from, to }) => ({ label, from, to })), [{
     label: "Januar 2025 bis März 2025",
@@ -136,7 +138,15 @@ test("propagates explicit years across named-month ranges and comparisons", () =
     { from: "2025-06-01", to: "2025-06-30" },
     { from: "2025-07-01", to: "2025-07-31" },
   ]);
+  assert.deepEqual(reverseComparison.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2025-07-01", to: "2025-07-31" },
+    { from: "2025-06-01", to: "2025-06-30" },
+  ]);
   assert.deepEqual(yearBoundary.periods.map(({ from, to }) => ({ from, to })), [{
+    from: "2025-11-01",
+    to: "2026-02-28",
+  }]);
+  assert.deepEqual(reverseExplicitBoundary.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2025-11-01",
     to: "2026-02-28",
   }]);
@@ -228,6 +238,10 @@ test("uses the selected ISO week-year for a bare calendar week", () => {
 test("uses eight weeks for an unclear weight trend and four weeks otherwise", () => {
   const weightPlan = inferDefaultAnalysisPlan("Warum habe ich zugenommen?", options);
   const generalPlan = inferDefaultAnalysisPlan("Was kann ich verbessern?", options);
+  const burnedCaloriesPlan = resolveExplicitAnalysisPlan(
+    "Wie viele Kalorien habe ich im Juni verbrannt?",
+    options,
+  );
 
   assert.equal(weightPlan.totalDays, 56);
   assert.equal(weightPlan.defaulted, true);
@@ -235,6 +249,7 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(generalPlan.totalDays, 28);
   assert.equal(generalPlan.defaulted, true);
   assert.equal(generalPlan.includeDailyDetails, true);
+  assert.equal(burnedCaloriesPlan.focus.includes("activity"), true);
   assert.equal(hasAnalysisTimeReference("Warum habe ich zugenommen?"), false);
   assert.equal(hasAnalysisTimeReference("Wie war es im letzten Quartal?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Juni mit dieser Woche"), false);
