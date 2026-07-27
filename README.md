@@ -23,7 +23,7 @@ Die vorgeschlagene Branching- und Release-Strategie steht in
 ## Features
 
 - Tagesprotokoll mit Uhrzeit, Menge, Kalorien und Makros
-- Mobile Gewichtserfassung im Tagesprotokoll mit Datumswahl und Tageswert-Update
+- Mobile, einklappbare Gewichtserfassung; das Datum kommt ausschließlich aus Header/Swipe
 - Chronologischer Gewichtsverlauf in der Analyse mit manuellen und optional importierten Garmin-Werten
 - Tagesziel mit Kalorien- und Makro-Fortschritt
 - Lebensmittelsuche gegen lokale SQLite-Datenbank und OpenFoodFacts
@@ -32,6 +32,7 @@ Die vorgeschlagene Branching- und Release-Strategie steht in
 - Textanalyse fuer freie Essensbeschreibungen
 - Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate, Fett und Garmin-Sportaktivitaeten
 - Manuelle KI-Wochenanalyse mit Ampel, strukturierten Abschnitten, tiefer Ernaehrungs-/Gewohnheits-/Timing-Einschaetzung, konkreten Empfehlungen und Wochenplan
+- KI-Datenchat zur ausgewaehlten Woche mit begrenztem Tracker-Kontext, transparentem Zeitraum und Datenluecken
 - Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
@@ -127,7 +128,7 @@ CALDAV_PASS=
 CALENDAR_LOOKAHEAD_DAYS=14
 ```
 
-Die KI bekommt daraus nur freie/volle Zeitbloecke und Tagesrhythmus fuer den naechsten Zeitraum. Termintitel, Beschreibungen und Orte werden nicht in den Prompt aufgenommen.
+Die KI bekommt daraus nur freie/volle Zeitbloecke und Tagesrhythmus fuer den naechsten Zeitraum. Termintitel, Beschreibungen und Orte werden nicht in den Prompt aufgenommen. Der Datenchat begrenzt den Kontext auf die ausgewaehlte Woche, maximal 28 vorherige Tage Gewicht und sechs gekuerzte Chatnachrichten.
 
 ## BLS-Datenimport
 
@@ -181,7 +182,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 
 ### Tagesprotokoll
 
-- Im gut sichtbaren Gewichtsbereich Datum und Koerpergewicht in kg eintragen. Pro Tag wird genau ein Wert gespeichert; erneutes Speichern aktualisiert ihn.
+- Im Header per Pfeil/Swipe den Tag waehlen, den kompakten Gewichtsbereich aufklappen und das Koerpergewicht in kg eintragen. Pro Tag wird genau ein Wert gespeichert; erneutes Speichern aktualisiert ihn.
 - Im Tab `Protokoll` Lebensmittel suchen oder manuell erfassen.
 - Menge, Einheit und Uhrzeit pruefen.
 - Eintrag speichern.
@@ -195,6 +196,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
 - Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
 - `KI-Analyse` erzeugt eine Ampel und strukturierte Abschnitte zu Kurzfazit, Mustern, Timing, Makros, Alkohol, konkreten Lebensmittelempfehlungen, Garmin-Sportkontext und Plan fuer die kommende Woche.
+- Im `Datenchat` koennen konkrete Rueckfragen zur ausgewaehlten Woche gestellt werden. Antworten nennen Datenluecken und sind Orientierung, keine medizinische Diagnose.
 - `Garmin` aktualisiert Tagesverbrauchswerte und importiert Sportaktivitaeten, falls Garmin konfiguriert ist.
 
 ### Konfiguration
@@ -202,7 +204,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Tagesziel und Makro-Preset bestimmen die Basisziele.
 - Garmin kann das Kalorienziel pro Tag durch aktive Kalorien erweitern und Sportaktivitaeten fuer die Analyse bereitstellen.
 - Die KI-Konfiguration nutzt einen gemeinsamen API-Key, aber separate Modelle fuer Fotoanalyse und Wochenanalyse.
-- Wochenmail versendet automatisch montags um 01:00 Uhr Europe/Berlin die Analyse der Vorwoche, wenn SMTP, Zieladresse und KI-Key vorhanden sind. `/api/config/weekly-email/status` zeigt die Readiness ohne Secrets.
+- Wochenmail wird ab Montag 01:00 Uhr Europe/Berlin idempotent fuer die Vorwoche nachgeholt, wenn SMTP, Zieladresse und KI-Key vorhanden sind. Dadurch uebersteht der Job Neustarts oder Ausfaelle im frueheren Ein-Minuten-Fenster; das Versandlog verhindert Doppelversand. `/api/config/weekly-email/status` zeigt die Readiness ohne Secrets.
 - Optional kann die Wochenanalyse einen SoGO-/CalDAV-Kalender als reinen Busy-Kontext nutzen, wenn `CALDAV_URL`, `CALDAV_USER` und `CALDAV_PASS` gesetzt sind.
 
 ### Backup

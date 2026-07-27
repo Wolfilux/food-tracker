@@ -403,6 +403,15 @@ export function createFoodApiMiddleware() {
       return;
     }
 
+    if (url.pathname === "/api/ai/data-chat" && request.method === "POST") {
+      try {
+        sendJson(response, await answerAnalysisQuestion(await readJsonBody(request)));
+      } catch (error) {
+        sendJson(response, { error: error.message }, 400);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/ai/calorie-ideas" && request.method === "POST") {
       try {
         const ideas = await suggestCalorieIdeas(await readJsonBody(request));
@@ -869,7 +878,7 @@ export function getWeeklyEmailStatus() {
   return {
     enabled: readiness.every((item) => item.ok),
     readiness,
-    schedule: "Montag 01:00 Europe/Berlin fuer die Vorwoche",
+    schedule: "Ab Montag 01:00 Europe/Berlin, mit automatischem Nachholen fuer die Vorwoche",
     lastSent: lastSent ? { weekStart: lastSent.week_start, sentAt: lastSent.sent_at } : null,
   };
 }
@@ -2214,20 +2223,76 @@ async function runGarminScheduledSync() {
 async function runWeeklyEmailScheduler() {
   if (weeklyEmailSchedulerRunning) return;
   const berlinNow = getBerlinDateTimeParts();
-  if (berlinNow.weekday !== "Mon" || berlinNow.hour !== 1 || berlinNow.minute !== 0) return;
-
   const thisMonday = getWeekStart(berlinNow.date);
   const previousWeekStart = addDays(thisMonday, -7);
+  if (!isWeeklyEmailDue(berlinNow)) return;
   if (hasWeeklyEmailBeenSent(previousWeekStart)) return;
 
   weeklyEmailSchedulerRunning = true;
   try {
+    console.info(`Weekly food email attempt started for week ${previousWeekStart}`);
     const result = await sendWeeklyAnalysisEmail(previousWeekStart);
     if (result.sent) markWeeklyEmailSent(previousWeekStart);
+    if (result.sent) console.info(`Weekly food email sent for week ${previousWeekStart}`);
     if (result.skipped) console.info(`Weekly food email skipped: ${result.reason}`);
+  } catch (error) {
+    console.error(`Weekly food email failed for week ${previousWeekStart}:`, error instanceof Error ? error.message : error);
+    throw error;
   } finally {
     weeklyEmailSchedulerRunning = false;
   }
+}
+
+export function isWeeklyEmailDue(berlinNow) {
+  const weekdayOrder = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  const day = weekdayOrder[berlinNow?.weekday];
+  if (!Number.isInteger(day)) return false;
+  return day > 0 || Number(berlinNow.hour) >= 1;
+}
+
+async function answerAnalysisQuestion(input) {
+  const question = String(input?.question ?? "").trim().slice(0, 500);
+  if (!question) throw new Error("Bitte eine Frage eingeben.");
+  const weekStart = normalizeWeekStart(input?.weekStart ?? todayInBerlin());
+  const summary = buildWeeklyAnalysis(weekStart);
+  if (!summary.loggedDayCount && !listWeightEntries().some((entry) => entry.date >= weekStart && entry.date <= summary.weekEnd)) {
+    throw new Error("Für diesen Zeitraum sind noch keine Ernährungs- oder Gewichtsdaten vorhanden.");
+  }
+  const config = getAnalysisAiConfigRecord();
+  const provider = aiProviders.get(config.provider);
+  if (!provider || !config.apiKey) throw new Error("Analyse-KI ist nicht konfiguriert.");
+  validateProviderKeyPair(config.provider, config.apiKey);
+  const safeHistory = (Array.isArray(input?.history) ? input.history : []).slice(-6).map((message) => ({
+    role: message?.role === "assistant" ? "assistant" : "user",
+    content: String(message?.content ?? "").slice(0, 800),
+  }));
+  const context = await buildWeeklyPromptPayload(summary);
+  context.weights = listWeightEntries()
+    .filter((entry) => entry.date >= addDays(weekStart, -28) && entry.date <= summary.weekEnd)
+    .slice(-35)
+    .map(({ date, weightKg, source }) => ({ date, weightKg, source }));
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? { "HTTP-Referer": "http://localhost:5173", "X-Title": "Food Tracker" } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: "Du bist ein deutschsprachiger Ernährungscoach. Antworte konkret und knapp ausschließlich anhand des bereitgestellten, begrenzten Tracker-Kontexts. Benenne Zeitraum und Datenlücken. Keine medizinische Diagnose. Behaupte keine Kausalität, die die Daten nicht belegen." },
+        ...safeHistory,
+        { role: "user", content: `Tracker-Kontext: ${JSON.stringify(context)}\nFrage: ${question}` },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "KI-Anfrage fehlgeschlagen."));
+  const answer = String(payload?.choices?.[0]?.message?.content ?? "").trim();
+  if (!answer) throw new Error("Die KI hat keine verständliche Antwort geliefert.");
+  return { answer: answer.slice(0, 6000), period: { weekStart, weekEnd: summary.weekEnd } };
 }
 
 async function analyzeWeekManually(input) {
