@@ -2559,12 +2559,17 @@ export function buildEnergyCalculationContext(dateInput = todayInBerlin(), optio
   const activeCalories = garminSummaryAvailable
     ? optionalNonNegativeNumber(garminSummary?.activeKilocalories)
     : undefined;
-  const cachedActivityWeek = includeDayValues ? getGarminCachedActivities(getWeekStart(date)) : null;
+  const activityWeekStart = getWeekStart(date);
+  const cachedActivityWeek = includeDayValues ? getGarminCachedActivities(activityWeekStart) : null;
   const weekActivities = cachedActivityWeek?.activities ?? [];
   const activities = weekActivities.filter((activity) => String(activity.date ?? "").slice(0, 10) === date);
+  const cachedActivityFetchedDate = cachedActivityWeek ? dateInBerlin(cachedActivityWeek.fetchedAt) : undefined;
+  const cachedActivityCoveredThrough = cachedActivityFetchedDate
+    ? minAnalysisDate(addDays(cachedActivityFetchedDate, -1), addDays(activityWeekStart, 6))
+    : addDays(activityWeekStart, -1);
   const activityDateCovered = includeDayValues && (
     activities.length > 0
-    || listCachedActivitiesForRange(date, date).coveredDates.includes(date)
+    || (Boolean(cachedActivityWeek) && date <= cachedActivityCoveredThrough)
   );
   const workoutCalories = Math.round(summarizeGarminActivities(activities).calories);
   const dailyIntake = includeDayValues ? listDailyCalories(date, date)[0] : undefined;
