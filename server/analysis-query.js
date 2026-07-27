@@ -135,7 +135,11 @@ export function resolveExplicitAnalysisPlan(question, options) {
     });
   }
 
-  const monthMatches = [...normalizedQuestion.matchAll(/\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/g)];
+  const sinceMonthIndex = sinceMonthMatch
+    ? sinceMonthMatch.index + sinceMonthMatch[0].indexOf(sinceMonthMatch[1])
+    : -1;
+  const monthMatches = [...normalizedQuestion.matchAll(/\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+(20\d{2}))?\b/g)]
+    .filter((match) => match.index !== sinceMonthIndex);
   const wantsMonths = monthMatches.length > 1
     || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(normalizedQuestion);
   if (wantsMonths) {

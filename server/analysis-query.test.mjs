@@ -143,6 +143,7 @@ test("propagates explicit years across named-month ranges and comparisons", () =
 
 test("resolves since January without exceeding the annual query limit", () => {
   const plan = resolveExplicitAnalysisPlan("Wie hat sich mein Gewicht seit Januar entwickelt?", options);
+  const comparison = resolveExplicitAnalysisPlan("Vergleiche die Entwicklung seit Januar mit Juni", options);
 
   assert.deepEqual(plan.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2026-01-01",
@@ -152,6 +153,10 @@ test("resolves since January without exceeding the annual query limit", () => {
   assert.equal(plan.focus.includes("nutrition"), true);
   assert.equal(plan.focus.includes("activity"), true);
   assert.equal(plan.includeDailyDetails, false);
+  assert.deepEqual(comparison.periods.map(({ from, to }) => ({ from, to })), [
+    { from: "2026-01-01", to: "2026-07-26" },
+    { from: "2026-06-01", to: "2026-06-30" },
+  ]);
 });
 
 test("resolves selected and previous weeks as separate comparison periods", () => {
