@@ -238,6 +238,21 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(prompt.includes("another-user"), false);
 
     requestBodies.length = 0;
+    const explicitQuestionWithArticle = await databaseModule.answerAnalysisQuestion({
+      question: "Wie war das Gewicht im Juni?",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Mai?" },
+        { role: "assistant", content: "Ausgewerteter Zeitraum: Mai 2026" },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 1);
+    assert.equal("tools" in requestBodies[0], false);
+    assert.equal(explicitQuestionWithArticle.period.periods[0].from, "2026-06-01");
+    assert.equal(explicitQuestionWithArticle.period.periods[0].to, "2026-06-30");
+
+    requestBodies.length = 0;
     const followUp = await databaseModule.answerAnalysisQuestion({
       question: "Und im Vergleich dazu?",
       weekStart: "2026-07-20",
