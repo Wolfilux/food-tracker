@@ -241,6 +241,8 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Januar bis März mit Juni"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Juni mit dem Vorjahr"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche gestern mit der letzten Woche"), true);
+  assert.equal(hasAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war es in den letzten 3 Monaten?"), true);
 });
 
 test("validates tool periods, total size, future dates and daily-detail limits", () => {

@@ -14,6 +14,20 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     await rm(dataDirectory, { recursive: true, force: true });
   });
   const databaseModule = await import(`./food-db.js?data-chat-test=${Date.now()}`);
+  assert.deepEqual(databaseModule.parseOpenRouterModels({
+    data: [
+      {
+        id: "provider/tool-model",
+        architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+        supported_parameters: ["tools"],
+      },
+      {
+        id: "provider/text-only-model",
+        architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+        supported_parameters: [],
+      },
+    ],
+  }, "analysis"), ["provider/tool-model"]);
 
   databaseModule.createEntry({
     foodName: "Skyr mit Beeren",
@@ -263,6 +277,40 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     }, { userKey: "default" });
     assert.equal(requestBodies.length, 2);
     assert.equal(Array.isArray(requestBodies[0].tools), true);
+
+    let fallbackRequestCount = 0;
+    globalThis.fetch = async (_url, options) => {
+      fallbackRequestCount += 1;
+      const requestBody = JSON.parse(String(options?.body ?? "{}"));
+      if (requestBody.tools) {
+        return new globalThis.Response(JSON.stringify({
+          choices: [{ message: { content: "" } }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (fallbackRequestCount === 2) {
+        return new globalThis.Response(JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                periods: [{ label: "Gestern", from: "2026-07-26", to: "2026-07-26" }],
+                focus: ["nutrition"],
+                includeDailyDetails: true,
+              }),
+            },
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new globalThis.Response(JSON.stringify({
+        choices: [{ message: { content: "Für gestern liegen keine Einträge vor." } }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const textFallbackAnswer = await databaseModule.answerAnalysisQuestion({
+      question: "Was habe ich gestern gegessen?",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+    assert.equal(fallbackRequestCount, 3);
+    assert.equal(textFallbackAnswer.period.periods[0].from, "2026-07-26");
 
     globalThis.fetch = async () => new globalThis.Response(JSON.stringify({
       choices: [{ message: { content: "" } }],

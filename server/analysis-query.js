@@ -221,7 +221,7 @@ export function inferDefaultAnalysisPlan(question, options) {
 
 export function hasAnalysisTimeReference(question) {
   const normalizedQuestion = normalizeQuestion(question);
-  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|quartal|vorjahr|jahr|jahre|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
+  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|monaten|quartal|vorjahr|jahr|jahre|jahren|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
 }
 
 export function hasUnresolvedAnalysisTimeReference(question) {

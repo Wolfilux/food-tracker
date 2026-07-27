@@ -2363,6 +2363,22 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
 }
 
 async function planAnalysisDataQuery({ question, history, provider, config, options }) {
+  try {
+    return await planAnalysisDataQueryWithTool({ question, history, provider, config, options });
+  } catch (toolError) {
+    try {
+      return await planAnalysisDataQueryWithJson({ question, history, provider, config, options });
+    } catch (jsonError) {
+      throw new AggregateError(
+        [toolError, jsonError],
+        "Die KI konnte keine gültige Datenabfrage planen.",
+        { cause: jsonError },
+      );
+    }
+  }
+}
+
+async function planAnalysisDataQueryWithTool({ question, history, provider, config, options }) {
   const tool = buildAnalysisQueryTool(options);
   const planningHistory = history.slice(-4).map((message) => ({
     role: message.role,
@@ -2406,6 +2422,53 @@ async function planAnalysisDataQuery({ question, history, provider, config, opti
     argumentsValue = JSON.parse(String(toolCall.function.arguments ?? "{}"));
   } catch {
     throw new Error("Die KI hat ungültige Abfrageparameter geliefert.");
+  }
+  return normalizeAnalysisQueryPlan(argumentsValue, options);
+}
+
+async function planAnalysisDataQueryWithJson({ question, history, provider, config, options }) {
+  const planningHistory = history.slice(-4).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 320),
+  }));
+  const response = await fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + config.apiKey,
+      "content-type": "application/json",
+      ...(config.provider === "openrouter" ? { "HTTP-Referer": "http://localhost:5173", "X-Title": "Food Tracker" } : {}),
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Plane ausschließlich eine minimale Tracker-Datenabfrage; beantworte nicht die Ernährungsfrage.",
+            "Antworte ausschließlich als JSON-Objekt mit periods (1 bis 3 Objekte aus label, from, to), focus",
+            "(nutrition, weight, activity, habits, goals) und includeDailyDetails (boolean).",
+            `Je Zeitraum maximal 366 Tage, insgesamt maximal 400 Tage; heute ist ${options.today}.`,
+            `Relative Angaben beziehen sich auf ${options.anchorWeekStart} bis ${addDays(options.anchorWeekStart, 6)}.`,
+            "Tagesdetails dürfen insgesamt höchstens 42 Tage umfassen.",
+          ].join(" "),
+        },
+        ...planningHistory,
+        { role: "user", content: question },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(payload?.error?.message ?? "KI-Zeitraumplanung fehlgeschlagen."));
+  const content = String(payload?.choices?.[0]?.message?.content ?? "").trim();
+  const jsonStart = content.indexOf("{");
+  const jsonEnd = content.lastIndexOf("}");
+  if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("Die KI hat keine JSON-Datenabfrage geliefert.");
+  let argumentsValue;
+  try {
+    argumentsValue = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+  } catch (error) {
+    throw new Error("Die KI hat ungültige JSON-Abfrageparameter geliefert.", { cause: error });
   }
   return normalizeAnalysisQueryPlan(argumentsValue, options);
 }
@@ -4510,7 +4573,7 @@ function parseOpenAiModels(payload) {
     .sort(compareModelIds);
 }
 
-function parseOpenRouterModels(payload, capability = "photo") {
+export function parseOpenRouterModels(payload, capability = "photo") {
   const models = Array.isArray(payload?.data) ? payload.data : [];
   return models
     .filter((model) => {
@@ -4519,8 +4582,10 @@ function parseOpenRouterModels(payload, capability = "photo") {
       const supportsImageInput = Array.isArray(inputModalities) && inputModalities.includes("image");
       const supportsTextInput = !Array.isArray(inputModalities) || inputModalities.includes("text");
       const supportsTextOutput = !Array.isArray(outputModalities) || outputModalities.includes("text");
+      const supportsTools = Array.isArray(model?.supported_parameters)
+        && model.supported_parameters.includes("tools");
       return capability === "analysis"
-        ? supportsTextInput && supportsTextOutput
+        ? supportsTextInput && supportsTextOutput && supportsTools
         : supportsImageInput && supportsTextOutput;
     })
     .map((model) => String(model?.id ?? ""))
