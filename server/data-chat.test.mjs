@@ -519,6 +519,14 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
       }, { userKey: "default" }),
       /Zeitraum konnte nicht sicher aufgelöst/,
     );
+    await assert.rejects(
+      () => databaseModule.answerAnalysisQuestion({
+        question: "Wie war Juni?",
+        weekStart: "2026-07-20",
+        history: [],
+      }, { userKey: "default" }),
+      /Zeitraum konnte nicht sicher aufgelöst/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -241,13 +241,20 @@ export function hasAnalysisTimeReference(question) {
 
 export function hasUnresolvedAnalysisTimeReference(question) {
   let remaining = normalizeQuestion(question);
+  const monthMatches = [...remaining.matchAll(
+    /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+  )];
+  const hasDeterministicMonthContext = monthMatches.length > 1
+    || /\b(?:im|in|aus|für|fuer|vergleiche?|gegenüber|gegenueber|versus|vs\.?)\b/.test(remaining);
   const resolvedPatterns = [
     /\b(?:letzte[nr]?|vergangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
     /\b\d{1,2}\s+wochen?\s+davor\b/g,
     /\b(?:vorhergehende[nr]?|vorangegangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
     /\bkw\s*\d{1,2}(?:\s*[/. -]\s*20\d{2})?\b/g,
     /\bseit\s+(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
-    /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    ...(hasDeterministicMonthContext ? [
+      /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    ] : []),
     /\b(?:diese(?:r|n)?|aktuelle(?:r|n)?|ausgewählte(?:r|n)?|ausgewaehlte(?:r|n)?)\s+woche\b/g,
     /\b(?:letzte[nr]?|vorherige[nr]?|vergangene[nr]?)\s+woche\b/g,
     /\bwoche\s+davor\b/g,
