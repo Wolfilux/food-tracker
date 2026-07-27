@@ -303,7 +303,12 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     requestBodies.push(requestBody);
     if (requestBody.tools) {
       const followUpQuestion = requestBody.messages.at(-1)?.content ?? "";
-      const periods = followUpQuestion.includes("Vergleiche mit Mai")
+      const periods = followUpQuestion.includes("Vergleiche mit letzter Woche")
+        ? [
+          { label: "Ausgewählte Woche", from: "2026-07-20", to: "2026-07-26" },
+          { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
+        ]
+        : followUpQuestion.includes("Vergleiche mit Mai")
         ? [
           { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
           { label: "Mai 2026", from: "2026-05-01", to: "2026-05-31" },
@@ -423,6 +428,20 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.deepEqual(implicitComparison.period.periods.map(({ from, to }) => ({ from, to })), [
       { from: "2026-06-01", to: "2026-06-30" },
       { from: "2026-05-01", to: "2026-05-31" },
+    ]);
+
+    requestBodies.length = 0;
+    const standaloneComparison = await databaseModule.answerAnalysisQuestion({
+      question: "Vergleiche mit letzter Woche",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 1);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.deepEqual(standaloneComparison.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-07-20", to: "2026-07-26" },
+      { from: "2026-07-13", to: "2026-07-19" },
     ]);
 
     requestBodies.length = 0;
