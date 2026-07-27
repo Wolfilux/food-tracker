@@ -69,6 +69,19 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   });
   const result = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
 
+  assert.equal(result.energyCalculation.mode, "legacy");
+  assert.equal(
+    result.energyCalculation.formulas.calorieTarget,
+    "max(minimumCalorieGoal=800 kcal, baseCalorieGoal + allDayActiveCalories + calorieGoalOffset)",
+  );
+  assert.equal(result.energyCalculation.parameters.baseCalorieGoal, 2200);
+  assert.equal(result.energyCalculation.dayValuesIncluded, false);
+  assert.equal(result.energyCalculation.results.calorieTarget, undefined);
+  assert.equal(result.energyCalculation.results.estimatedEnergyBalanceCalories, undefined);
+  assert.match(result.energyCalculation.uncertainties[0], /Basisziel ist nicht automatisch BMR, TDEE/);
+  const legacyEnergy = databaseModule.buildEnergyCalculationContext("2026-06-08");
+  assert.equal(legacyEnergy.results.calorieTarget, 2200);
+  assert.equal(legacyEnergy.results.targetDeltaCalories, 1975);
   assert.equal(result.dataPresence.entryCount, 2);
   assert.equal(result.dataPresence.weightCount, 2);
   assert.equal(result.periods[0].summary.loggedDays, 2);
@@ -134,6 +147,10 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     autoSyncMinutes: 0,
   });
   const missingGarminContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
+  const missingGarminEnergy = databaseModule.buildEnergyCalculationContext("2026-06-09");
+  assert.equal(missingGarminEnergy.garmin.configured, true);
+  assert.equal(missingGarminEnergy.results.targetAvailable, false);
+  assert.equal(missingGarminEnergy.results.calorieTarget, undefined);
   assert.equal(missingGarminContext.periods[0].dataCoverage.garmin.status, "configured");
   assert.deepEqual(missingGarminContext.periods[0].dataCoverage.garmin.activityWeeksMissing, ["2026-06-08"]);
   assert.equal(missingGarminContext.periods[0].summary.activity.daysMissing, 7);
@@ -276,6 +293,59 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     ["2026-06-15"],
   );
 
+  databaseModule.saveAdaptiveGoalProfile({
+    ...originalAdaptiveProfile,
+    enabled: true,
+    garminEnabled: true,
+    age: 40,
+    sex: "male",
+    heightCm: 180,
+    currentWeightKg: 82,
+    targetWeightKg: 75,
+    weeklyLossKg: 0.5,
+    activityLevel: "light",
+    manualOverrideCalories: 0,
+  });
+  const adaptiveEnergy = databaseModule.buildEnergyCalculationContext("2026-06-18");
+  assert.equal(adaptiveEnergy.mode, "adaptive");
+  assert.equal(adaptiveEnergy.garmin.allDayActiveCalories, 550);
+  assert.equal(adaptiveEnergy.garmin.workoutCalories, 300);
+  assert.equal(adaptiveEnergy.results.activityStrategy, "garmin-active-calories");
+  assert.equal(adaptiveEnergy.results.activityAdjustment, 550);
+  assert.equal(
+    adaptiveEnergy.results.recommendedToday,
+    adaptiveEnergy.results.basisTarget + adaptiveEnergy.results.activityAdjustment,
+  );
+  assert.equal(
+    adaptiveEnergy.results.estimatedMaintenanceToday,
+    adaptiveEnergy.results.maintenance + adaptiveEnergy.results.activityAdjustment,
+  );
+  assert.match(adaptiveEnergy.garmin.doubleCountingRule, /nie addieren/);
+  assert.equal(adaptiveEnergy.parameters.targetWeightKg, 75);
+  assert.match(adaptiveEnergy.parameters.targetWeightRole, /nicht direkt/);
+  assert.equal(adaptiveEnergy.results.estimatedEnergyBalanceCalories, undefined);
+  assert.match(adaptiveEnergy.results.unavailableReason, /Keine Kalorienaufnahme/);
+
+  const adaptiveFallbackEnergy = databaseModule.buildEnergyCalculationContext("2026-06-17");
+  assert.equal(adaptiveFallbackEnergy.results.maintenanceSource, "initial_tdee_fallback");
+  assert.equal(adaptiveFallbackEnergy.results.activityStrategy, "steps-plus-workouts");
+  assert.equal(adaptiveFallbackEnergy.results.activityAdjustment, 0);
+  assert.equal(adaptiveFallbackEnergy.adaptiveMaintenanceEvidence.available, false);
+  assert.match(adaptiveFallbackEnergy.fallbacks.join(" "), /mindestens 14 Tage/);
+  const adaptiveMissingGarminEnergy = databaseModule.buildEnergyCalculationContext("2026-06-09");
+  assert.equal(adaptiveMissingGarminEnergy.results.dayValuesAvailable, false);
+  assert.equal(adaptiveMissingGarminEnergy.results.finalCalorieTarget, undefined);
+  assert.equal(adaptiveMissingGarminEnergy.results.estimatedEnergyBalanceCalories, undefined);
+  assert.match(adaptiveMissingGarminEnergy.results.unavailableReason, /Aktivität ist unbekannt statt 0/);
+  databaseModule.saveAdaptiveGoalProfile({
+    ...originalAdaptiveProfile,
+    enabled: false,
+    manualOverrideCalories: 0,
+  });
+  databaseModule.getFoodDatabase()
+    .prepare("DELETE FROM adaptive_weight_logs WHERE date = ?")
+    .run("2026-07-27");
+
   const emptyNutritionPlan = normalizeAnalysisQueryPlan({
     periods: [{ label: "Ohne Logs", from: "2026-05-11", to: "2026-05-17" }],
     focus: ["nutrition"],
@@ -403,6 +473,29 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.match(prompt, /Skyr mit Beeren/);
     assert.equal(prompt.includes("Nicht im Zeitraum"), false);
     assert.equal(prompt.includes("another-user"), false);
+
+    requestBodies.length = 0;
+    await databaseModule.answerAnalysisQuestion({
+      question: "Wie wird mein Defizit berechnet?",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+    assert.equal(requestBodies.length, 1);
+    assert.match(requestBodies[0].messages[0].content, /Unterscheide Zieldefizit/);
+    assert.match(requestBodies[0].messages[0].content, /workoutCalories niemals zu allDayActiveCalories/);
+    assert.match(requestBodies[0].messages.at(-1).content, /"energyCalculation"/);
+    assert.match(requestBodies[0].messages.at(-1).content, /"physiologicalDeficit"/);
+
+    requestBodies.length = 0;
+    await databaseModule.answerAnalysisQuestion({
+      question: "Welche Annahmen nutzt du?",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+    assert.equal(requestBodies.length, 1);
+    assert.match(requestBodies[0].messages.at(-1).content, /"universalAssumptions"/);
+    assert.match(requestBodies[0].messages.at(-1).content, /"fallbacks"/);
+    assert.match(requestBodies[0].messages.at(-1).content, /"uncertainties"/);
 
     requestBodies.length = 0;
     const explicitQuestionWithArticle = await databaseModule.answerAnalysisQuestion({

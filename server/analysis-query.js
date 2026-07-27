@@ -335,10 +335,10 @@ export function formatAnalysisPeriodLabel(periods) {
 function inferFocus(question) {
   const focus = [];
   if (/\b(?:gewicht|zugenommen|abgenommen|abnahme|zunahme|waage|trend|verlauf)\b/.test(question)) focus.push("weight");
-  if (/\b(?:essen|gegessen|isst|ernährung|ernaehrung|kalorien|protein|kohlenhydrat|fett|makro|lebensmittel|mahlzeit)\b/.test(question)) focus.push("nutrition");
-  if (/\b(?:sport|training|aktivität|aktivitaet|garmin|bewegung|verbrannt|verbraucht|kalorienverbrauch|energieverbrauch|aktivkalorien)\b/.test(question)) focus.push("activity");
+  if (/\b(?:essen|gegessen|isst|ernährung|ernaehrung|kalorien|kcal|energie|energiebilanz|aufnahme|intake|protein|kohlenhydrat|fett|makro|lebensmittel|mahlzeit)\b/.test(question)) focus.push("nutrition");
+  if (/\b(?:sport|training|aktivität|aktivitaet|garmin|bewegung|verbrannt|verbraucht|kalorienverbrauch|energieverbrauch|aktivkalorien|workout)\b/.test(question)) focus.push("activity");
   if (/\b(?:gewohnheit|muster|timing|uhrzeit|abends|snack)\b/.test(question)) focus.push("habits");
-  if (/\b(?:ziel|erreichen|defizit|plan)\b/.test(question)) focus.push("goals");
+  if (/\b(?:ziel|erreichen|defizit|plan|bedarf|grundumsatz|erhaltungsbedarf|bmr|tdee|annahme|formel|berechn)\w*\b/.test(question)) focus.push("goals");
   if (focus.length === 0) return ["nutrition", "weight", "activity", "habits", "goals"];
   if (focus.includes("weight") && !focus.includes("nutrition")) focus.push("nutrition");
   if (focus.includes("weight") && !focus.includes("activity")) focus.push("activity");
