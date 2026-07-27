@@ -113,7 +113,7 @@ export function resolveExplicitAnalysisPlan(question, options) {
   const isoWeeks = [...normalizedQuestion.matchAll(/\bkw\s*(\d{1,2})(?:\s*[/. -]\s*(20\d{2}))?\b/g)];
   for (const match of isoWeeks.slice(0, analysisQueryLimits.maxPeriods)) {
     const week = Number(match[1]);
-    const year = Number(match[2] ?? anchorWeekStart.slice(0, 4));
+    const year = Number(match[2] ?? addDays(anchorWeekStart, 3).slice(0, 4));
     if (week < 1 || week > 53) continue;
     const from = isoWeekStart(year, week);
     if (Number(addDays(from, 3).slice(0, 4)) !== year) {

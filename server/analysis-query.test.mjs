@@ -212,6 +212,19 @@ test("rejects ISO week 53 when it does not exist in the requested year", () => {
   assert.equal(valid.periods[0].from, "2026-12-28");
 });
 
+test("uses the selected ISO week-year for a bare calendar week", () => {
+  const plan = resolveExplicitAnalysisPlan("Was war in KW 1?", {
+    ...options,
+    anchorWeekStart: "2025-12-29",
+    today: "2026-01-04",
+  });
+
+  assert.deepEqual(plan.periods.map(({ from, to }) => ({ from, to })), [{
+    from: "2025-12-29",
+    to: "2026-01-04",
+  }]);
+});
+
 test("uses eight weeks for an unclear weight trend and four weeks otherwise", () => {
   const weightPlan = inferDefaultAnalysisPlan("Warum habe ich zugenommen?", options);
   const generalPlan = inferDefaultAnalysisPlan("Was kann ich verbessern?", options);
