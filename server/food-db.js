@@ -2707,10 +2707,22 @@ function summarizeAnalysisDays(days) {
   const activityDays = days.filter((day) => day.activityDataAvailable);
   const activityTotals = activityDays.reduce((sum, day) => ({
     count: sum.count + day.activityTotals.count,
-    calories: sum.calories + day.activityTotals.calories,
+    workoutCalories: sum.workoutCalories + day.activityTotals.calories,
+    allDayActiveCalories: sum.allDayActiveCalories + (day.activityTotals.allDayActiveCalories ?? 0),
+    allDayActiveCaloriesDaysAvailable: sum.allDayActiveCaloriesDaysAvailable
+      + (Number.isFinite(day.activityTotals.allDayActiveCalories) ? 1 : 0),
     durationMinutes: sum.durationMinutes + day.activityTotals.durationMinutes,
-    steps: sum.steps + day.activityTotals.steps,
-  }), { count: 0, calories: 0, durationMinutes: 0, steps: 0 });
+    steps: sum.steps + (day.activityTotals.steps ?? 0),
+    stepsDaysAvailable: sum.stepsDaysAvailable + (Number.isFinite(day.activityTotals.steps) ? 1 : 0),
+  }), {
+    count: 0,
+    workoutCalories: 0,
+    allDayActiveCalories: 0,
+    allDayActiveCaloriesDaysAvailable: 0,
+    durationMinutes: 0,
+    steps: 0,
+    stepsDaysAvailable: 0,
+  });
   const divisor = loggedDays.length || 1;
   const targetDivisor = targetDays.length || 1;
   const targetCoverageComplete = loggedDays.length > 0 && targetDays.length === loggedDays.length;
@@ -2737,9 +2749,16 @@ function summarizeAnalysisDays(days) {
     },
     activity: {
       count: activityTotals.count,
-      calories: Math.round(activityTotals.calories),
+      workoutCalories: Math.round(activityTotals.workoutCalories),
+      ...(activityTotals.allDayActiveCaloriesDaysAvailable > 0 ? {
+        allDayActiveCalories: Math.round(activityTotals.allDayActiveCalories),
+      } : {}),
+      allDayActiveCaloriesDaysAvailable: activityTotals.allDayActiveCaloriesDaysAvailable,
+      allDayActiveCaloriesDaysMissing: days.length - activityTotals.allDayActiveCaloriesDaysAvailable,
       durationMinutes: Math.round(activityTotals.durationMinutes),
-      steps: Math.round(activityTotals.steps),
+      ...(activityTotals.stepsDaysAvailable > 0 ? { steps: Math.round(activityTotals.steps) } : {}),
+      stepsDaysAvailable: activityTotals.stepsDaysAvailable,
+      stepsDaysMissing: days.length - activityTotals.stepsDaysAvailable,
       daysAvailable: activityDays.length,
       daysMissing: days.length - activityDays.length,
     },
@@ -2776,9 +2795,14 @@ function buildAnalysisDayContext(day, focus) {
     } : {}),
     ...(focus.includes("activity") ? {
       ...(day.activityDataAvailable ? {
-        activityCalories: Math.round(day.activityTotals.calories),
+        workoutCalories: Math.round(day.activityTotals.calories),
+        ...(Number.isFinite(day.activityTotals.allDayActiveCalories)
+          ? { allDayActiveCalories: Math.round(day.activityTotals.allDayActiveCalories) }
+          : { allDayActiveCaloriesAvailable: false }),
         activityMinutes: Math.round(day.activityTotals.durationMinutes),
-        activitySteps: Math.round(day.activityTotals.steps),
+        ...(Number.isFinite(day.activityTotals.steps)
+          ? { activitySteps: Math.round(day.activityTotals.steps) }
+          : { activityStepsAvailable: false }),
       } : { activityDataAvailable: false }),
     } : {}),
     ...(focus.includes("weight") ? { weightKg: day.weight?.weightKg } : {}),
@@ -3552,8 +3576,8 @@ function summarizeAnalysisActivity(activities, garminSummary) {
   const summarySteps = optionalNonNegativeNumber(garminSummary?.steps ?? garminSummary?.totalSteps);
   return {
     ...activityTotals,
-    calories: summaryActiveCalories ?? activityTotals.calories,
-    steps: summarySteps ?? 0,
+    allDayActiveCalories: summaryActiveCalories,
+    steps: summarySteps,
   };
 }
 
