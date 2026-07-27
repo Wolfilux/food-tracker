@@ -247,6 +247,7 @@ export function hasUnresolvedAnalysisTimeReference(question) {
     /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
     /\b(?:diese(?:r|n)?|aktuelle(?:r|n)?|ausgewählte(?:r|n)?|ausgewaehlte(?:r|n)?)\s+woche\b/g,
     /\b(?:letzte[nr]?|vorherige[nr]?|vergangene[nr]?)\s+woche\b/g,
+    /\bwoche\s+davor\b/g,
   ];
   for (const pattern of resolvedPatterns) remaining = remaining.replace(pattern, " ");
   remaining = remaining.replace(
