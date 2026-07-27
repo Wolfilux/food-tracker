@@ -191,6 +191,12 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(dailySummaryActivityContext.dataPresence.activityCount, 0);
   assert.equal(dailySummaryActivityContext.dataPresence.activityDaysAvailable, 1);
   assert.equal(dailySummaryActivityContext.dataPresence.hasAnyData, true);
+  assert.equal("entryCount" in dailySummaryActivityContext.dataPresence, false);
+  assert.equal("weightCount" in dailySummaryActivityContext.dataPresence, false);
+  assert.equal("entryCount" in dailySummaryActivityContext.periods[0].dataCoverage, false);
+  assert.equal("weightCount" in dailySummaryActivityContext.periods[0].dataCoverage, false);
+  assert.equal("firstEntryDate" in dailySummaryActivityContext.periods[0].dataCoverage, false);
+  assert.equal("lastEntryDate" in dailySummaryActivityContext.periods[0].dataCoverage, false);
   assert.equal(dailySummaryActivityContext.periods[0].summary.activity.calories, 500);
   assert.equal(dailySummaryActivityContext.periods[0].summary.activity.steps, 8500);
   assert.equal(dailySummaryActivityContext.periods[0].summary.activity.daysMissing, 6);
@@ -235,7 +241,13 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     today: "2026-07-27",
   });
   const goalOnlyContext = databaseModule.buildAnalysisDataContext(goalOnlyPlan, { userKey: "default" });
-  assert.equal(goalOnlyContext.dataPresence.entryCount, 0);
+  assert.equal("entryCount" in goalOnlyContext.dataPresence, false);
+  assert.equal("weightCount" in goalOnlyContext.dataPresence, false);
+  assert.equal("activityCount" in goalOnlyContext.dataPresence, false);
+  assert.equal("entryCount" in goalOnlyContext.periods[0].dataCoverage, false);
+  assert.equal("weightCount" in goalOnlyContext.periods[0].dataCoverage, false);
+  assert.equal("activityCount" in goalOnlyContext.periods[0].dataCoverage, false);
+  assert.equal("garmin" in goalOnlyContext.periods[0].dataCoverage, false);
   assert.equal(goalOnlyContext.dataPresence.goalDataAvailable, true);
   assert.equal(goalOnlyContext.dataPresence.hasAnyData, true);
   assert.equal(goalOnlyContext.goal.baseCalorieGoal, 2200);

@@ -2482,17 +2482,17 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   const goal = getAnalysisGoalContext(plan.focus);
   const goalDataAvailable = plan.focus.includes("goals") && Object.keys(goal).length > 0;
   const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
-  const dataPresence = periods.reduce((presence, period) => ({
-    entryCount: presence.entryCount + period.dataCoverage.entryCount,
-    weightCount: presence.weightCount + period.dataCoverage.weightCount,
-    activityCount: presence.activityCount + period.dataCoverage.activityCount,
+  const aggregatePresence = periods.reduce((presence, period) => ({
+    entryCount: presence.entryCount + (period.dataCoverage.entryCount ?? 0),
+    weightCount: presence.weightCount + (period.dataCoverage.weightCount ?? 0),
+    activityCount: presence.activityCount + (period.dataCoverage.activityCount ?? 0),
     activityDaysAvailable: presence.activityDaysAvailable
       + (period.summary.activity?.daysAvailable ?? 0),
     goalDataAvailable: presence.goalDataAvailable,
     hasAnyData: presence.hasAnyData
-      || period.dataCoverage.entryCount > 0
-      || period.dataCoverage.weightCount > 0
-      || period.dataCoverage.activityCount > 0
+      || (period.dataCoverage.entryCount ?? 0) > 0
+      || (period.dataCoverage.weightCount ?? 0) > 0
+      || (period.dataCoverage.activityCount ?? 0) > 0
       || (period.summary.activity?.daysAvailable ?? 0) > 0,
   }), {
     entryCount: 0,
@@ -2502,6 +2502,17 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
     goalDataAvailable,
     hasAnyData: goalDataAvailable,
   });
+  const includesNutrition = plan.focus.includes("nutrition") || plan.focus.includes("habits");
+  const dataPresence = {
+    ...(includesNutrition ? { entryCount: aggregatePresence.entryCount } : {}),
+    ...(plan.focus.includes("weight") ? { weightCount: aggregatePresence.weightCount } : {}),
+    ...(plan.focus.includes("activity") ? {
+      activityCount: aggregatePresence.activityCount,
+      activityDaysAvailable: aggregatePresence.activityDaysAvailable,
+    } : {}),
+    goalDataAvailable,
+    hasAnyData: aggregatePresence.hasAnyData,
+  };
 
   return {
     query: {
@@ -2521,11 +2532,17 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
 }
 
 function buildAnalysisPeriodContext(period, plan) {
-  const entries = listEntriesForRange(period.from, period.to);
-  const weights = listWeightEntries(period.from, period.to);
-  const garminConfig = getGarminConfigRecord();
-  const garminConfigured = Boolean(garminConfig.username && garminConfig.authValue);
-  const activityRange = listCachedActivitiesForRange(period.from, period.to);
+  const includesNutrition = plan.focus.includes("nutrition") || plan.focus.includes("habits");
+  const includesWeight = plan.focus.includes("weight");
+  const includesActivity = plan.focus.includes("activity");
+  const needsGarmin = includesNutrition || includesActivity;
+  const entries = includesNutrition ? listEntriesForRange(period.from, period.to) : [];
+  const weights = includesWeight ? listWeightEntries(period.from, period.to) : [];
+  const garminConfig = needsGarmin ? getGarminConfigRecord() : {};
+  const garminConfigured = needsGarmin && Boolean(garminConfig.username && garminConfig.authValue);
+  const activityRange = needsGarmin
+    ? listCachedActivitiesForRange(period.from, period.to)
+    : { activities: [], cachedWeeks: [], missingWeeks: [] };
   const activities = activityRange.activities;
   const activitiesByDate = groupGarminActivitiesByDate(activities);
   const cachedActivityWeeks = new Set(activityRange.cachedWeeks);
@@ -2537,9 +2554,11 @@ function buildAnalysisPeriodContext(period, plan) {
     dateEntries.push(entry);
     entriesByDate.set(date, dateEntries);
   }
-  const nutritionConfig = getNutritionConfig();
-  const preset = nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance;
-  const adaptiveProfile = getAdaptiveGoalProfile();
+  const nutritionConfig = includesNutrition ? getNutritionConfig() : undefined;
+  const preset = includesNutrition
+    ? nutritionGoalPresets[nutritionConfig.goal] ?? nutritionGoalPresets.maintenance
+    : nutritionGoalPresets.maintenance;
+  const adaptiveProfile = includesNutrition ? getAdaptiveGoalProfile() : { enabled: false };
   const adaptiveWeightLogs = adaptiveProfile.enabled ? listAdaptiveWeightLogs() : [];
   const adaptiveDailyCalories = adaptiveProfile.enabled
     ? listDailyCalories(addDays(period.from, -27), period.to)
@@ -2548,11 +2567,11 @@ function buildAnalysisPeriodContext(period, plan) {
     const dateEntries = entriesByDate.get(date) ?? [];
     const totals = summarizeEntryTotals(dateEntries);
     const dateActivities = activitiesByDate.get(date) ?? [];
-    const cachedGarminSummary = getGarminCachedSummary(date);
+    const cachedGarminSummary = needsGarmin ? getGarminCachedSummary(date) : null;
     const garminSummaryAvailable = hasUsableGarminSummary(cachedGarminSummary);
     const garminSummary = garminSummaryAvailable ? cachedGarminSummary : null;
     const activityTotals = summarizeAnalysisActivity(dateActivities, garminSummary);
-    const calorieTarget = calculateAnalysisCalorieBenchmark({
+    const calorieTarget = includesNutrition ? calculateAnalysisCalorieBenchmark({
       date,
       nutritionConfig,
       adaptiveProfile,
@@ -2561,7 +2580,7 @@ function buildAnalysisPeriodContext(period, plan) {
       garminConfigured,
       garminSummary,
       dateActivities,
-    });
+    }) : undefined;
     const macroTargets = Number.isFinite(calorieTarget) ? calculateMacroTargets(calorieTarget, preset) : undefined;
     return {
       date,
@@ -2570,8 +2589,9 @@ function buildAnalysisPeriodContext(period, plan) {
       calorieTarget,
       macroTargets,
       activityTotals,
-      activityDataAvailable: cachedActivityWeeks.has(getWeekStart(date)) || garminSummaryAvailable,
-      garminSummaryAvailable,
+      activityDataAvailable: includesActivity
+        && (cachedActivityWeeks.has(getWeekStart(date)) || garminSummaryAvailable),
+      garminSummaryAvailable: includesActivity && garminSummaryAvailable,
       weight: weightsByDate.get(date),
     };
   });
@@ -2587,19 +2607,23 @@ function buildAnalysisPeriodContext(period, plan) {
     to: period.to,
     dataCoverage: {
       requestedDays: period.days,
-      loggedDays: days.filter((day) => day.entryCount > 0).length,
-      entryCount: entries.length,
-      weightCount: weights.length,
-      activityCount: activities.length,
-      firstEntryDate: entries.at(0)?.consumedAt.slice(0, 10),
-      lastEntryDate: entries.at(-1)?.consumedAt.slice(0, 10),
-      garmin: {
+      ...(includesNutrition ? {
+        loggedDays: days.filter((day) => day.entryCount > 0).length,
+        entryCount: entries.length,
+        firstEntryDate: entries.at(0)?.consumedAt.slice(0, 10),
+        lastEntryDate: entries.at(-1)?.consumedAt.slice(0, 10),
+      } : {}),
+      ...(includesWeight ? { weightCount: weights.length } : {}),
+      ...(includesActivity ? {
+        activityCount: activities.length,
+        garmin: {
         status: garminConfigured ? "configured" : "not_configured",
         activityWeeksAvailable: activityRange.cachedWeeks,
         activityWeeksMissing: activityRange.missingWeeks,
         dailySummariesAvailable: days.filter((day) => day.garminSummaryAvailable).length,
         dailySummariesMissing: days.filter((day) => !day.garminSummaryAvailable).length,
-      },
+        },
+      } : {}),
     },
     summary: selectAnalysisSummaryFields(summarizeAnalysisDays(days), plan.focus),
     ...(plan.focus.includes("habits") || plan.focus.includes("nutrition")
@@ -2725,7 +2749,7 @@ function summarizeAnalysisDays(days) {
 function selectAnalysisSummaryFields(summary, focus) {
   return {
     requestedDays: summary.requestedDays,
-    ...((focus.includes("nutrition") || focus.includes("habits") || focus.includes("goals")) ? {
+    ...((focus.includes("nutrition") || focus.includes("habits")) ? {
       loggedDays: summary.loggedDays,
       entries: summary.entries,
       averagesPerLoggedDay: summary.averagesPerLoggedDay,
@@ -2738,7 +2762,7 @@ function selectAnalysisSummaryFields(summary, focus) {
 function buildAnalysisDayContext(day, focus) {
   return {
     date: day.date,
-    ...((focus.includes("nutrition") || focus.includes("habits") || focus.includes("goals")) ? {
+    ...((focus.includes("nutrition") || focus.includes("habits")) ? {
       entryCount: day.entryCount,
       calories: Math.round(day.totals.calories),
       ...(Number.isFinite(day.calorieTarget) ? { currentCalorieBenchmark: Math.round(day.calorieTarget) } : {
@@ -2821,9 +2845,13 @@ function buildWeightSummary(weights) {
 }
 
 function getAnalysisGoalContext(focus) {
-  const nutrition = getNutritionConfig();
-  const preset = nutritionGoalPresets[nutrition.goal] ?? nutritionGoalPresets.maintenance;
-  const adaptive = getAdaptiveGoalProfile();
+  const includesNutritionGoal = focus.includes("nutrition") || focus.includes("goals");
+  const includesAdaptiveGoal = focus.includes("weight") || focus.includes("goals");
+  const nutrition = includesNutritionGoal ? getNutritionConfig() : undefined;
+  const preset = includesNutritionGoal
+    ? nutritionGoalPresets[nutrition.goal] ?? nutritionGoalPresets.maintenance
+    : undefined;
+  const adaptive = includesAdaptiveGoal ? getAdaptiveGoalProfile() : undefined;
   const includesCurrentBenchmark = focus.includes("nutrition")
     || focus.includes("weight")
     || focus.includes("goals");
@@ -2833,12 +2861,12 @@ function getAnalysisGoalContext(focus) {
       historicalGoalHistoryAvailable: false,
       note: "Aktuelle Zielwerte sind nur ein heutiger Benchmark und keine historisch gültigen Sollwerte.",
     } : {}),
-    ...((focus.includes("nutrition") || focus.includes("goals")) ? {
+    ...(includesNutritionGoal ? {
       nutritionGoal: preset.label,
       baseCalorieGoal: nutrition.calorieGoal,
       calorieGoalOffset: nutrition.calorieGoalOffset,
     } : {}),
-    ...((focus.includes("weight") || focus.includes("goals")) ? {
+    ...(includesAdaptiveGoal ? {
       adaptive: adaptive.enabled ? {
         enabled: true,
         currentWeightKg: adaptive.currentWeightKg,
