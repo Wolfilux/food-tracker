@@ -196,6 +196,18 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(emptyActivityContext.dataPresence.activityDaysAvailable, 7);
   assert.equal(emptyActivityContext.dataPresence.hasAnyData, true);
 
+  const emptyNutritionPlan = normalizeAnalysisQueryPlan({
+    periods: [{ label: "Ohne Logs", from: "2026-05-11", to: "2026-05-17" }],
+    focus: ["nutrition"],
+    includeDailyDetails: false,
+  }, {
+    anchorWeekStart: "2026-05-11",
+    today: "2026-07-27",
+  });
+  const emptyNutritionContext = databaseModule.buildAnalysisDataContext(emptyNutritionPlan, { userKey: "default" });
+  assert.equal(emptyNutritionContext.dataPresence.goalDataAvailable, false);
+  assert.equal(emptyNutritionContext.dataPresence.hasAnyData, false);
+
   const goalOnlyPlan = normalizeAnalysisQueryPlan({
     periods: [{ label: "Ohne Logs", from: "2026-05-11", to: "2026-05-17" }],
     focus: ["goals"],
@@ -226,7 +238,12 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     requestBodies.push(requestBody);
     if (requestBody.tools) {
       const followUpQuestion = requestBody.messages.at(-1)?.content ?? "";
-      const periods = followUpQuestion.includes("letzten 4 Wochen")
+      const periods = followUpQuestion.includes("Vergleiche mit Mai")
+        ? [
+          { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
+          { label: "Mai 2026", from: "2026-05-01", to: "2026-05-31" },
+        ]
+        : followUpQuestion.includes("letzten 4 Wochen")
         ? [
           { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
           { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
@@ -327,6 +344,23 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(followUp.period.defaulted, false);
 
     requestBodies.length = 0;
+    const implicitComparison = await databaseModule.answerAnalysisQuestion({
+      question: "Vergleiche mit Mai",
+      weekStart: "2026-07-20",
+      history: [
+        { role: "user", content: "Wie war meine Ernährung im Juni?" },
+        { role: "assistant", content: answer.answer },
+      ],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.deepEqual(implicitComparison.period.periods.map(({ from, to }) => ({ from, to })), [
+      { from: "2026-06-01", to: "2026-06-30" },
+      { from: "2026-05-01", to: "2026-05-31" },
+    ]);
+
+    requestBodies.length = 0;
     const explicitFollowUp = await databaseModule.answerAnalysisQuestion({
       question: "Vergleiche das mit den letzten 4 Wochen",
       weekStart: "2026-07-20",
@@ -383,8 +417,9 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
       weekStart: "2026-07-20",
       history: [],
     }, { userKey: "default" });
-    assert.equal(fallbackRequestCount, 3);
+    assert.equal(fallbackRequestCount, 2);
     assert.equal(textFallbackAnswer.period.periods[0].from, "2026-07-26");
+    assert.match(textFallbackAnswer.answer, /keine Ernährungs-, Gewichts- oder Aktivitätsdaten/);
 
     globalThis.fetch = async () => new globalThis.Response(JSON.stringify({
       choices: [{ message: { content: "" } }],

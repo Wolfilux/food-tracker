@@ -2283,10 +2283,13 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
     availableTo: coverage.to,
   };
   const explicitPlan = resolveExplicitAnalysisPlan(question, planOptions);
-  const referencesHistory = safeHistory.length > 0
-    && /\b(?:dazu|damit|davon|hierzu|vergleiche\s+das\s+(?:mit|dazu|damit|hierzu)|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
-      question.toLocaleLowerCase("de-DE"),
-    );
+  const normalizedQuestion = question.toLocaleLowerCase("de-DE");
+  const explicitHistoryReference = /\b(?:dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
+    normalizedQuestion,
+  );
+  const incompleteComparison = (explicitPlan?.periods.length ?? 0) < 2
+    && /\b(?:vergleiche\s+(?:das\s+)?mit|(?:im\s+)?vergleich\s+(?:mit|zu))\b/.test(normalizedQuestion);
+  const referencesHistory = safeHistory.length > 0 && (explicitHistoryReference || incompleteComparison);
   const requiresPlanner = referencesHistory || hasUnresolvedAnalysisTimeReference(question);
   let queryPlan = requiresPlanner ? null : explicitPlan;
   if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
@@ -2477,7 +2480,7 @@ async function planAnalysisDataQueryWithJson({ question, history, provider, conf
 export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
   assertAnalysisUserScope(scope.userKey);
   const goal = getAnalysisGoalContext(plan.focus);
-  const goalDataAvailable = Object.keys(goal).length > 0;
+  const goalDataAvailable = plan.focus.includes("goals") && Object.keys(goal).length > 0;
   const periods = plan.periods.map((period) => buildAnalysisPeriodContext(period, plan));
   const dataPresence = periods.reduce((presence, period) => ({
     entryCount: presence.entryCount + period.dataCoverage.entryCount,
