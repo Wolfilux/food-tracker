@@ -167,17 +167,19 @@ export function resolveExplicitAnalysisPlan(question, options) {
       const startsBetweenRange = index === 0 && /\bzwischen\s*$/.test(prefix) && /\bund\b/.test(betweenMatches);
       if (next && (/\bbis\b/.test(betweenMatches) || startsBetweenRange)) {
         if (current.from > next.from) {
-          if (monthMatches[index][2] && !monthMatches[index + 1][2]) {
+          const currentHasExplicitYear = Boolean(monthMatches[index][2] || monthMatches[index][3]);
+          const nextHasExplicitYear = Boolean(monthMatches[index + 1][2] || monthMatches[index + 1][3]);
+          if (currentHasExplicitYear && !nextHasExplicitYear) {
             next.year += 1;
             next.from = firstDayOfMonth(next.year, next.month);
             next.to = lastDayOfMonth(next.year, next.month);
             next.label = `${capitalize(monthMatches[index + 1][1])} ${next.year}`;
-          } else if (!monthMatches[index][2] && monthMatches[index + 1][2]) {
+          } else if (!currentHasExplicitYear && nextHasExplicitYear) {
             current.year -= 1;
             current.from = firstDayOfMonth(current.year, current.month);
             current.to = lastDayOfMonth(current.year, current.month);
             current.label = `${capitalize(monthMatches[index][1])} ${current.year}`;
-          } else if (!monthMatches[index][2] && !monthMatches[index + 1][2]) {
+          } else if (!currentHasExplicitYear && !nextHasExplicitYear) {
             current.year -= 1;
             current.from = firstDayOfMonth(current.year, current.month);
             current.to = lastDayOfMonth(current.year, current.month);

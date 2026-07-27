@@ -157,6 +157,10 @@ test("propagates explicit years across named-month ranges and comparisons", () =
   );
   const yearBoundary = resolveExplicitAnalysisPlan("Wie lief es von November 2025 bis Februar?", options);
   const reverseExplicitBoundary = resolveExplicitAnalysisPlan("Wie lief es von November bis Februar 2026?", options);
+  const relativeYearBoundary = resolveExplicitAnalysisPlan(
+    "Wie lief es von November letzten Jahres bis Februar?",
+    options,
+  );
 
   assert.deepEqual(range.periods.map(({ label, from, to }) => ({ label, from, to })), [{
     label: "Januar 2025 bis März 2025",
@@ -188,6 +192,10 @@ test("propagates explicit years across named-month ranges and comparisons", () =
     to: "2026-02-28",
   }]);
   assert.deepEqual(reverseExplicitBoundary.periods.map(({ from, to }) => ({ from, to })), [{
+    from: "2025-11-01",
+    to: "2026-02-28",
+  }]);
+  assert.deepEqual(relativeYearBoundary.periods.map(({ from, to }) => ({ from, to })), [{
     from: "2025-11-01",
     to: "2026-02-28",
   }]);
