@@ -215,7 +215,27 @@ export function inferDefaultAnalysisPlan(question, options) {
 
 export function hasAnalysisTimeReference(question) {
   const normalizedQuestion = normalizeQuestion(question);
-  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|quartal|jahr|jahre|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
+  return /\b(?:heute|gestern|vorgestern|woche|wochen|monat|monate|quartal|vorjahr|jahr|jahre|seit|zwischen|von|bis|davor|vorher|kw\s*\d|20\d{2}|januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(normalizedQuestion);
+}
+
+export function hasUnresolvedAnalysisTimeReference(question) {
+  let remaining = normalizeQuestion(question);
+  const resolvedPatterns = [
+    /\b(?:letzte[nr]?|vergangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
+    /\b\d{1,2}\s+wochen?\s+davor\b/g,
+    /\b(?:vorhergehende[nr]?|vorangegangene[nr]?)\s+\d{1,2}\s+wochen?\b/g,
+    /\bkw\s*\d{1,2}(?:\s*[/. -]\s*20\d{2})?\b/g,
+    /\bseit\s+(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    /\b(?:januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)(?:\s+20\d{2})?\b/g,
+    /\b(?:diese(?:r|n)?|aktuelle(?:r|n)?|ausgewählte(?:r|n)?|ausgewaehlte(?:r|n)?)\s+woche\b/g,
+    /\b(?:letzte[nr]?|vorherige[nr]?|vergangene[nr]?)\s+woche\b/g,
+  ];
+  for (const pattern of resolvedPatterns) remaining = remaining.replace(pattern, " ");
+  remaining = remaining.replace(
+    /\b(?:seit|zwischen|von|bis|davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/g,
+    " ",
+  );
+  return hasAnalysisTimeReference(remaining);
 }
 
 export function normalizeAnalysisQueryPlan(input, options) {

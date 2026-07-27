@@ -254,6 +254,15 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
       { from: "2026-06-01", to: "2026-06-30" },
       { from: "2026-06-29", to: "2026-07-26" },
     ]);
+
+    requestBodies.length = 0;
+    await databaseModule.answerAnalysisQuestion({
+      question: "Vergleiche Juni mit dem Vorjahr",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
   } finally {
     globalThis.fetch = originalFetch;
   }

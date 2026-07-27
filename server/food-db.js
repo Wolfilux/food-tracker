@@ -22,6 +22,7 @@ import {
 import {
   buildAnalysisQueryTool,
   hasAnalysisTimeReference,
+  hasUnresolvedAnalysisTimeReference,
   inferDefaultAnalysisPlan,
   normalizeAnalysisQueryPlan,
   resolveExplicitAnalysisPlan,
@@ -2285,7 +2286,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
     && /\b(?:das|dazu|damit|davon|hierzu|vorherige[nrms]?\s+(?:zeitraum|analyse|antwort))\b/.test(
       question.toLocaleLowerCase("de-DE"),
     );
-  let queryPlan = referencesHistory ? null : explicitPlan;
+  let queryPlan = referencesHistory || hasUnresolvedAnalysisTimeReference(question) ? null : explicitPlan;
   if (!queryPlan && !hasAnalysisTimeReference(question) && safeHistory.length === 0) {
     queryPlan = inferDefaultAnalysisPlan(question, planOptions);
   }
