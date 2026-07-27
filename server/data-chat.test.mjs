@@ -329,6 +329,10 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
           { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
           { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
         ]
+        : followUpQuestion.includes("Vormonat")
+        ? [{ label: "Vormonat", from: "2026-06-01", to: "2026-06-30" }]
+        : followUpQuestion.includes("Vorwoche")
+        ? [{ label: "Vorwoche", from: "2026-07-13", to: "2026-07-19" }]
         : followUpQuestion.includes("besser als letzte Woche")
         ? [
           { label: "Juni 2026", from: "2026-06-01", to: "2026-06-30" },
@@ -541,6 +545,30 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
       { from: "2026-06-01", to: "2026-06-30" },
       { from: "2026-07-13", to: "2026-07-19" },
     ]);
+
+    requestBodies.length = 0;
+    const previousMonthQuestion = await databaseModule.answerAnalysisQuestion({
+      question: "Was habe ich im Vormonat gegessen?",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 2);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.equal(previousMonthQuestion.period.periods[0].from, "2026-06-01");
+    assert.equal(previousMonthQuestion.period.periods[0].to, "2026-06-30");
+
+    requestBodies.length = 0;
+    const previousWeekQuestion = await databaseModule.answerAnalysisQuestion({
+      question: "Wie war die Vorwoche?",
+      weekStart: "2026-07-20",
+      history: [],
+    }, { userKey: "default" });
+
+    assert.equal(requestBodies.length, 1);
+    assert.equal(Array.isArray(requestBodies[0].tools), true);
+    assert.equal(previousWeekQuestion.period.periods[0].from, "2026-07-13");
+    assert.equal(previousWeekQuestion.period.periods[0].to, "2026-07-19");
 
     requestBodies.length = 0;
     const explicitFollowUp = await databaseModule.answerAnalysisQuestion({

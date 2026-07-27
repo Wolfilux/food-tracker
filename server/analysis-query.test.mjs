@@ -301,6 +301,10 @@ test("uses eight weeks for an unclear weight trend and four weeks otherwise", ()
   assert.equal(burnedCaloriesPlan.focus.includes("activity"), true);
   assert.equal(hasAnalysisTimeReference("Warum habe ich zugenommen?"), false);
   assert.equal(hasAnalysisTimeReference("Wie war es im letzten Quartal?"), true);
+  assert.equal(hasAnalysisTimeReference("Was habe ich im Vormonat gegessen?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Was habe ich im Vormonat gegessen?"), true);
+  assert.equal(hasAnalysisTimeReference("Wie war die Vorwoche?"), true);
+  assert.equal(hasUnresolvedAnalysisTimeReference("Wie war die Vorwoche?"), true);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Juni mit dieser Woche"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche Januar bis März mit Juni"), false);
   assert.equal(hasUnresolvedAnalysisTimeReference("Vergleiche letzte Woche mit der Woche davor"), false);
