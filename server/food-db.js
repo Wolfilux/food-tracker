@@ -2331,6 +2331,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
             "Antworte konkret und knapp ausschließlich anhand des serverseitig abgefragten, begrenzten Tracker-Kontexts.",
             "Benenne Datenlücken und unterscheide Beobachtung, Korrelation und Vermutung.",
             "Behaupte keine Kausalität, die die Daten nicht belegen.",
+            "Fehlende Garmin-Cache-Wochen bedeuten nicht Inaktivität; fehlende Garmin-Tagessummen bedeuten nicht, dass das Basis-Kalorienziel galt.",
             "Keine medizinische Diagnose.",
             "Der ausgewertete Zeitraum wird von der Anwendung automatisch vor deine Antwort gesetzt; wiederhole ihn nicht als eigene Überschrift.",
           ].join(" "),
@@ -2432,8 +2433,12 @@ export function buildAnalysisDataContext(plan, scope = { userKey: "default" }) {
 function buildAnalysisPeriodContext(period, plan) {
   const entries = listEntriesForRange(period.from, period.to);
   const weights = listWeightEntries(period.from, period.to);
-  const activities = listCachedActivitiesForRange(period.from, period.to);
+  const garminConfig = getGarminConfigRecord();
+  const garminConfigured = Boolean(garminConfig.username && garminConfig.authValue);
+  const activityRange = listCachedActivitiesForRange(period.from, period.to);
+  const activities = activityRange.activities;
   const activitiesByDate = groupGarminActivitiesByDate(activities);
+  const cachedActivityWeeks = new Set(activityRange.cachedWeeks);
   const weightsByDate = new Map(weights.map((weight) => [weight.date, weight]));
   const entriesByDate = new Map();
   for (const entry of entries) {
@@ -2450,12 +2455,14 @@ function buildAnalysisPeriodContext(period, plan) {
     const dateActivities = activitiesByDate.get(date) ?? [];
     const activityTotals = summarizeGarminActivities(dateActivities);
     const garminSummary = getGarminCachedSummary(date);
-    const calorieTarget = calculateEffectiveCalorieGoal(
-      nutritionConfig.calorieGoal,
-      nutritionConfig.calorieGoalOffset,
-      garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
-    );
-    const macroTargets = calculateMacroTargets(calorieTarget, preset);
+    const calorieTarget = garminConfigured && !garminSummary
+      ? undefined
+      : calculateEffectiveCalorieGoal(
+        nutritionConfig.calorieGoal,
+        nutritionConfig.calorieGoalOffset,
+        garminSummary?.configured ? garminSummary.activeKilocalories : undefined,
+      );
+    const macroTargets = Number.isFinite(calorieTarget) ? calculateMacroTargets(calorieTarget, preset) : undefined;
     return {
       date,
       entryCount: dateEntries.length,
@@ -2463,6 +2470,8 @@ function buildAnalysisPeriodContext(period, plan) {
       calorieTarget,
       macroTargets,
       activityTotals,
+      activityDataAvailable: !garminConfigured || cachedActivityWeeks.has(getWeekStart(date)),
+      garminSummaryAvailable: !garminConfigured || Boolean(garminSummary),
       weight: weightsByDate.get(date),
     };
   });
@@ -2484,6 +2493,15 @@ function buildAnalysisPeriodContext(period, plan) {
       activityCount: activities.length,
       firstEntryDate: entries.at(0)?.consumedAt.slice(0, 10),
       lastEntryDate: entries.at(-1)?.consumedAt.slice(0, 10),
+      garmin: garminConfigured ? {
+        status: "configured",
+        activityWeeksAvailable: activityRange.cachedWeeks,
+        activityWeeksMissing: activityRange.missingWeeks,
+        dailySummariesAvailable: days.filter((day) => day.garminSummaryAvailable).length,
+        dailySummariesMissing: days.filter((day) => !day.garminSummaryAvailable).length,
+      } : {
+        status: "not_configured",
+      },
     },
     summary: selectAnalysisSummaryFields(summarizeAnalysisDays(days), plan.focus),
     ...(plan.focus.includes("habits") || plan.focus.includes("nutrition")
@@ -2499,15 +2517,16 @@ function buildAnalysisPeriodContext(period, plan) {
 
 function summarizeAnalysisDays(days) {
   const loggedDays = days.filter((day) => day.entryCount > 0);
+  const targetDays = loggedDays.filter((day) => Number.isFinite(day.calorieTarget) && day.macroTargets);
   const totals = loggedDays.reduce((sum, day) => ({
     calories: sum.calories + day.totals.calories,
-    calorieTarget: sum.calorieTarget + day.calorieTarget,
+    calorieTarget: sum.calorieTarget + (Number.isFinite(day.calorieTarget) ? day.calorieTarget : 0),
     protein: sum.protein + day.totals.protein,
-    proteinTarget: sum.proteinTarget + day.macroTargets.protein.grams,
+    proteinTarget: sum.proteinTarget + (day.macroTargets?.protein.grams ?? 0),
     carbs: sum.carbs + day.totals.carbs,
-    carbsTarget: sum.carbsTarget + day.macroTargets.carbs.grams,
+    carbsTarget: sum.carbsTarget + (day.macroTargets?.carbs.grams ?? 0),
     fat: sum.fat + day.totals.fat,
-    fatTarget: sum.fatTarget + day.macroTargets.fat.grams,
+    fatTarget: sum.fatTarget + (day.macroTargets?.fat.grams ?? 0),
     alcoholCalories: sum.alcoholCalories + day.totals.alcoholCalories,
     entries: sum.entries + day.entryCount,
   }), {
@@ -2522,12 +2541,14 @@ function summarizeAnalysisDays(days) {
     alcoholCalories: 0,
     entries: 0,
   });
-  const activityTotals = days.reduce((sum, day) => ({
+  const activityDays = days.filter((day) => day.activityDataAvailable);
+  const activityTotals = activityDays.reduce((sum, day) => ({
     count: sum.count + day.activityTotals.count,
     calories: sum.calories + day.activityTotals.calories,
     durationMinutes: sum.durationMinutes + day.activityTotals.durationMinutes,
   }), { count: 0, calories: 0, durationMinutes: 0 });
   const divisor = loggedDays.length || 1;
+  const targetDivisor = targetDays.length || 1;
   const weightDays = days.filter((day) => day.weight);
 
   return {
@@ -2536,19 +2557,25 @@ function summarizeAnalysisDays(days) {
     entries: totals.entries,
     averagesPerLoggedDay: {
       calories: Math.round(totals.calories / divisor),
-      calorieTarget: Math.round(totals.calorieTarget / divisor),
+      ...(targetDays.length > 0 ? {
+        calorieTarget: Math.round(totals.calorieTarget / targetDivisor),
+      } : {}),
+      targetDaysAvailable: targetDays.length,
+      targetDaysMissing: loggedDays.length - targetDays.length,
       protein: roundNutrition(totals.protein / divisor),
-      proteinTarget: roundNutrition(totals.proteinTarget / divisor),
+      ...(targetDays.length > 0 ? { proteinTarget: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
       carbs: roundNutrition(totals.carbs / divisor),
-      carbsTarget: roundNutrition(totals.carbsTarget / divisor),
+      ...(targetDays.length > 0 ? { carbsTarget: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
       fat: roundNutrition(totals.fat / divisor),
-      fatTarget: roundNutrition(totals.fatTarget / divisor),
+      ...(targetDays.length > 0 ? { fatTarget: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
       alcoholCalories: Math.round(totals.alcoholCalories / divisor),
     },
     activity: {
       count: activityTotals.count,
       calories: Math.round(activityTotals.calories),
       durationMinutes: Math.round(activityTotals.durationMinutes),
+      daysAvailable: activityDays.length,
+      daysMissing: days.length - activityDays.length,
     },
     weight: buildWeightSummary(weightDays.map((day) => day.weight)),
   };
@@ -2573,15 +2600,19 @@ function buildAnalysisDayContext(day, focus) {
     ...((focus.includes("nutrition") || focus.includes("habits") || focus.includes("goals")) ? {
       entryCount: day.entryCount,
       calories: Math.round(day.totals.calories),
-      calorieTarget: Math.round(day.calorieTarget),
+      ...(Number.isFinite(day.calorieTarget) ? { calorieTarget: Math.round(day.calorieTarget) } : {
+        calorieTargetAvailable: false,
+      }),
       protein: roundNutrition(day.totals.protein),
       carbs: roundNutrition(day.totals.carbs),
       fat: roundNutrition(day.totals.fat),
       alcoholCalories: Math.round(day.totals.alcoholCalories),
     } : {}),
     ...(focus.includes("activity") ? {
-      activityCalories: Math.round(day.activityTotals.calories),
-      activityMinutes: Math.round(day.activityTotals.durationMinutes),
+      ...(day.activityDataAvailable ? {
+        activityCalories: Math.round(day.activityTotals.calories),
+        activityMinutes: Math.round(day.activityTotals.durationMinutes),
+      } : { activityDataAvailable: false }),
     } : {}),
     ...(focus.includes("weight") ? { weightKg: day.weight?.weightKg } : {}),
   };
@@ -2712,13 +2743,21 @@ function listEntriesForRange(from, to) {
 
 function listCachedActivitiesForRange(from, to) {
   const activities = [];
+  const cachedWeeks = [];
+  const missingWeeks = [];
   for (let weekStart = getWeekStart(from); weekStart <= to; weekStart = addDays(weekStart, 7)) {
-    for (const activity of getGarminCachedActivities(weekStart)?.activities ?? []) {
+    const cachedWeek = getGarminCachedActivities(weekStart);
+    if (!cachedWeek) {
+      missingWeeks.push(weekStart);
+      continue;
+    }
+    cachedWeeks.push(weekStart);
+    for (const activity of cachedWeek.activities ?? []) {
       const date = String(activity.date ?? activity.startTimeLocal ?? "").slice(0, 10);
       if (date >= from && date <= to) activities.push(activity);
     }
   }
-  return activities;
+  return { activities, cachedWeeks, missingWeeks };
 }
 
 function buildDateRange(from, to) {

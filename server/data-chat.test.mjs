@@ -59,6 +59,8 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(result.dataPresence.weightCount, 2);
   assert.equal(result.periods[0].summary.loggedDays, 2);
   assert.equal(result.periods[0].summary.weight.changeKg, -0.5);
+  assert.equal(result.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 0);
+  assert.equal(result.periods[0].dataCoverage.garmin.status, "not_configured");
   assert.equal(result.periods[0].days.length, 7);
   assert.deepEqual(
     result.periods[0].foodPatterns.topFoods.map((food) => food.name).sort(),
@@ -69,6 +71,19 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     () => databaseModule.buildAnalysisDataContext(plan, { userKey: "another-user" }),
     /Unzulässiger Datenbereich/,
   );
+
+  databaseModule.saveGarminConfig({
+    username: "tracker@example.com",
+    authValue: "test-session",
+    autoSyncMinutes: 0,
+  });
+  const missingGarminContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
+  assert.equal(missingGarminContext.periods[0].dataCoverage.garmin.status, "configured");
+  assert.deepEqual(missingGarminContext.periods[0].dataCoverage.garmin.activityWeeksMissing, ["2026-06-08"]);
+  assert.equal(missingGarminContext.periods[0].summary.activity.daysMissing, 7);
+  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.targetDaysAvailable, 0);
+  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 2);
+  assert.equal(missingGarminContext.periods[0].days[0].calorieTargetAvailable, false);
 
   databaseModule.saveAiConfig({
     provider: "openai",

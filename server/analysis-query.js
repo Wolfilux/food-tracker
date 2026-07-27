@@ -85,11 +85,20 @@ export function resolveExplicitAnalysisPlan(question, options) {
   if (weeksMatch) {
     const weekCount = Number(weeksMatch[1]);
     if (weekCount >= 1 && weekCount <= 52) {
-      periods.push({
+      const currentPeriod = {
         label: `Letzte ${weekCount} Wochen`,
         from: addDays(anchorEnd, -(weekCount * 7) + 1),
         to: anchorEnd,
-      });
+      };
+      periods.push(currentPeriod);
+      if (/\b(?:davor|vorhergehende[nr]?|vorangegangene[nr]?)\b/.test(normalizedQuestion)) {
+        const previousTo = addDays(currentPeriod.from, -1);
+        periods.push({
+          label: `${weekCount} Wochen davor`,
+          from: addDays(previousTo, -(weekCount * 7) + 1),
+          to: previousTo,
+        });
+      }
     }
   }
 
@@ -99,6 +108,9 @@ export function resolveExplicitAnalysisPlan(question, options) {
     const year = Number(match[2] ?? anchorWeekStart.slice(0, 4));
     if (week < 1 || week > 53) continue;
     const from = isoWeekStart(year, week);
+    if (Number(addDays(from, 3).slice(0, 4)) !== year) {
+      throw new Error(`KW ${week}/${year} existiert nicht.`);
+    }
     periods.push({ label: `KW ${week}/${year}`, from, to: addDays(from, 6) });
   }
 

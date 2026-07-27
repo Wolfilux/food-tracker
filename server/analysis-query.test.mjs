@@ -26,6 +26,18 @@ test("resolves the last four weeks relative to the selected analysis week", () =
   assert.equal(plan.defaulted, false);
 });
 
+test("adds the preceding rolling range when the question asks for a comparison", () => {
+  const plan = resolveExplicitAnalysisPlan(
+    "Vergleiche die letzten 4 Wochen mit den 4 Wochen davor",
+    options,
+  );
+
+  assert.deepEqual(plan.periods.map(({ label, from, to }) => ({ label, from, to })), [
+    { label: "Letzte 4 Wochen", from: "2026-06-29", to: "2026-07-26" },
+    { label: "4 Wochen davor", from: "2026-06-01", to: "2026-06-28" },
+  ]);
+});
+
 test("resolves named months and month comparisons", () => {
   const june = resolveExplicitAnalysisPlan("Wie war meine Ernährung im Juni?", options);
   assert.deepEqual(june.periods.map(({ from, to }) => ({ from, to })), [{
@@ -61,6 +73,18 @@ test("resolves selected and previous weeks as separate comparison periods", () =
     { label: "Ausgewählte Woche", from: "2026-07-20", to: "2026-07-26" },
     { label: "Vorherige Woche", from: "2026-07-13", to: "2026-07-19" },
   ]);
+});
+
+test("rejects ISO week 53 when it does not exist in the requested year", () => {
+  assert.throws(
+    () => resolveExplicitAnalysisPlan("Was war in KW 53/2025?", options),
+    /KW 53\/2025 existiert nicht/,
+  );
+  const valid = resolveExplicitAnalysisPlan("Was war in KW 53/2026?", {
+    ...options,
+    today: "2027-01-04",
+  });
+  assert.equal(valid.periods[0].from, "2026-12-28");
 });
 
 test("uses eight weeks for an unclear weight trend and four weeks otherwise", () => {
