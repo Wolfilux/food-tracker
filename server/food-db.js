@@ -2343,6 +2343,7 @@ export async function answerAnalysisQuestion(input, scope = { userKey: "default"
             "Benenne Datenlücken und unterscheide Beobachtung, Korrelation und Vermutung.",
             "Behaupte keine Kausalität, die die Daten nicht belegen.",
             "Fehlende Garmin-Cache-Wochen bedeuten nicht Inaktivität; fehlende Garmin-Tagessummen bedeuten nicht, dass das Basis-Kalorienziel galt.",
+            "Alle als currentBenchmark bezeichneten Zielwerte stammen aus der heutigen Konfiguration und dürfen nicht als historisch gültige Ziele dargestellt werden.",
             "Keine medizinische Diagnose.",
             "Der ausgewertete Zeitraum wird von der Anwendung automatisch vor deine Antwort gesetzt; wiederhole ihn nicht als eigene Überschrift.",
           ].join(" "),
@@ -2643,16 +2644,16 @@ function summarizeAnalysisDays(days) {
     averagesPerLoggedDay: {
       calories: Math.round(totals.calories / divisor),
       ...(targetCoverageComplete ? {
-        calorieTarget: Math.round(totals.calorieTarget / targetDivisor),
+        currentCalorieBenchmark: Math.round(totals.calorieTarget / targetDivisor),
       } : {}),
-      targetDaysAvailable: targetDays.length,
-      targetDaysMissing: loggedDays.length - targetDays.length,
+      currentBenchmarkDaysAvailable: targetDays.length,
+      currentBenchmarkDaysMissing: loggedDays.length - targetDays.length,
       protein: roundNutrition(totals.protein / divisor),
-      ...(targetCoverageComplete ? { proteinTarget: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { currentProteinBenchmark: roundNutrition(totals.proteinTarget / targetDivisor) } : {}),
       carbs: roundNutrition(totals.carbs / divisor),
-      ...(targetCoverageComplete ? { carbsTarget: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { currentCarbsBenchmark: roundNutrition(totals.carbsTarget / targetDivisor) } : {}),
       fat: roundNutrition(totals.fat / divisor),
-      ...(targetCoverageComplete ? { fatTarget: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
+      ...(targetCoverageComplete ? { currentFatBenchmark: roundNutrition(totals.fatTarget / targetDivisor) } : {}),
       alcoholCalories: Math.round(totals.alcoholCalories / divisor),
     },
     activity: {
@@ -2685,8 +2686,8 @@ function buildAnalysisDayContext(day, focus) {
     ...((focus.includes("nutrition") || focus.includes("habits") || focus.includes("goals")) ? {
       entryCount: day.entryCount,
       calories: Math.round(day.totals.calories),
-      ...(Number.isFinite(day.calorieTarget) ? { calorieTarget: Math.round(day.calorieTarget) } : {
-        calorieTargetAvailable: false,
+      ...(Number.isFinite(day.calorieTarget) ? { currentCalorieBenchmark: Math.round(day.calorieTarget) } : {
+        currentCalorieBenchmarkAvailable: false,
       }),
       protein: roundNutrition(day.totals.protein),
       carbs: roundNutrition(day.totals.carbs),
@@ -2767,7 +2768,15 @@ function getAnalysisGoalContext(focus) {
   const nutrition = getNutritionConfig();
   const preset = nutritionGoalPresets[nutrition.goal] ?? nutritionGoalPresets.maintenance;
   const adaptive = getAdaptiveGoalProfile();
+  const includesCurrentBenchmark = focus.includes("nutrition")
+    || focus.includes("weight")
+    || focus.includes("goals");
   return {
+    ...(includesCurrentBenchmark ? {
+      basis: "current_configuration",
+      historicalGoalHistoryAvailable: false,
+      note: "Aktuelle Zielwerte sind nur ein heutiger Benchmark und keine historisch gültigen Sollwerte.",
+    } : {}),
     ...((focus.includes("nutrition") || focus.includes("goals")) ? {
       nutritionGoal: preset.label,
       baseCalorieGoal: nutrition.calorieGoal,

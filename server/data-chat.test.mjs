@@ -73,7 +73,9 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(result.dataPresence.weightCount, 2);
   assert.equal(result.periods[0].summary.loggedDays, 2);
   assert.equal(result.periods[0].summary.weight.changeKg, -0.5);
-  assert.equal(result.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 0);
+  assert.equal(result.periods[0].summary.averagesPerLoggedDay.currentBenchmarkDaysMissing, 0);
+  assert.equal(result.goal.basis, "current_configuration");
+  assert.equal(result.goal.historicalGoalHistoryAvailable, false);
   assert.equal(result.periods[0].dataCoverage.garmin.status, "not_configured");
   assert.equal(result.periods[0].summary.activity.daysAvailable, 0);
   assert.equal(result.periods[0].summary.activity.daysMissing, 7);
@@ -116,9 +118,9 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   assert.equal(missingGarminContext.periods[0].dataCoverage.garmin.status, "configured");
   assert.deepEqual(missingGarminContext.periods[0].dataCoverage.garmin.activityWeeksMissing, ["2026-06-08"]);
   assert.equal(missingGarminContext.periods[0].summary.activity.daysMissing, 7);
-  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.targetDaysAvailable, 0);
-  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.targetDaysMissing, 2);
-  assert.equal(missingGarminContext.periods[0].days[0].calorieTargetAvailable, false);
+  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.currentBenchmarkDaysAvailable, 0);
+  assert.equal(missingGarminContext.periods[0].summary.averagesPerLoggedDay.currentBenchmarkDaysMissing, 2);
+  assert.equal(missingGarminContext.periods[0].days[0].currentCalorieBenchmarkAvailable, false);
 
   databaseModule.getFoodDatabase().prepare([
     "INSERT INTO garmin_daily_summary (date, summary_json, fetched_at)",
@@ -130,12 +132,12 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
   );
   const partialTargetContext = databaseModule.buildAnalysisDataContext(plan, { userKey: "default" });
   const partialTargetAverages = partialTargetContext.periods[0].summary.averagesPerLoggedDay;
-  assert.equal(partialTargetAverages.targetDaysAvailable, 1);
-  assert.equal(partialTargetAverages.targetDaysMissing, 1);
-  assert.equal("calorieTarget" in partialTargetAverages, false);
-  assert.equal("proteinTarget" in partialTargetAverages, false);
-  assert.equal("carbsTarget" in partialTargetAverages, false);
-  assert.equal("fatTarget" in partialTargetAverages, false);
+  assert.equal(partialTargetAverages.currentBenchmarkDaysAvailable, 1);
+  assert.equal(partialTargetAverages.currentBenchmarkDaysMissing, 1);
+  assert.equal("currentCalorieBenchmark" in partialTargetAverages, false);
+  assert.equal("currentProteinBenchmark" in partialTargetAverages, false);
+  assert.equal("currentCarbsBenchmark" in partialTargetAverages, false);
+  assert.equal("currentFatBenchmark" in partialTargetAverages, false);
 
   databaseModule.getFoodDatabase().prepare([
     "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
