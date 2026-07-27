@@ -32,7 +32,7 @@ Die vorgeschlagene Branching- und Release-Strategie steht in
 - Textanalyse fuer freie Essensbeschreibungen
 - Analyse-Seite mit Wochen-Saeulendiagrammen fuer Kalorien, Protein, Kohlenhydrate, Fett und Garmin-Sportaktivitaeten
 - Manuelle KI-Wochenanalyse mit Ampel, strukturierten Abschnitten, tiefer Ernaehrungs-/Gewohnheits-/Timing-Einschaetzung, konkreten Empfehlungen und Wochenplan
-- KI-Datenchat zur ausgewaehlten Woche mit begrenztem Tracker-Kontext, transparentem Zeitraum und Datenluecken
+- KI-Datenchat mit dynamischen historischen Zeitraeumen, Wochenvergleichen, Gewichts-/Ernaehrungstrends und transparentem Abfragekontext
 - Gemeinsame KI-Konfiguration mit einem API-Key und getrennten Modell-Dropdowns fuer Foto- und Wochenanalyse
 - Live-Modellabruf ueber Provider-APIs, bei OpenRouter fuer Fotoanalyse nur Modelle mit Bild-Input
 - Woechentliche Analyse-E-Mail montags um 01:00 Uhr Europe/Berlin fuer die vorige Woche
@@ -128,7 +128,19 @@ CALDAV_PASS=
 CALENDAR_LOOKAHEAD_DAYS=14
 ```
 
-Die KI bekommt daraus nur freie/volle Zeitbloecke und Tagesrhythmus fuer den naechsten Zeitraum. Termintitel, Beschreibungen und Orte werden nicht in den Prompt aufgenommen. Der Datenchat begrenzt den Kontext auf die ausgewaehlte Woche, maximal 28 vorherige Tage Gewicht und sechs gekuerzte Chatnachrichten.
+Die KI bekommt daraus nur freie/volle Zeitbloecke und Tagesrhythmus fuer den naechsten Zeitraum. Termintitel, Beschreibungen und Orte werden nicht in den Prompt aufgenommen.
+
+Der Datenchat arbeitet query-basiert: Explizite Angaben wie `letzte 4 Wochen`, `im Juni`, `seit Januar`, Kalenderwochen und Wochenvergleiche werden deterministisch aufgeloest. Fuer freie Formulierungen plant das Analysemodell ausschliesslich einen `query_tracker_data`-Toolcall; erst danach aggregiert der Server die freigegebenen Tracker-Daten. Der Browser sendet weder Lebensmittel-/Gewichtsdaten noch einen frei waehlbaren Benutzerkontext.
+
+Serverseitige Grenzen:
+
+- maximal 3 Vergleichszeitraeume
+- maximal 366 Tage je Zeitraum und 400 Tage insgesamt
+- Tagesdetails nur fuer insgesamt maximal 42 Tage, sonst Wochenaggregate
+- maximal 12 haeufige Lebensmittel je Zeitraum
+- maximal 500 Zeichen je Frage und 6 gekuerzte Chatnachrichten
+
+Ohne klaren Zeitraum nutzt der Chat fuer Gewichtsfragen die letzten 8 Wochen, ansonsten die letzten 4 Wochen, jeweils relativ zur in `Analyse` ausgewaehlten Woche. Jede Antwort und der kompakte Kontexthinweis nennen den tatsaechlich ausgewerteten Zeitraum. Food Tracker ist derzeit als authentifiziertes Single-Tenant-Deployment ausgelegt; Datenabfragen bleiben fest im serverseitigen `default`-Datenbereich und akzeptieren keinen Benutzer-Schluessel aus dem Request.
 
 ## BLS-Datenimport
 
@@ -196,7 +208,7 @@ Bei Portainer-Redeploys darauf achten, dass das neue GHCR-Image wirklich gezogen
 - Diagramme zeigen Kalorien und Makros fuer Montag bis Sonntag.
 - Gruen bedeutet unter oder auf Ziel, rot bedeutet ueber Ziel.
 - `KI-Analyse` erzeugt eine Ampel und strukturierte Abschnitte zu Kurzfazit, Mustern, Timing, Makros, Alkohol, konkreten Lebensmittelempfehlungen, Garmin-Sportkontext und Plan fuer die kommende Woche.
-- Im `Datenchat` koennen konkrete Rueckfragen zur ausgewaehlten Woche gestellt werden. Antworten nennen Datenluecken und sind Orientierung, keine medizinische Diagnose.
+- Im `Datenchat` koennen Fragen zu historischen Zeitraeumen, Wochenvergleichen sowie Gewichts-, Ernaehrungs- und Aktivitaetstrends gestellt werden. Die ausgewaehlte Woche ist der zeitliche Anker; Antworten nennen Abfragezeitraum und Datenluecken und sind Orientierung, keine medizinische Diagnose.
 - `Garmin` aktualisiert Tagesverbrauchswerte und importiert Sportaktivitaeten, falls Garmin konfiguriert ist.
 
 ### Konfiguration
