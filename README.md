@@ -111,7 +111,7 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=
 SMTP_PASS=
-SMTP_FROM=Food Tracker <food-tracker@example.com>
+SMTP_FROM=Food Tracker <food-tracker@luptec.de>
 SMTP_TLS_SERVERNAME=
 ```
 

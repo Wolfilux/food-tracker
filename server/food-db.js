@@ -4396,7 +4396,7 @@ function decodeXmlEntities(value) {
     .replace(/&amp;/g, "&");
 }
 
-function getSmtpConfig() {
+export function getSmtpConfig() {
   const port = Number(process.env.SMTP_PORT ?? "");
   return {
     host: String(process.env.SMTP_HOST ?? "").trim(),
@@ -4404,7 +4404,7 @@ function getSmtpConfig() {
     secure: String(process.env.SMTP_SECURE ?? "").toLowerCase() === "true",
     user: String(process.env.SMTP_USER ?? "").trim(),
     pass: String(process.env.SMTP_PASS ?? ""),
-    from: String(process.env.SMTP_FROM ?? "Food Tracker <food-tracker@localhost>").trim(),
+    from: String(process.env.SMTP_FROM ?? "Food Tracker <food-tracker@luptec.de>").trim(),
     tlsServername: String(process.env.SMTP_TLS_SERVERNAME ?? "").trim(),
   };
 }
