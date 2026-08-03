@@ -578,7 +578,10 @@ test("builds bounded server-side aggregates and rejects a foreign user scope", a
     assert.equal(requestBodies.length, 2);
     assert.equal(Array.isArray(requestBodies[0].tools), true);
     assert.match(requestBodies[0].messages.at(-2).content, /Ausgewerteter Zeitraum: Juni 2026/);
-    assert.match(requestBodies[0].tools[0].function.description, /2026-05-04 bis 2026-07-01/);
+    const toolDescription = requestBodies[0].tools[0].function.description;
+    const availableRange = toolDescription.match(/2026-05-04 bis (\d{4}-\d{2}-\d{2})/);
+    assert.ok(availableRange);
+    assert.match(toolDescription, new RegExp(`Heute ist ${availableRange[1]}`));
     assert.equal(followUp.period.periods[0].from, "2026-06-01");
     assert.equal(followUp.period.defaulted, false);
 
