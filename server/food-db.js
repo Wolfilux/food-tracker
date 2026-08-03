@@ -51,6 +51,7 @@ const defaultWeeklyEmailConfig = {
 };
 const ethanolDensityGPerMl = 0.789;
 const ethanolCaloriesPerGram = 7;
+export const garminAutoSyncBackfillDays = 3;
 const nutritionGoals = new Set(["fat-loss", "muscle-gain", "maintenance", "recomposition", "weight-gain"]);
 const nutritionGoalPresets = {
   "fat-loss": { label: "Fettabbau", protein: 0.35, carbs: 0.35, fat: 0.3 },
@@ -1218,6 +1219,8 @@ export async function importGarminWeights(input = {}, dependencies = {}) {
     }
   }
 
+  storeGarminSyncSuccess("weight", result.fetchedAt);
+
   return {
     configured: true,
     source: result.source,
@@ -2056,6 +2059,10 @@ function initializeDatabase(database) {
     "  activities_json TEXT NOT NULL,",
     "  fetched_at TEXT NOT NULL",
     ");",
+    "CREATE TABLE IF NOT EXISTS garmin_sync_status (",
+    "  data_type TEXT PRIMARY KEY,",
+    "  last_success_at TEXT NOT NULL",
+    ");",
     "CREATE TABLE IF NOT EXISTS adaptive_goal_profile (",
     "  id TEXT PRIMARY KEY,",
     "  enabled INTEGER NOT NULL DEFAULT 0,",
@@ -2167,7 +2174,7 @@ function initializeDatabase(database) {
   seedFoodRecords(database);
 }
 
-async function readGarminDailySummary(dateString, options = {}) {
+export async function readGarminDailySummary(dateString, options = {}) {
   const date = normalizeGarminDate(dateString);
   const config = getGarminConfigRecord();
 
@@ -2183,10 +2190,10 @@ async function readGarminDailySummary(dateString, options = {}) {
   const cached = getGarminCachedSummary(date);
   if (cached && options.refresh !== true) return cached;
 
-  return fetchAndStoreGarminDailySummary(date, config);
+  return fetchAndStoreGarminDailySummary(date, config, options);
 }
 
-async function readGarminActivitiesForWeek(weekStartString, options = {}) {
+export async function readGarminActivitiesForWeek(weekStartString, options = {}) {
   const weekStart = normalizeWeekStart(weekStartString ?? todayInBerlin());
   const config = getGarminConfigRecord();
 
@@ -2204,28 +2211,85 @@ async function readGarminActivitiesForWeek(weekStartString, options = {}) {
   const cached = getGarminCachedActivities(weekStart);
   if (cached && options.refresh !== true) return cached;
 
-  return fetchAndStoreGarminActivities(weekStart, config);
+  return fetchAndStoreGarminActivities(weekStart, config, options);
 }
 
-async function runGarminScheduledSync() {
-  if (garminSchedulerRunning) return;
+export async function runGarminScheduledSync(options = {}) {
+  if (garminSchedulerRunning) return { skipped: "already-running", attempted: [], succeeded: [], failed: [] };
   const config = getGarminConfigRecord();
-  if (!config.username || !config.authValue || config.autoSyncMinutes === 0) return;
+  if (!config.username || !config.authValue || config.autoSyncMinutes === 0) {
+    return { skipped: "disabled", attempted: [], succeeded: [], failed: [] };
+  }
 
-  const date = todayInBerlin();
-  const cached = getGarminCachedSummary(date);
-  if (cached?.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < config.autoSyncMinutes * 60 * 1000) return;
+  const date = options.today ?? todayInBerlin();
+  const nowMs = options.nowMs ?? Date.now();
+  const freshnessMs = config.autoSyncMinutes * 60 * 1000;
+  const dependencies = options.dependencies ?? {};
+  const summaryDates = Array.from(
+    { length: garminAutoSyncBackfillDays + 1 },
+    (_, dayOffset) => addDays(date, -dayOffset),
+  );
+  const activityWeeks = [...new Set(summaryDates.map(getWeekStart))];
+  const jobs = [];
+
+  for (const summaryDate of summaryDates) {
+    const cached = getGarminCachedSummary(summaryDate);
+    if (!isGarminSyncFresh(cached?.fetchedAt, freshnessMs, nowMs)) {
+      jobs.push({
+        dataType: "daily-summary",
+        key: summaryDate,
+        run: async () => {
+          const result = await fetchAndStoreGarminDailySummary(summaryDate, config, dependencies);
+          if (result.error) throw new Error(result.error);
+        },
+      });
+    }
+  }
+
+  for (const weekStart of activityWeeks) {
+    const cached = getGarminCachedActivities(weekStart);
+    if (!isGarminSyncFresh(cached?.fetchedAt, freshnessMs, nowMs)) {
+      jobs.push({
+        dataType: "activities",
+        key: weekStart,
+        run: async () => {
+          const result = await fetchAndStoreGarminActivities(weekStart, config, dependencies);
+          if (result.error) throw new Error(result.error);
+        },
+      });
+    }
+  }
+
+  if (!isGarminSyncFresh(getGarminSyncSuccess("weight"), freshnessMs, nowMs)) {
+    jobs.push({
+      dataType: "weight",
+      key: `${addDays(date, -34)}:${date}`,
+      run: () => importGarminWeights(
+        { startDate: addDays(date, -34), endDate: date },
+        { getGarminWeightRange: dependencies.getGarminWeightRange },
+      ),
+    });
+  }
 
   garminSchedulerRunning = true;
+  const report = { attempted: [], succeeded: [], failed: [] };
   try {
-    await Promise.all([
-      fetchAndStoreGarminDailySummary(date, config),
-      fetchAndStoreGarminActivities(getWeekStart(date), config),
-      importGarminWeights({ startDate: addDays(date, -34), endDate: date }),
-    ]);
+    for (const job of jobs) {
+      const label = `${job.dataType}:${job.key}`;
+      report.attempted.push(label);
+      try {
+        await job.run();
+        report.succeeded.push(label);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        report.failed.push({ dataType: job.dataType, key: job.key, error: message });
+        if (options.logErrors !== false) console.warn(`Garmin ${label} sync failed:`, message);
+      }
+    }
   } finally {
     garminSchedulerRunning = false;
   }
+  return report;
 }
 
 async function runWeeklyEmailScheduler() {
@@ -4570,8 +4634,9 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRecord()) {
-  const summary = await getGarminDailySummary(date, {
+async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRecord(), dependencies = {}) {
+  const fetchSummary = dependencies.getGarminDailySummary ?? getGarminDailySummary;
+  const summary = await fetchSummary(date, {
     username: config.username,
     authValue: config.authValue,
   });
@@ -4579,8 +4644,9 @@ async function fetchAndStoreGarminDailySummary(date, config = getGarminConfigRec
   return summary;
 }
 
-async function fetchAndStoreGarminActivities(weekStart, config = getGarminConfigRecord()) {
-  const activityWeek = await getGarminActivitiesForWeek(weekStart, {
+async function fetchAndStoreGarminActivities(weekStart, config = getGarminConfigRecord(), dependencies = {}) {
+  const fetchActivities = dependencies.getGarminActivitiesForWeek ?? getGarminActivitiesForWeek;
+  const activityWeek = await fetchActivities(weekStart, {
     username: config.username,
     authValue: config.authValue,
   });
@@ -4595,7 +4661,8 @@ function getGarminCachedSummary(date) {
   if (!row?.summary_json) return null;
 
   try {
-    return JSON.parse(row.summary_json);
+    const summary = JSON.parse(row.summary_json);
+    return summary?.configured === true && !summary.error ? summary : null;
   } catch {
     return null;
   }
@@ -4603,6 +4670,7 @@ function getGarminCachedSummary(date) {
 
 function storeGarminDailySummary(summary) {
   if (!summary?.date) return;
+  if (summary.configured !== true || summary.error) return;
   getFoodDatabase()
     .prepare([
       "INSERT INTO garmin_daily_summary (date, summary_json, fetched_at)",
@@ -4636,7 +4704,7 @@ function getGarminCachedActivities(weekStart) {
 
 function storeGarminActivities(activityWeek) {
   if (!activityWeek?.weekStart) return;
-  if (activityWeek.error) return;
+  if (activityWeek.configured !== true || activityWeek.error) return;
   getFoodDatabase()
     .prepare([
       "INSERT INTO garmin_week_activities (week_start, week_end, activities_json, fetched_at)",
@@ -4652,6 +4720,30 @@ function storeGarminActivities(activityWeek) {
       JSON.stringify(activityWeek.activities ?? []),
       activityWeek.fetchedAt ?? new Date().toISOString(),
     );
+}
+
+function getGarminSyncSuccess(dataType) {
+  const row = getFoodDatabase()
+    .prepare("SELECT last_success_at FROM garmin_sync_status WHERE data_type = ?")
+    .get(dataType);
+  return row?.last_success_at;
+}
+
+function storeGarminSyncSuccess(dataType, fetchedAt) {
+  const lastSuccessAt = Number.isFinite(Date.parse(fetchedAt)) ? fetchedAt : new Date().toISOString();
+  getFoodDatabase()
+    .prepare([
+      "INSERT INTO garmin_sync_status (data_type, last_success_at)",
+      "VALUES (?, ?)",
+      "ON CONFLICT(data_type) DO UPDATE SET",
+      "  last_success_at = excluded.last_success_at",
+    ].join("\n"))
+    .run(dataType, lastSuccessAt);
+}
+
+function isGarminSyncFresh(fetchedAt, freshnessMs, nowMs) {
+  const fetchedAtMs = Date.parse(fetchedAt);
+  return Number.isFinite(fetchedAtMs) && nowMs - fetchedAtMs >= 0 && nowMs - fetchedAtMs < freshnessMs;
 }
 
 function normalizeGarminDate(value) {

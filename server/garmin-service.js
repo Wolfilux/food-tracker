@@ -7,6 +7,8 @@ const { GarminConnect } = Garmin;
 const here = dirname(fileURLToPath(import.meta.url));
 const dataDirectory = process.env.FOOD_TRACKER_DATA_DIR || join(here, "..", "data");
 const tokenDir = join(dataDirectory, "garmin-tokens");
+const garminRequestTimeoutMs = 20_000;
+const garminRetryDelaysMs = [500, 1_500];
 
 let clientPromise;
 let clientIdentity = "";
@@ -26,17 +28,19 @@ export async function getGarminDailySummary(dateString, credentials = {}) {
   }
 
   try {
-    const client = await getGarminClient(username, garminPass);
-    const profile = await client.getUserProfile();
-    const displayName = pickDisplayName(profile);
-    if (!displayName) throw new Error("Garmin profile has no display name");
+    return await withGarminRetry(async () => {
+      const client = await getGarminClient(username, garminPass);
+      const profile = await client.getUserProfile();
+      const displayName = pickDisplayName(profile);
+      if (!displayName) throw new Error("Garmin profile has no display name");
 
-    const summary = await client.client.get(
-      `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}`,
-      { params: { calendarDate: date } },
-    );
+      const summary = await client.client.get(
+        `https://connectapi.garmin.com/usersummary-service/usersummary/daily/${encodeURIComponent(displayName)}`,
+        { params: { calendarDate: date } },
+      );
 
-    return normalizeGarminSummary(summary, date);
+      return normalizeGarminSummary(summary, date);
+    });
   } catch (error) {
     clientPromise = undefined;
     return {
@@ -67,21 +71,23 @@ export async function getGarminActivitiesForWeek(weekStartString, credentials = 
   }
 
   try {
-    const client = await getGarminClient(username, garminPass);
-    const activities = await client.getActivities(0, 100);
-    const normalizedActivities = activities
-      .map(normalizeGarminActivity)
-      .filter((activity) => activity.date >= weekStart && activity.date <= weekEnd)
-      .sort((left, right) => left.startTimeLocal.localeCompare(right.startTimeLocal));
+    return await withGarminRetry(async () => {
+      const client = await getGarminClient(username, garminPass);
+      const activities = await client.getActivities(0, 100);
+      const normalizedActivities = activities
+        .map(normalizeGarminActivity)
+        .filter((activity) => activity.date >= weekStart && activity.date <= weekEnd)
+        .sort((left, right) => left.startTimeLocal.localeCompare(right.startTimeLocal));
 
-    return {
-      configured: true,
-      weekStart,
-      weekEnd,
-      source: "garmin-connect",
-      activities: normalizedActivities,
-      fetchedAt: new Date().toISOString(),
-    };
+      return {
+        configured: true,
+        weekStart,
+        weekEnd,
+        source: "garmin-connect",
+        activities: normalizedActivities,
+        fetchedAt: new Date().toISOString(),
+      };
+    });
   } catch (error) {
     clientPromise = undefined;
     return {
@@ -114,9 +120,11 @@ export async function getGarminWeightRange(startDateString, endDateString, crede
   }
 
   try {
-    const client = await getGarminClient(username, garminPass);
-    const payload = await client.getWeightRange(startDate, endDate, true);
-    return normalizeGarminWeightRange(payload, startDate, endDate);
+    return await withGarminRetry(async () => {
+      const client = await getGarminClient(username, garminPass);
+      const payload = await client.getWeightRange(startDate, endDate, true);
+      return normalizeGarminWeightRange(payload, startDate, endDate);
+    });
   } catch (error) {
     clientPromise = undefined;
     return {
@@ -129,6 +137,56 @@ export async function getGarminWeightRange(startDateString, endDateString, crede
       fetchedAt: new Date().toISOString(),
     };
   }
+}
+
+export async function withGarminRetry(operation, options = {}) {
+  const retryDelaysMs = options.retryDelaysMs ?? garminRetryDelaysMs;
+  const timeoutMs = options.timeoutMs ?? garminRequestTimeoutMs;
+  let lastError;
+
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      return await withTimeout(() => operation(attempt + 1), timeoutMs);
+    } catch (error) {
+      lastError = error;
+      clientPromise = undefined;
+      if (attempt >= retryDelaysMs.length || !isTransientGarminError(error)) throw error;
+      await wait(retryDelaysMs[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
+function withTimeout(operation, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return operation();
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error(`Garmin request timed out after ${timeoutMs} ms`);
+      error.code = "ETIMEDOUT";
+      reject(error);
+    }, timeoutMs);
+
+    Promise.resolve()
+      .then(operation)
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+function isTransientGarminError(error) {
+  const status = Number(error?.response?.status ?? error?.status ?? error?.statusCode);
+  if (status === 408 || status === 425 || status === 429 || status >= 500) return true;
+
+  const code = String(error?.code ?? "").toUpperCase();
+  if (["ECONNABORTED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT"].includes(code)) return true;
+
+  return /timeout|timed out|temporar|rate limit|socket hang up|network/i.test(String(error?.message ?? error ?? ""));
+}
+
+function wait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
 }
 
 async function getGarminClient(username, password) {

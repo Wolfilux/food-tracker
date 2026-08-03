@@ -238,7 +238,9 @@ Die PWA nutzt `display: standalone`, iOS-Meta-Tags, Touch-Icons, sichere Viewpor
 Die installierte Integration `@gooin/garmin-connect` stellt mit `getWeightRange` einen lesenden Zugriff auf Garmin-Connect-Gewichtswerte bereit. Food Tracker nutzt diese Schnittstelle als Pull-Import:
 
 - Manueller Import in `Analyse -> Gewichtsentwicklung`: maximal 365 Tage pro Abruf.
-- Server-Auto-Sync: bei aktiviertem Garmin-Auto-Abruf werden zusaetzlich die letzten 35 Tage nachgezogen.
+- Server-Auto-Sync: bei aktiviertem Garmin-Auto-Abruf werden Tagessummen fuer heute plus drei Vortage, die betroffenen Aktivitaetswochen und die letzten 35 Gewichtstage nachgezogen. Die kleine Vier-Tage-Spanne erfasst nachtraeglich finalisierte Garmin-Tagesdaten ohne einen unbeschraenkten historischen Abruf.
+- Tagessummen, Aktivitaeten und Gewicht haben getrennte Freshness-Pruefungen. Ein Fehler eines Datentyps blockiert die anderen Abrufe nicht; fehlgeschlagene Antworten werden nie als gueltiger Cache persistiert.
+- Transiente Garmin-Netzwerkfehler und Timeouts werden pro Abruf hoechstens zweimal mit kurzem Backoff wiederholt.
 - Garmin liefert Gewicht in Gramm; Food Tracker validiert, konvertiert und speichert in kg mit einer Nachkommastelle.
 - Manuelle Food-Tracker-Werte haben fuer dasselbe Datum Vorrang und werden durch Garmin nicht ersetzt.
 - Garmin-Zugangsdaten bleiben wie beim bestehenden Kalorien-/Aktivitaetsabruf serverseitig verschluesselt.
