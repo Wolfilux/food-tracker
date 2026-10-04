@@ -1,0 +1,14 @@
+steps:
+  - name: node-quality
+    image: node:24.18-bookworm
+    commands:
+      - npm ci
+      - npm run security:scan
+      - npm run build
+      - npm run lint
+
+  - name: smoke-checks
+    image: node:24.18-bookworm
+    commands:
+      - npm run smoke:timezone
+      - npm run smoke:alcohol
