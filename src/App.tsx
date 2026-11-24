@@ -965,6 +965,29 @@ function macroFor(
 }
 
 function App() {
+  const [openSetting, setOpenSetting] = useState(() => window.location.hash.slice(1));
+
+  function settingToggle(id: string, title: string) {
+    const expanded = openSetting === id;
+    return (
+      <h2 className="setting-heading">
+        <button type="button" id={id + "-toggle"} aria-expanded={expanded} aria-controls={id + "-panel"}
+          onClick={() => setOpenSetting(expanded ? "" : id)}>
+          {title}<ChevronDown size={18} aria-hidden="true" />
+        </button>
+      </h2>
+    );
+  }
+  function openSettingFromIndex(id: string) {
+    setOpenSetting(id);
+    requestAnimationFrame(() => {
+      const toggle = document.getElementById(id + "-toggle");
+      if (toggle?.offsetWidth) {
+        toggle.focus();
+        toggle.scrollIntoView({ block: "start" });
+      }
+    });
+  }
   const [activeView, setActiveView] = useState<AppView>("tracker");
   const [entryMode, setEntryMode] = useState<EntryMode>("search");
   const [entries, setEntries] = useState<FoodEntry[]>([]);
@@ -2645,6 +2668,13 @@ function App() {
     }
   }
 
+  function selectDay(date: string) {
+    setSelectedDate(date);
+    setSelectedEntryIds([]);
+    setActiveMealId(null);
+    setMealEditDialog(null);
+  }
+
   function resetHeroSwipe() {
     heroSwipeRef.current = null;
     heroPanelRef.current?.style.removeProperty("--hero-swipe-offset");
@@ -2712,7 +2742,7 @@ function App() {
     event.preventDefault();
     const nextDate = addDays(selectedDate, dayOffset);
     setHeroSwipeDirection(dayOffset > 0 ? "next" : "previous");
-    setSelectedDate(nextDate);
+    selectDay(nextDate);
     setDaySwipeAnnouncement(`${dayOffset > 0 ? "Nächster" : "Vorheriger"} Tag: ${formatDateLabel(nextDate)}`);
   }
 
@@ -2743,6 +2773,14 @@ function App() {
             <CalendarDays size={20} aria-hidden="true" />
             <time dateTime={selectedDate}>{formatHeaderDate(selectedDate)}</time>
           </div>
+          {activeView === "tracker" && (
+            <div className="day-controls" role="group" aria-label="Protokolltag wählen">
+              <button type="button" aria-label="Vorheriger Tag" onClick={() => selectDay(addDays(selectedDate, -1))}><ChevronLeft aria-hidden="true" /></button>
+              <input type="date" aria-label="Protokolltag" value={selectedDate} onChange={(event) => selectDay(event.target.value || todayLocal())} />
+              <button type="button" aria-label="Nächster Tag" onClick={() => selectDay(addDays(selectedDate, 1))}><ChevronRight aria-hidden="true" /></button>
+              <button type="button" onClick={() => selectDay(todayLocal())}>Heute</button>
+            </div>
+          )}
         </div>
         <div className="goal-card" aria-label="Kalorienziel und Tagesfortschritt">
           <div className="goal-card__metrics">
@@ -3000,14 +3038,23 @@ function App() {
       )}
 
       {activeView === "settings" && (
-        <section className="settings-page" aria-label="Nutrition configuration page">
-          <form className="config-panel config-panel--page adaptive-goal-panel" aria-label="Adaptive calorie goals" onSubmit={saveAdaptiveGoalSettings}>
+        <section className="settings-page" aria-label="Konfiguration">
+          <nav className="settings-index" aria-label="Einstellungsbereiche">
+            <a href="#kalorienziel" onClick={() => openSettingFromIndex("kalorienziel")}>Kalorienziel</a>
+            <a href="#naehrwerte" onClick={() => openSettingFromIndex("naehrwerte")}>Nährwerte</a>
+            <a href="#garmin" onClick={() => openSettingFromIndex("garmin")}>Tagesverbrauch</a>
+            <a href="#ki" onClick={() => openSettingFromIndex("ki")}>KI-Konfiguration</a>
+            <a href="#wochenmail" onClick={() => openSettingFromIndex("wochenmail")}>Wochenmail</a>
+            <a href="#backup" onClick={() => openSettingFromIndex("backup")}>Export & Import</a>
+          </nav>
+          {settingToggle("kalorienziel", "Kalorienziel")}
+          <form id="kalorienziel-panel" className="config-panel config-panel--page adaptive-goal-panel" aria-label="Adaptive calorie goals" onSubmit={saveAdaptiveGoalSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Target size={16} aria-hidden="true" />
                 Adaptive Ziele
               </p>
-              <h2>Kalorienziel</h2>
+              <h2 id="kalorienziel">Kalorienziel</h2>
               <p>{adaptiveGoal?.adaptiveMaintenance.message ?? "Profil speichern, um BMR, TDEE und Tagesziel berechnen zu lassen."}</p>
             </div>
             <div className="config-controls adaptive-goal-grid">
@@ -3192,13 +3239,14 @@ function App() {
               {adaptiveGoalState === "idle" && "Mindestziel wird automatisch respektiert; Anpassungen brauchen deine Freigabe."}
             </p>
           </form>
-          <section className="config-panel config-panel--page" aria-label="Nutrition configuration">
+          {settingToggle("naehrwerte", "Nährwerte")}
+          <section id="naehrwerte-panel" className="config-panel config-panel--page" aria-label="Nutrition configuration">
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
                 Ziele
               </p>
-              <h2>Nährwerte</h2>
+              <h2 id="naehrwerte">Nährwerte</h2>
               <p>{selectedPreset.note}</p>
               {nutritionConfigLoadError && (
                 <p className="config-status config-status--error">
@@ -3244,13 +3292,14 @@ function App() {
               <MacroTarget label="Fett" grams={macroTargets.fat.grams} calories={macroTargets.fat.calories} percent={selectedPreset.fat} />
             </div>
           </section>
-          <form className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration" onSubmit={saveGarminSettings}>
+          {settingToggle("garmin", "Tagesverbrauch")}
+          <form id="garmin-panel" className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration" onSubmit={saveGarminSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
                 Garmin
               </p>
-              <h2>Tagesverbrauch</h2>
+              <h2 id="garmin">Tagesverbrauch</h2>
               <p>Speichert den Garmin-Login verschluesselt und nutzt den echten Tagesverbrauch als Kalorienziel.</p>
             </div>
             <div className="config-controls">
@@ -3332,13 +3381,14 @@ function App() {
               </p>
             </div>
           </form>
-          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI configuration" onSubmit={saveAiSettings}>
+          {settingToggle("ki", "KI-Konfiguration")}
+          <form id="ki-panel" className="config-panel config-panel--page ai-config-panel" aria-label="AI configuration" onSubmit={saveAiSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <KeyRound size={16} aria-hidden="true" />
                 KI
               </p>
-              <h2>KI-Konfiguration</h2>
+              <h2 id="ki">KI-Konfiguration</h2>
               <p>Ein API-Key fuer Foto- und Wochenanalyse. Die Modelle bleiben getrennt.</p>
             </div>
             <div className="config-controls">
@@ -3418,13 +3468,14 @@ function App() {
               </p>
             </div>
           </form>
-          <form className="config-panel config-panel--page weekly-email-panel" aria-label="Weekly email configuration" onSubmit={saveWeeklyEmailSettings}>
+          {settingToggle("wochenmail", "Wochenmail")}
+          <form id="wochenmail-panel" className="config-panel config-panel--page weekly-email-panel" aria-label="Weekly email configuration" onSubmit={saveWeeklyEmailSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Mail size={16} aria-hidden="true" />
                 E-Mail
               </p>
-              <h2>Wochenmail</h2>
+              <h2 id="wochenmail">Wochenmail</h2>
               <p>Versand laeuft montags um 01:00 Uhr fuer die vorige Woche.</p>
             </div>
             <div className="config-controls">
@@ -3452,13 +3503,14 @@ function App() {
               </p>
             </div>
           </form>
-          <section className="config-panel config-panel--page backup-panel" aria-label="Backup import export">
+          {settingToggle("backup", "Export & Import")}
+          <section id="backup-panel" className="config-panel config-panel--page backup-panel" aria-label="Backup import export">
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Database size={16} aria-hidden="true" />
                 Backup
               </p>
-              <h2>Export & Import</h2>
+              <h2 id="backup">Export & Import</h2>
               <p>JSON-Backup fuer Tagesprotokoll, Ziele und AI-Modell. API-Keys bleiben lokal.</p>
             </div>
             <div className="config-controls backup-actions">
@@ -4043,10 +4095,7 @@ function App() {
               type="date"
               value={selectedDate}
               onChange={(event) => {
-                setSelectedDate(event.target.value || todayLocal());
-                setSelectedEntryIds([]);
-                setActiveMealId(null);
-                setMealEditDialog(null);
+                selectDay(event.target.value || todayLocal());
               }}
             />
           </label>
