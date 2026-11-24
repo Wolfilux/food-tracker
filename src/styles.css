@@ -262,6 +262,41 @@ h1 {
   background: var(--color-primary-strong);
 }
 
+.day-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.day-controls > *, .setting-heading button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  width: auto;
+  padding: 6px 10px;
+  border: 1px solid #acbaad;
+  border-radius: var(--radius);
+  background: #fffaf0;
+  color: var(--color-primary-strong);
+  font: inherit;
+}
+
+.setting-heading { display: none; }
+
+@media (max-width: 720px) {
+  .setting-heading { display: block; margin: 8px 0 0; }
+  .setting-heading button { width: 100%; justify-content: space-between; }
+  .setting-heading button[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .setting-heading:has([aria-expanded="false"]) + .config-panel,
+  .settings-page .config-copy > h2 { display: none; }
+  .settings-page .config-panel { grid-template-columns: minmax(0, 1fr); }
+  .settings-page .config-panel > * { min-width: 0; overflow-wrap: anywhere; }
+  .settings-page :is(select, input) { max-width: 100%; min-width: 0; }
+}
+
 .settings-page {
   min-height: 360px;
 }

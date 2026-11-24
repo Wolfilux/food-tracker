@@ -739,6 +739,19 @@ function macroFor(
 }
 
 function App() {
+  const [openSetting, setOpenSetting] = useState("");
+  function settingToggle(id: string, title: string) {
+    return <h2 className="setting-heading"><button type="button" aria-expanded={openSetting === id}
+      aria-controls={id} onClick={() => setOpenSetting(openSetting === id ? "" : id)}>
+      {title}<ChevronDown size={18} aria-hidden="true" />
+    </button></h2>;
+  }
+  function selectDay(date: string) {
+    setSelectedDate(date);
+    setSelectedEntryIds([]);
+    setActiveMealId(null);
+    setMealEditDialog(null);
+  }
   const [activeView, setActiveView] = useState<AppView>("tracker");
   const [entryMode, setEntryMode] = useState<EntryMode>("search");
   const [entries, setEntries] = useState<FoodEntry[]>([]);
@@ -2183,6 +2196,14 @@ function App() {
             Tagesprotokoll
           </p>
           <h1>Food Tracker</h1>
+          {activeView === "tracker" && (
+            <div className="day-controls" role="group" aria-label="Protokolltag wählen">
+              <button type="button" aria-label="Vorheriger Tag" onClick={() => selectDay(addDays(selectedDate, -1))}><ChevronLeft /></button>
+              <input type="date" aria-label="Protokolltag" value={selectedDate} onChange={(event) => selectDay(event.target.value || todayLocal())} />
+              <button type="button" aria-label="Nächster Tag" onClick={() => selectDay(addDays(selectedDate, 1))}><ChevronRight /></button>
+              <button type="button" onClick={() => selectDay(todayLocal())}>Heute</button>
+            </div>
+          )}
         </div>
         <div className="goal-card" aria-label="Tagesfortschritt Kalorien">
           <div className="goal-card__top">
@@ -2392,7 +2413,8 @@ function App() {
 
       {activeView === "settings" && (
         <section className="settings-page" aria-label="Nutrition configuration page">
-          <section className="config-panel config-panel--page" aria-label="Nutrition configuration">
+          {settingToggle("naehrwerte", "Nährwerte")}
+          <section id="naehrwerte" className="config-panel config-panel--page" aria-label="Nutrition configuration">
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
@@ -2444,7 +2466,8 @@ function App() {
               <MacroTarget label="Fett" grams={macroTargets.fat.grams} calories={macroTargets.fat.calories} percent={selectedPreset.fat} />
             </div>
           </section>
-          <form className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration" onSubmit={saveGarminSettings}>
+          {settingToggle("garmin", "Tagesverbrauch")}
+          <form id="garmin" className="config-panel config-panel--page garmin-panel" aria-label="Garmin Connect configuration" onSubmit={saveGarminSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Activity size={16} aria-hidden="true" />
@@ -2532,7 +2555,8 @@ function App() {
               </p>
             </div>
           </form>
-          <form className="config-panel config-panel--page ai-config-panel" aria-label="AI configuration" onSubmit={saveAiSettings}>
+          {settingToggle("ki", "KI-Konfiguration")}
+          <form id="ki" className="config-panel config-panel--page ai-config-panel" aria-label="AI configuration" onSubmit={saveAiSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <KeyRound size={16} aria-hidden="true" />
@@ -2618,7 +2642,8 @@ function App() {
               </p>
             </div>
           </form>
-          <form className="config-panel config-panel--page weekly-email-panel" aria-label="Weekly email configuration" onSubmit={saveWeeklyEmailSettings}>
+          {settingToggle("wochenmail", "Wochenmail")}
+          <form id="wochenmail" className="config-panel config-panel--page weekly-email-panel" aria-label="Weekly email configuration" onSubmit={saveWeeklyEmailSettings}>
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Mail size={16} aria-hidden="true" />
@@ -2652,7 +2677,8 @@ function App() {
               </p>
             </div>
           </form>
-          <section className="config-panel config-panel--page backup-panel" aria-label="Backup import export">
+          {settingToggle("backup", "Export & Import")}
+          <section id="backup" className="config-panel config-panel--page backup-panel" aria-label="Backup import export">
             <div className="config-copy">
               <p className="eyebrow eyebrow--dark">
                 <Database size={16} aria-hidden="true" />
