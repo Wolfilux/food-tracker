@@ -406,9 +406,84 @@ h1 {
   background: var(--color-primary-strong);
 }
 
-.settings-page {
-  min-height: 360px;
+.day-controls, .settings-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
 }
+
+.day-controls > *, .settings-index a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  width: auto;
+  padding: 6px 10px;
+  border: 1px solid #acbaad;
+  border-radius: var(--radius);
+  color: var(--color-primary-strong);
+  background: #fffaf0;
+  font: inherit;
+}
+
+.day-controls :focus-visible, .settings-page :focus-visible {
+  outline: 3px solid #bc4e17;
+  outline-offset: 2px;
+}
+
+.setting-heading { display: none; }
+
+@media (max-width: 720px) {
+  .settings-index { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-index a { justify-content: center; text-align: center; }
+  .setting-heading { display: block; margin: 8px 0 0; }
+  .setting-heading button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 16px;
+    background: var(--color-surface);
+    color: inherit;
+    border: 1px solid #b6c6bc;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 1.05rem;
+    text-align: left;
+    scroll-margin-top: 12px;
+  }
+  .setting-heading button[aria-expanded="true"] { background: #e7efe6; }
+  .setting-heading button[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .setting-heading:has([aria-expanded="false"]) + .config-panel,
+  .settings-page .config-copy > h2[id] { display: none; }
+}
+
+.settings-index { margin: 0 0 16px; }
+.settings-index a:hover, .day-controls button:hover { background: #e7efe6; }
+.settings-page h2[id] { scroll-margin-top: 16px; }
+
+.settings-page .config-panel {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  min-height: auto;
+}
+
+.settings-page .config-copy,
+.settings-page .adaptive-goal-grid,
+.settings-page .adaptive-goal-summary {
+  grid-column: 1 / -1;
+}
+
+.settings-page .adaptive-goal-grid,
+.settings-page .adaptive-goal-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+}
+
+.settings-page .config-panel > * { min-width: 0; overflow-wrap: anywhere; }
+.settings-page :is(select, input) { max-width: 100%; min-width: 0; }
 
 .weight-entry-card {
   margin: 0 0 14px;
